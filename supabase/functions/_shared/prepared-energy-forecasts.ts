@@ -39,6 +39,7 @@ const forecastSchema = z.object({
     effective_days: finite,
     level_sek_per_kwh: finite.nullable(),
     shadow_import_sek_per_kwh: finite.array(),
+    weather_price_sources: z.record(timestamp, z.enum(["blend", "ecmwf", "gfs"])).optional(),
   }),
   outdoor_temperature_c: finite.nullable().array().nullable(),
   solar_irradiance_w_per_m2: finite.nullable().array().nullable(),
@@ -74,6 +75,21 @@ export class PreparedForecastError extends Error {
     super(detail);
     this.name = "PreparedForecastError";
   }
+}
+
+export function alignWeatherPriceSources(
+  sources: OptimisationPlan["price_outlook"]["weather_price_sources"],
+  slots: readonly { start: string; import_price_sek_per_kwh: number | null }[],
+) {
+  if (!sources) return undefined;
+  const aligned: NonNullable<typeof sources> = {};
+  for (const slot of slots) {
+    if (slot.import_price_sek_per_kwh !== null) continue;
+    const start = new Date(slot.start).toISOString();
+    const source = sources[start];
+    if (source) aligned[start] = source;
+  }
+  return aligned;
 }
 function invalid(detail: string): never {
   throw new PreparedForecastError("prepared_forecast_invalid", detail);
@@ -270,6 +286,8 @@ export async function readPreparedForecasts(
     price_outlook: {
       ...forecast.price_outlook,
       shadow_import_sek_per_kwh: shadow,
+      ...(forecast.price_outlook.weather_price_sources ? { weather_price_sources:
+        alignWeatherPriceSources(forecast.price_outlook.weather_price_sources, snapshot.slots) } : {}),
     },
     snapshot: {
       ...snapshot,

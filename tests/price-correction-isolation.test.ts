@@ -19,8 +19,8 @@ Deno.test('research collector is excluded from ordinary production deployment', 
   assertStringIncludes(workflow, '[ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ] || [ "$name" = energy-price-weather-experiment ]; then\n              continue');
   assertStringIncludes(workflow, '[ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]');
 });
-Deno.test('the weather price model reaches only its own TEST worker, never the planner or a household function', () => {
+Deno.test('the shared weather-price model reaches TEST evidence and household forecast preparation', () => {
   const changes = classify(new URL('..', import.meta.url).pathname, ['supabase/functions/_shared/price-weather.ts']);
-  assertEquals(changes.functions, ['energy-price-weather-experiment']);
+  assertEquals(changes.functions, ['energy-optimisation-ingest', 'energy-price-weather-experiment']);
   assert(!changes.planner);
 });

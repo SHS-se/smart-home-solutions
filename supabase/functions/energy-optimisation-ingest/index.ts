@@ -11,7 +11,8 @@ import { RULES_MODEL_VERSION } from "../_shared/rules-planner-identity.ts";
 import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, type DeviceModelBundle } from "../_shared/device-model-store.ts";
 import { recordTestPriceForecastGeneration, testPriceForecastContext } from "../_shared/price-estimate-evidence.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
-import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
+import { alignWeatherPriceSources, readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
+import { blendWeatherPrice, PRICE_WEATHER_TABLE, priceWeatherFeeds } from "../_shared/live-weather-price.ts";
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
 import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { readPlanningSellPrices } from "../_shared/planning-sell-prices.ts";
@@ -218,11 +219,14 @@ async function refreshPreparedForecasts(
     start: new Date(Date.parse(last.start) + i * SLOT_MS).toISOString(),
     import_price_sek_per_kwh: null, export_price_sek_per_kwh: null });
   const forecastSource = { ...source, slots: forecastSlots };
-  const [archiveResult, weather, wind] = await Promise.all([
+  const priceZone = source.sources.import_price?.location?.market_area?.trim().toUpperCase() ?? null;
+  const [archiveResult, weather, wind, regional] = await Promise.all([
     supabase.rpc("read_energy_planning_price_archive", { p_home_id: homeId,
       p_from: new Date(Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000).toISOString() }),
     withServerOutdoorTemperature(supabase, forecastSource),
     withWindOutlook(supabase, forecastSource),
+    priceZone === "SE3" ? Promise.resolve(supabase.from(PRICE_WEATHER_TABLE)
+      .select("source,forecast_cycle,history,forecast")).catch(() => ({ data: null })) : null,
   ]);
   if (archiveResult.error) {
     console.warn("[ENERGY-OPTIMISATION] price history unavailable; current published prices remain in use",{home_id:homeId});
@@ -231,7 +235,6 @@ async function refreshPreparedForecasts(
   }
   const priceHistory = (archiveResult.data ?? []) as StoredPriceRow[];
   const projectUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const priceZone = source.sources.import_price?.location?.market_area?.trim().toUpperCase() ?? null;
   const marketContext = await testPriceForecastContext(supabase, projectUrl, priceZone);
   const priceGeneratedAt = new Date().toISOString();
   // Optional history refines the price estimate; it never decides whether the
@@ -256,6 +259,24 @@ async function refreshPreparedForecasts(
       smhi_wind_outlook: wind.wind_outlook ?? null }),
     outlook: structuredClone(outlook),
   }));
+  const regionalPrices = priceZone === "SE3" ? blendWeatherPrice({
+    origin: priceGeneratedAt, slots: forecastSlots, archive: priceHistory,
+    baseline: outlook.shadowImportSekPerKwh, feeds: priceWeatherFeeds(regional?.data),
+    plannedSlots: source.slots.length,
+  }) : null;
+  if (regionalPrices) {
+    const { blend, ecmwf, gfs, existing } = regionalPrices.counts;
+    console.info("[ENERGY-FORECAST] SE3 price sources", { home_id: homeId, blend, ecmwf, gfs, existing });
+    if (ecmwf || gfs || existing) {
+      source.planning_warnings = mergePlanningWarnings(source.planning_warnings, [planningWarning(
+        "regional_price_weather_coverage", "prices",
+        "Some estimated prices had incomplete weather forecast coverage.",
+        existing ? "Quarters without either weather estimate use the existing price estimator."
+          : "Affected quarters use the available ECMWF or GFS estimate.",
+        { ecmwf_quarters: ecmwf, gfs_quarters: gfs, existing_estimator_quarters: existing },
+      )]);
+    }
+  }
   const location = homeLocation(source);
   // Each optional forecast input fails on its own: the plan continues without it.
   const [solarPoints, houseResult] = await Promise.all([
@@ -282,7 +303,9 @@ async function refreshPreparedForecasts(
     house_temperature_c: houseResult.error ? null : optionalForecast("house temperature", homeId,
       () => houseTemperatureForecast(starts, source.timezone, (houseResult.data ?? []) as HouseProfileRow[])) };
   const priceOutlook={shaped:outlook.shaped,observed_days:outlook.observedDays,effective_days:outlook.effectiveDays,
-    level_sek_per_kwh:outlook.levelSekPerKwh,shadow_import_sek_per_kwh:outlook.shadowImportSekPerKwh.slice(0,product.slots.length),
+    level_sek_per_kwh:outlook.levelSekPerKwh,
+    shadow_import_sek_per_kwh:(regionalPrices?.prices ?? outlook.shadowImportSekPerKwh).slice(0,product.slots.length),
+    ...(regionalPrices ? { weather_price_sources: regionalPrices.sources } : {}),
     ...(outlook.levelBasis?{level_basis:outlook.levelBasis}:{})};
   try { await storePreparedForecasts(supabase,homeId,preparedSnapshot,priceOutlook); }
   catch(error) {
@@ -291,7 +314,9 @@ async function refreshPreparedForecasts(
       "The fresh forecast could not be cached.","This plan uses the freshly prepared forecast and planning continues.")]);
   }
   return {snapshot:preparedSnapshot,
-    price_outlook:{...priceOutlook,shadow_import_sek_per_kwh:priceOutlook.shadow_import_sek_per_kwh.slice(0,source.slots.length)},
+    price_outlook:{...priceOutlook,shadow_import_sek_per_kwh:priceOutlook.shadow_import_sek_per_kwh.slice(0,source.slots.length),
+      ...(priceOutlook.weather_price_sources ? { weather_price_sources:
+        alignWeatherPriceSources(priceOutlook.weather_price_sources, source.slots) } : {})},
     issued_at:new Date().toISOString()};
 }
 

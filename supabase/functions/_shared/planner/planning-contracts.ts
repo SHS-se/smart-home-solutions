@@ -18,6 +18,7 @@ import type { PoolDynamics } from "./pool-response.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-evidence.ts";
 
 export type PlanKey = "baseline" | "priority" | "cost";
+export type WeatherPriceSource = "blend" | "ecmwf" | "gfs";
 
 export type DeviceKey = "pool" | "boiler" | "ev";
 
@@ -730,6 +731,8 @@ export interface OptimisationPlan {
     level_sek_per_kwh: number | null;
     /** Exact unrounded series used by the solve and by deterministic replay. */
     shadow_import_sek_per_kwh: number[];
+    /** Weather price model by UTC slot start, when a regional estimate contributed. */
+    weather_price_sources?: Record<string, WeatherPriceSource>;
     /** Captured tariff-based sell estimates, aligned with the buy series. Null means the tariff was unavailable. */
     shadow_export_sek_per_kwh?: (number | null)[];
   };

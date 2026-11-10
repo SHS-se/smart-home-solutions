@@ -110,7 +110,11 @@ const PriceEstimateAccuracy: React.FC = () => {
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const dayLabel = (day: string) => new Intl.DateTimeFormat(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
     .format(new Date(`${day}T12:00:00Z`));
-  const basisLabel = (basis: string) => basis === 'wind' ? t('vindprognos', 'wind forecast')
+  const basisLabel = (basis: string) => basis === 'weather_blend' ? 'ECMWF + GFS (50/50)'
+    : basis === 'weather_ecmwf' ? 'ECMWF'
+    : basis === 'weather_gfs' ? 'NOAA GFS'
+    : basis === 'weather_mixed' ? t('flera prognoskällor', 'multiple forecast sources')
+    : basis === 'wind' ? t('vindprognos', 'wind forecast')
     : basis === 'recent_norm' ? t(`${LEVEL_NORM_DAYS} dagars norm`, `${LEVEL_NORM_DAYS}-day norm`)
       : t('publicerad nivå', 'published level');
   const ahead = (lead: number) => lead === 0 ? t('samma dag', 'same day') : lead === 1 ? t('1 dag', '1 day') : t(`${lead} dagar`, `${lead} days`);
@@ -218,6 +222,11 @@ const PriceEstimateAccuracy: React.FC = () => {
 
           <section id="price-estimate-method" aria-labelledby="price-estimate-method-title" className="rounded-md border px-4 py-3">
             <h3 id="price-estimate-method-title" className="text-sm font-medium">{t('Så gjordes uppskattningen', 'How this estimate was made')}</h3>
+            {bases.some(basis => basis.startsWith('weather_')) && <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+              {t('ECMWF och NOAA GFS uppskattar priset var för sig från vind, temperatur och solstrålning. Där båda täcker kvarten används medelpriset. En ensam prognos används direkt. Övriga kvartar använder den ordinarie prisuppskattningen.',
+                'ECMWF and NOAA GFS each estimate the price from wind, temperature and solar radiation. Quarters with both forecasts use their average. A single available forecast is used directly. Other quarters use the existing price estimator.')}
+            </p>}
+            {bases.some(basis => !basis.startsWith('weather_')) && <>
             <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-muted-foreground max-w-3xl">
               <li>
                 <span className="text-foreground">{t('Form.', 'Shape.')}</span>{' '}
@@ -243,6 +252,7 @@ const PriceEstimateAccuracy: React.FC = () => {
               {t('Ett stort nivåfel betyder att nivån (steg 2) missade. Ett kvartsfel som är klart större än nivåfelet betyder att formen (steg 1) missade: topparna kom vid andra tider eller blev högre än vanligt.',
                 'A large level error means the level (step 2) missed. A quarter error clearly larger than the level error means the shape (step 1) missed: the peaks came at other times or rose higher than usual.')}
             </p>
+            </>}
           </section>
         </CardContent>
       </Card>

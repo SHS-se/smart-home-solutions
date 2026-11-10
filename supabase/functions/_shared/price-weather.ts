@@ -1,4 +1,4 @@
-/** TEST research only: a weather-driven D+2/D+3 price forecast. Never a household planning input. */
+/** The weather-price regression shared by the TEST replay and live forecasts. */
 import { fitRidge, predictRidge } from './ridge.ts';
 
 export const WEATHER_PRICE_ALGORITHM = 'se3-weather-price-v1';
@@ -15,7 +15,7 @@ export interface WeatherSite {
   series: { wind_speed_120m: (number | null)[]; temperature_2m: (number | null)[]; shortwave_radiation: (number | null)[] };
 }
 export interface WeatherPriceInput {
-  /** Everything below was known to TEST at this instant. */
+  /** Everything below was available at this instant. */
   origin: string;
   /** Newest known price per quarter, at most 28 days back, including published future quarters. */
   history: { start: string; price: number }[];
@@ -46,10 +46,11 @@ function local(at: number) {
 /** Cubic wind power proxy between cut-in (3 m/s) and rated speed (12 m/s). Not a generation figure. */
 const windPower = (speed: number) => Math.min(1, Math.max(0, (speed ** 3 - 27) / (1728 - 27)));
 
+export type RegionalWeatherHour = readonly [at: number, wind: number, temperature: number, radiation: number];
 interface HourlyWeather { wind: number; temperature: number; radiation: number }
 /** Ten-site means per hour. An hour with any missing site value stays missing. */
-function hourlyWeather(sites: WeatherSite[]): Map<number, HourlyWeather> {
-  const hours = new Map<number, HourlyWeather>();
+export function regionalWeatherHours(sites: WeatherSite[]): RegionalWeatherHour[] {
+  const hours: RegionalWeatherHour[] = [];
   if (!sites.length) return hours;
   sites[0].times.forEach((time, index) => {
     let wind = 0, temperature = 0, radiation = 0;
@@ -60,17 +61,25 @@ function hourlyWeather(sites: WeatherSite[]): Map<number, HourlyWeather> {
         || !Number.isFinite(speed) || !Number.isFinite(temp) || !Number.isFinite(sun)) return;
       wind += windPower(speed); temperature += temp; radiation += sun;
     }
-    hours.set(Date.parse(time), { wind: wind / sites.length, temperature: temperature / sites.length, radiation: radiation / sites.length });
+    hours.push([Date.parse(time), wind / sites.length, temperature / sites.length, radiation / sites.length]);
   });
   return hours;
 }
 
 export function buildWeatherPrice(input: WeatherPriceInput): WeatherPriceForecast {
+  const weather = input.weather;
+  return fitWeatherPrice(input, weather && { id: weather.id, hours: regionalWeatherHours(weather.sites) });
+}
+
+export function fitWeatherPrice(
+  input: Omit<WeatherPriceInput, 'weather'>,
+  weather: { id: string; hours: readonly RegionalWeatherHour[] } | null,
+): WeatherPriceForecast {
   const unavailable = (reason: 'weather_missing' | 'history_too_short', trainingQuarters = 0): WeatherPriceForecast => ({
-    algorithm: WEATHER_PRICE_ALGORITHM, status: 'unavailable', reason, weatherObservationId: input.weather?.id ?? null, trainingQuarters,
+    algorithm: WEATHER_PRICE_ALGORITHM, status: 'unavailable', reason, weatherObservationId: weather?.id ?? null, trainingQuarters,
     anchor: null, targets: input.targets.map(start => ({ start, candidate: null, reason: reason === 'weather_missing' ? 'weather_missing' : null })) });
-  if (!input.weather) return unavailable('weather_missing');
-  const hours = hourlyWeather(input.weather.sites);
+  if (!weather) return unavailable('weather_missing');
+  const hours = new Map(weather.hours.map(([at, wind, temperature, radiation]) => [at, { wind, temperature, radiation } satisfies HourlyWeather]));
   // Local-day mean wind: the day's level follows the day's wind, the hour's shape the hour's.
   const byDay = new Map<string, number[]>();
   for (const [at, value] of hours) {
@@ -106,6 +115,6 @@ export function buildWeatherPrice(input: WeatherPriceInput): WeatherPriceForecas
     return { start, candidate: Math.exp(predictRidge(fit, x) + anchor * ANCHOR_PER_DAY ** ((at - lastKnown) / DAY)), reason: null };
   });
   return { algorithm: WEATHER_PRICE_ALGORITHM, status: targets.some(target => target.candidate !== null) ? 'forecast' : 'unavailable',
-    reason: targets.some(target => target.candidate !== null) ? null : 'weather_missing', weatherObservationId: input.weather.id,
+    reason: targets.some(target => target.candidate !== null) ? null : 'weather_missing', weatherObservationId: weather.id,
     trainingQuarters: rows.length, anchor, targets };
 }

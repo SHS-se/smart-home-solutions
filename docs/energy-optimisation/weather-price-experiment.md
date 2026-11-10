@@ -1,4 +1,25 @@
-# Weather price experiment (TEST)
+# Weather price forecasting and the TEST experiment
+
+## Household prices
+
+For unpublished SE3 quarters on Stockholm D+2 and D+3, household forecast
+preparation fits the weather-price regression separately with ECMWF IFS Open
+Data and NOAA GFS, then averages their prices equally. A quarter with one
+weather estimate uses that estimate. Quarters with neither use the existing
+price estimator. Published prices remain authoritative.
+
+The regional collection workflow publishes independent rows to
+`energy_price_weather_feeds`. It decodes ECMWF IFS GRIB fields from ECMWF's
+public Google Cloud mirror and reads GFS point series from dynamical.org.
+Each source supplies 100 m wind, 2 m temperature and surface solar radiation.
+IFS values are resampled from three-hourly output. The collector shares the
+weather feature calculation with the forecast model and retains 30 days of
+regional hours. Planning reads the database cache without calling the providers.
+
+Sources are ECMWF IFS Open Data and NOAA NWS NCEP GFS data processed by
+dynamical.org, used under CC BY 4.0. Forecast preparation records the source per
+quarter. The original TEST experiment below keeps the SMHI-based estimator as
+its baseline.
 
 ## Usage (caller's view)
 

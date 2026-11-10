@@ -285,7 +285,8 @@ export class PlanningJobs {
     const snapshot = job.input.snapshot;
     const estimates = priceEstimateRows({ homeId: job.home_id, timezone: snapshot.timezone,
       issuedAt: plan.issued_at, slots: snapshot.slots,
-      shadowImportSekPerKwh: plan.price_outlook?.shadow_import_sek_per_kwh, basis: plan.price_outlook?.level_basis });
+      shadowImportSekPerKwh: plan.price_outlook?.shadow_import_sek_per_kwh, basis: plan.price_outlook?.level_basis,
+      weatherPriceSources: plan.price_outlook?.weather_price_sources });
     if (estimates.length) {
       const { error } = await this.db.from("energy_price_estimate_days").upsert(estimates, { onConflict: "home_id,issued_on,target_day" });
       if (error) console.error("[ENERGY-PLANNING-JOB] price estimate archive failed", { job_id: job.id, code: error.code });

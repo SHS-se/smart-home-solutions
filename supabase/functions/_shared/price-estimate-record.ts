@@ -3,6 +3,7 @@
 // real prices exist. Nothing reads these but the staff accuracy view.
 
 import { localSlot, QUARTERS_PER_DAY } from "./planner/energy-price-shape.ts";
+import type { WeatherPriceSource } from "./planner/planning-contracts.ts";
 
 export interface PriceEstimateRow {
   home_id: string;
@@ -30,12 +31,14 @@ export function priceEstimateRows(options: {
   slots: { start: string; import_price_sek_per_kwh?: number | null }[];
   shadowImportSekPerKwh: readonly number[] | undefined;
   basis: string | undefined;
+  weatherPriceSources?: Readonly<Record<string, WeatherPriceSource>>;
 }): PriceEstimateRow[] {
   const { homeId, timezone, issuedAt, slots, shadowImportSekPerKwh: shadow } = options;
   const issued = Date.parse(issuedAt);
   if (!shadow || shadow.length !== slots.length || !Number.isFinite(issued)) return [];
   const issuedOn = localSlot(issued, timezone).dayKey;
   const days = new Map<string, (number | null)[]>();
+  const bases = new Map<string, Set<string>>();
   slots.forEach((slot, index) => {
     const published = typeof slot.import_price_sek_per_kwh === "number";
     const at = Date.parse(slot.start);
@@ -45,11 +48,15 @@ export function priceEstimateRows(options: {
     const quarters = days.get(local.dayKey) ?? new Array(QUARTERS_PER_DAY).fill(null);
     quarters[local.quarter] = Math.round(estimate * 1e4) / 1e4;
     days.set(local.dayKey, quarters);
+    const dayBases = bases.get(local.dayKey) ?? new Set<string>();
+    const weather = options.weatherPriceSources?.[new Date(at).toISOString()];
+    dayBases.add(weather ? `weather_${weather}` : options.basis ?? "recent_norm");
+    bases.set(local.dayKey, dayBases);
   });
   return [...days]
     .filter(([day, quarters]) => day >= issuedOn && quarters.filter((value) => value !== null).length >= MIN_QUARTERS)
     .map(([target_day, quarters]) => ({
       home_id: homeId, issued_on: issuedOn, target_day, timezone, quarters,
-      basis: options.basis ?? "recent_norm", issued_at: issuedAt,
+      basis: bases.get(target_day)!.size > 1 ? "weather_mixed" : [...bases.get(target_day)!][0], issued_at: issuedAt,
     }));
 }
