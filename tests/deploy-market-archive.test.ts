@@ -41,7 +41,7 @@ fi
     assertEquals(success.code, 0, new TextDecoder().decode(success.stderr));
     assertStringIncludes(new TextDecoder().decode(success.stdout), 'Deployed the TEST collector.');
     const invocations = await Deno.readTextFile(calls);
-    assertStringIncludes(invocations, '--agent no --output json');
+    assertStringIncludes(invocations, '--agent no --output json --yes');
     assertStringIncludes(invocations, 'functions deploy energy-price-weather-experiment --project-ref vxqpgbzseckgceopitpm --use-api --no-verify-jwt --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --yes');

@@ -33,7 +33,8 @@ try {
     await Deno.writeTextFile(path, sql, { mode: 0o600 });
     // Agent auto-detection wraps rows in a warning envelope locally but not in CI.
     // Request one explicit machine protocol in both environments.
-    const output = await cli(['db', 'query', '--linked', '--project-ref', TEST, '--file', path, '--agent', 'no', '--output', 'json']);
+    // Newer CLIs refuse a hosted statement without confirmation when the output is machine-readable.
+    const output = await cli(['db', 'query', '--linked', '--project-ref', TEST, '--file', path, '--agent', 'no', '--output', 'json', '--yes']);
     const parsed: unknown = JSON.parse(output);
     if (!Array.isArray(parsed) || parsed.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid TEST database result.');
     return parsed;
