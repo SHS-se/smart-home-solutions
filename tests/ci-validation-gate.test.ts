@@ -9,7 +9,12 @@ Deno.test("CI deployment gate waits for quality, every unit shard, Rust and ever
   assert(gate.includes("needs: [changes, quality, unit, planner-rust, planner-contracts, planner-integration, frontend]"));
   assert(gate.includes("!cancelled()"));
   assert(workflow.includes("fail-fast: false"));
-  assert(workflow.includes("run: bash .github/ci-images/run.sh deno task test --shard ${{ matrix.shard }}/4"));
+  assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/2"));
+  assert(workflow.includes("shard: [1, 2]"));
+  const browsers = workflow.split("\n  frontend:\n")[1].split("\n  ci:\n")[0];
+  assert(browsers.includes("needs: [changes, ci-images, frontend-build]"));
+  assert(browsers.includes("uses: actions/download-artifact@v4"));
+  assert(!browsers.includes("npm run build"));
   assert(workflow.includes("SHS_SHARD: ${{ matrix.shard }}"));
   assert(workflow.includes('node scripts/e2e-shard.mjs "$SHS_SHARD/3"'));
   assert(workflow.includes("npm run test:e2e:local -- --test-list"));
