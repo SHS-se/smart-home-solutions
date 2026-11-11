@@ -109,7 +109,7 @@
     "jscpd": "^5.4.2",
     "resend": "6.37.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.8.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.72.1",
     "vite": "^6.4.5",
     "wrangler": "^4.158.0"
