@@ -351,6 +351,8 @@ Deno.test("unplugging preserves the car's planned energy while cable telemetry s
     "../../../scripts/generate-ha-plan-fixture.ts"
   );
   const snapshot = dispatchedEvSnapshot();
+  snapshot.ev_battery!.plugged_in_at = snapshot.captured_at;
+  snapshot.ev_battery!.soc = 0.03;
   const now = new Date(snapshot.captured_at);
   const connected = runRulesPlanner({ snapshot: snapshot, now: (now).toISOString(), price_archive: [] }).plan;
   snapshot.ev_battery!.connected = false;

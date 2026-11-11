@@ -12,9 +12,8 @@
 // credited nothing, and one that ends below where it started, under the
 // target, is debited.
 //
-// The car is priced in tiers instead (car-policy.ts): up to the middle of its
-// range at the 75th percentile of the same prices, from there to its own charge
-// limit at the 25th, and nothing above the limit.
+// The independent bench referee retains its tiered car valuation. The live
+// planner uses a separate history-based replacement price for the EV.
 //
 // This is the only definition of those caps, conversions and the price. The
 // bench referee applies it at real prices; the planner's problem producers
@@ -93,14 +92,24 @@ export function endCreditTerms(input: {
 }
 
 /** The terms a prepared planner problem carries: the same caps and conversions, at the prices the planner is told. */
-export function problemEndCredit(p: Pick<ReadyProblem, "battery" | "car" | "car_policy" | "pool_store" | "heater" | "targets" | "slots">): EndCreditTerms {
-  return endCreditTerms({
+export function problemEndCredit(
+  p: Pick<ReadyProblem, "battery" | "car" | "car_policy" | "pool_store" | "heater" | "targets" | "slots">,
+  evReplacementSekPerKwh: number | null = null,
+): EndCreditTerms {
+  const terms = endCreditTerms({
     battery: p.battery,
     pool: p.pool_store && p.heater && p.targets.pool_c !== null
       ? { store: p.pool_store, draw_w: p.heater.compressor_w + p.heater.auxiliary_w, heat_w: p.heater.heat_w, target_c: p.targets.pool_c } : null,
-    car: p.car && p.car_policy ? { battery: p.car, floor_kwh: p.car_policy.floor_kwh, limit_kwh: p.car_policy.limit_kwh } : null,
+    car: null,
     import_sek_per_kwh: p.slots.map(slot => slot.import_price),
   });
+  if (p.car && p.car_policy && evReplacementSekPerKwh !== null) {
+    terms.ev = {
+      grid_kwh_per_unit: 1 / p.car.charge_efficiency,
+      tiers: [{ up_to: p.car_policy.limit_kwh, sek_per_kwh: evReplacementSekPerKwh }],
+    };
+  }
+  return terms;
 }
 
 /** The level of a store that counts: no further than its cap. */

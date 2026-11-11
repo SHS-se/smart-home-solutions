@@ -731,6 +731,8 @@ export interface OptimisationPlan {
     level_sek_per_kwh: number | null;
     /** Exact unrounded series used by the solve and by deterministic replay. */
     shadow_import_sek_per_kwh: number[];
+    /** Replacement cost of EV energy after this forecast, based on earlier published import prices. */
+    ev_replacement_sek_per_kwh?: number | null;
     /** Weather price model by UTC slot start, when a regional estimate contributed. */
     weather_price_sources?: Record<string, WeatherPriceSource>;
     /** Captured tariff-based sell estimates, aligned with the buy series. Null means the tariff was unavailable. */

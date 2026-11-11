@@ -35,14 +35,16 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("pool heat can wait for cheap supply while low EV readiness charges immediately", () => {
   const p = forecastProblem();
-  // Past its grace from the first quarter: the car is below its floor line now.
+  // A near-empty car is well behind its readiness target at the opening.
+  p.initial.ev_kwh = 1;
+  p.slots[0].import_price = 1.2;
   p.car_policy!.floor_kwh = 25;
   p.car_policy!.breach_permille = p.slots.map(() => 499);
   const result = solve(p);
   assert(result.kind === "selected");
   const s = result.selection;
   assertEquals(s.commands[0].pool_on, false);
-  assert(s.commands[0].ev_amps > 0, "A car below its floor after its grace charges now");
+  assert(s.commands[0].ev_amps > 0, "A near-empty car charges now despite cheaper supply later");
   assert(s.commands[0].battery !== "grid_charge");
   const first = s.commands.findIndex(c => c.pool_on);
   assert(first > 0);
@@ -435,7 +437,7 @@ Deno.test("bounded construction returns a complete certified incumbent", () => {
   assertEquals(result.selection.termination, "bounded_complete");
 });
 
-Deno.test("direct rule accounts agree with the independent quarter scorer when information matches", async () => {
+Deno.test("native accounts match the independent pool scorer and graded EV exposure", async () => {
   const c = causalCase();
   const planner = await loadWasmCandidate(root);
   const p = readyProblem(c, HOUSEHOLD);
@@ -450,10 +452,23 @@ Deno.test("direct rule accounts agree with the independent quarter scorer when i
   );
   assertEquals(violations, []);
   const quarters = scoreQuarters(series, {}).quarters;
-  const expected = quarters.map((q) =>
-    p.rules.map((r) => q.deductions[r.key] ?? 0)
-  );
-  result.outcome.selection.account.contributions.forEach((row, i) => row.forEach((cost, j) => assertAlmostEquals(cost, expected[i][j], 1e-8)));
+  const { capacity_kwh, charge_efficiency } = p.car!;
+  const native = result.outcome.selection;
+  // Boole's quadrature integrates the fourth-degree marginal urgency exactly.
+  const weights = [7, 32, 12, 32, 7];
+  native.account.contributions.forEach((row, i) => row.forEach((cost, j) => {
+    const rule = p.rules[j];
+    if (rule.key === "pool_shortfall") {
+      assertAlmostEquals(cost, quarters[i].deductions.pool_shortfall ?? 0, 1e-8);
+      return;
+    }
+    const target = ((p.car_policy!.breach_permille[i] ?? -1) + 1) / 1000;
+    const charge = native.quarters[i].ev_kwh! / capacity_kwh;
+    const gap = Math.max(0, target - charge);
+    const rate = weights.reduce((sum, weight, step) =>
+      sum + weight * (0.02 + 0.35 * (1 - charge - gap * step / 4) ** 4), 0) / 90;
+    assertAlmostEquals(cost, rule.points / 2 * rate * gap * capacity_kwh / charge_efficiency * p.slots[i].hours, 1e-8);
+  }));
 });
 
 Deno.test("withheld future prices and actual household measurements cannot affect ready input", () => {
@@ -512,10 +527,8 @@ Deno.test("native heater restart events and startup wear match the referee", () 
   assertEquals(selected.quarters.map((q) => q.pool_start), series.poolStart);
   assertEquals(series.poolStart!.slice(0, 4), [{ off_seconds: 3600 }, null, { off_seconds: 900 }, null]);
   assertEquals(
-    selected.account.contributions,
-    scored.quarters.map((q) =>
-      p.rules.map((r) => q.deductions[r.key] ?? 0)
-    ),
+    selected.account.contributions.map(row => row[p.rules.findIndex(r => r.key === "pool_shortfall")]),
+    scored.quarters.map(q => q.deductions.pool_shortfall ?? 0),
   );
   for (let i = 0; i < QUARTERS; i++) {
     assertAlmostEquals(selected.quarters[i].pool_w, series.poolW[i], 0.051);

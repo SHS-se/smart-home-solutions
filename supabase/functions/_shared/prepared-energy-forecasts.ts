@@ -39,6 +39,7 @@ const forecastSchema = z.object({
     effective_days: finite,
     level_sek_per_kwh: finite.nullable(),
     shadow_import_sek_per_kwh: finite.array(),
+    ev_replacement_sek_per_kwh: finite.nonnegative().nullable().optional(),
     weather_price_sources: z.record(timestamp, z.enum(["blend", "ecmwf", "gfs"])).optional(),
   }),
   outdoor_temperature_c: finite.nullable().array().nullable(),

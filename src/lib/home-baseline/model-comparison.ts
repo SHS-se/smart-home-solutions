@@ -2,7 +2,7 @@ import { projectBaseline, type BaselineInput, type BaselineResult } from './mode
 import { replayScheduler, type ReplayEngine, type SchedulerReplay } from './scheduler-replay.ts';
 import { scenarioBill, type BillExtras } from './scenario-bill.ts';
 import { POOL_THERMOSTAT_BAND_C } from './controller.ts';
-import { endCredit, problemEndCredit } from '../../../supabase/functions/_shared/planner-wasm/end-credit.ts';
+import { endCredit, problemEndCredit, referencePrice } from '../../../supabase/functions/_shared/planner-wasm/end-credit.ts';
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy, floorBreaches } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
 import type { UnservedTrips } from './trip-ledger.ts';
 import { poolInventoryC } from '../../../supabase/functions/_shared/planner/device-models.ts';
@@ -16,8 +16,7 @@ export function seriesService(input: BaselineInput, series: BenchSeries, actor: 
   const endPoolC = series.poolC[last];
   // Both actors' energy is valued at one neutral price, the period's median, so
   // that neither policy grades its own homework with its own tiers.
-  const terms = problemEndCredit(p);
-  const neutral = { ...terms, ev: terms.ev && { ...terms.ev, tiers: [{ up_to: terms.ev.tiers.at(-1)!.up_to, sek_per_kwh: terms.reference_sek_per_kwh }] } };
+  const neutral = problemEndCredit(p, referencePrice(p.slots.map(slot => slot.import_price)));
   const lines = p.car && p.car_policy ? carPolicy({ battery: p.car, limitSoc: p.car_policy.limit_kwh / p.car.capacity_kwh,
     floorSetting: input.settings.comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT, connection: { kind: 'plugged_unknown_since' } }, p.slots, Date.parse(input.start)) : null;
   const floorHours = lines ? floorBreaches(lines, p.car!.capacity_kwh, series.carSoc.map(soc => soc! / 100 * p.car!.capacity_kwh)).filter(Boolean).length * .25 : 0;

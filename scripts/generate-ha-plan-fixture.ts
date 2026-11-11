@@ -126,7 +126,7 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
 
 /** Explicit fixture facts, passed through the same live ready-input boundary. */
 /** The planning input a fixture snapshot is planned from: targets, wear and pool physics filled in. */
-export function rulesFixtureInput(source: OptimisationSnapshot) {
+export function rulesFixtureInput(source: OptimisationSnapshot, evReplacementSekPerKwh?: number) {
   const snapshot = structuredClone(source);
   snapshot.captured_at = new Date(Math.max(Date.parse(snapshot.captured_at), Date.parse(snapshot.slots[0].start))).toISOString();
   snapshot.comfort = { ...(snapshot.capabilities.ev ? { ev: { target_km: 300 } } : {}),
@@ -147,6 +147,7 @@ export function rulesFixtureInput(source: OptimisationSnapshot) {
   };
   return prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
+      ...(evReplacementSekPerKwh !== undefined ? { ev_replacement_sek_per_kwh: evReplacementSekPerKwh } : {}),
       shadow_import_sek_per_kwh: snapshot.slots.map(slot => {
         if (slot.import_price_sek_per_kwh === null) throw new Error("Fixture must supply every forecast price");
         return slot.import_price_sek_per_kwh;

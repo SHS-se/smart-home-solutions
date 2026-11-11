@@ -18,7 +18,8 @@ function house(peakBaseW = 5000) {
       import_price_sek_per_kwh: i < 4 ? 3 : .1})),
   };
   source.ev_battery = {...source.ev_battery!, soc: .1, available_from: source.slots[6].start};
-  return rulesFixtureInput(source);
+  // This fixture needs a valuable EV request in both destination quarters.
+  return rulesFixtureInput(source, 3);
 }
 
 Deno.test('comparison load-balances from its own depleted store and resumes full supported current', () => {

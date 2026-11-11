@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": true
     },
-    "model_version": "rules-planner-v31:176357ae6899c93e31f97d3a8a96184e39fc510ed0c6465777c9e8084a625dab",
+    "model_version": "rules-planner-v31:98702a375ad66d4ff12ee0bdffd1b2870c80514532ec79d69655364890e38166",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -26,7 +26,15 @@
     "status": "ready",
     "validation_errors": [],
     "measurement_issues": [],
-    "planning_warnings": [],
+    "planning_warnings": [
+      {
+        "code": "ev_replacement_price_history",
+        "scope": "ev",
+        "severity": "warning",
+        "message": "Historical import prices do not yet provide a charging price reference.",
+        "consequence": "The car is planned using charge readiness and the available prices."
+      }
+    ],
     "execution_availability": [],
     "sources": {
       "pv": {
@@ -703,62 +711,6 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 0,
-            "room_heating_w": {},
-            "device_loads_w": {},
-            "device_commands": {},
-            "ev_target_current_a": 0,
-            "ev_min_current_a": 0,
-            "ev_max_current_a": 16,
-            "ev_soc": 0.55,
-            "ev_connected": true,
-            "load_w": 700,
-            "battery_idle_w": 0,
-            "battery_charge_w": 0,
-            "battery_discharge_w": 0,
-            "battery_export_w": 0,
-            "battery_command": null,
-            "battery_soc": 0,
-            "grid_import_w": 0,
-            "grid_export_w": 6300,
-            "curtailed_w": 0,
-            "unserved_w": 0,
-            "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
-            "decision": {
-              "schema_version": 1,
-              "store_allocations": [],
-              "battery": null,
-              "grid_balance": {
-                "load_w": 700,
-                "pv_w": 7000,
-                "battery_charge_w": 0,
-                "battery_discharge_w": 0,
-                "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
-                "limit_w": 15000,
-                "limit_binding": false,
-                "reason": "residual_after_dispatch"
-              }
-            }
-          },
-          {
-            "start": "2026-08-20T11:15:00.000Z",
-            "duration_hours": 0.25,
-            "binding": true,
-            "pv_raw_w": 7000,
-            "pv_w": 7000,
-            "base_w": 700,
-            "import_price_sek_per_kwh": 1.5,
-            "export_price_sek_per_kwh": 0.1,
-            "shadow_import_sek_per_kwh": 1.5,
-            "shadow_export_sek_per_kwh": 0.1,
-            "pool_w": 0,
-            "pool_permitted": false,
-            "pool_command_w": 0,
-            "boiler_expected_w": 0,
-            "boiler_permitted": false,
             "ev_w": 3450,
             "room_heating_w": {},
             "device_loads_w": {},
@@ -800,7 +752,7 @@
             }
           },
           {
-            "start": "2026-08-20T11:30:00.000Z",
+            "start": "2026-08-20T11:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -856,7 +808,7 @@
             }
           },
           {
-            "start": "2026-08-20T11:45:00.000Z",
+            "start": "2026-08-20T11:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -912,7 +864,7 @@
             }
           },
           {
-            "start": "2026-08-20T12:00:00.000Z",
+            "start": "2026-08-20T11:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -968,7 +920,7 @@
             }
           },
           {
-            "start": "2026-08-20T12:15:00.000Z",
+            "start": "2026-08-20T12:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1024,7 +976,7 @@
             }
           },
           {
-            "start": "2026-08-20T12:30:00.000Z",
+            "start": "2026-08-20T12:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1080,7 +1032,7 @@
             }
           },
           {
-            "start": "2026-08-20T12:45:00.000Z",
+            "start": "2026-08-20T12:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1136,7 +1088,7 @@
             }
           },
           {
-            "start": "2026-08-20T13:00:00.000Z",
+            "start": "2026-08-20T12:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1192,7 +1144,7 @@
             }
           },
           {
-            "start": "2026-08-20T13:15:00.000Z",
+            "start": "2026-08-20T13:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1248,7 +1200,7 @@
             }
           },
           {
-            "start": "2026-08-20T13:30:00.000Z",
+            "start": "2026-08-20T13:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1304,7 +1256,7 @@
             }
           },
           {
-            "start": "2026-08-20T13:45:00.000Z",
+            "start": "2026-08-20T13:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1360,7 +1312,7 @@
             }
           },
           {
-            "start": "2026-08-20T14:00:00.000Z",
+            "start": "2026-08-20T13:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1416,7 +1368,7 @@
             }
           },
           {
-            "start": "2026-08-20T14:15:00.000Z",
+            "start": "2026-08-20T14:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1472,7 +1424,7 @@
             }
           },
           {
-            "start": "2026-08-20T14:30:00.000Z",
+            "start": "2026-08-20T14:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1528,7 +1480,7 @@
             }
           },
           {
-            "start": "2026-08-20T14:45:00.000Z",
+            "start": "2026-08-20T14:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1584,7 +1536,7 @@
             }
           },
           {
-            "start": "2026-08-20T15:00:00.000Z",
+            "start": "2026-08-20T14:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1640,7 +1592,7 @@
             }
           },
           {
-            "start": "2026-08-20T15:15:00.000Z",
+            "start": "2026-08-20T15:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1696,7 +1648,7 @@
             }
           },
           {
-            "start": "2026-08-20T15:30:00.000Z",
+            "start": "2026-08-20T15:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1752,7 +1704,7 @@
             }
           },
           {
-            "start": "2026-08-20T15:45:00.000Z",
+            "start": "2026-08-20T15:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1808,7 +1760,7 @@
             }
           },
           {
-            "start": "2026-08-20T16:00:00.000Z",
+            "start": "2026-08-20T15:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1864,7 +1816,7 @@
             }
           },
           {
-            "start": "2026-08-20T16:15:00.000Z",
+            "start": "2026-08-20T16:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1920,7 +1872,7 @@
             }
           },
           {
-            "start": "2026-08-20T16:30:00.000Z",
+            "start": "2026-08-20T16:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -1976,6 +1928,62 @@
             }
           },
           {
+            "start": "2026-08-20T16:30:00.000Z",
+            "duration_hours": 0.25,
+            "binding": true,
+            "pv_raw_w": 7000,
+            "pv_w": 7000,
+            "base_w": 700,
+            "import_price_sek_per_kwh": 1.5,
+            "export_price_sek_per_kwh": 0.1,
+            "shadow_import_sek_per_kwh": 1.5,
+            "shadow_export_sek_per_kwh": 0.1,
+            "pool_w": 0,
+            "pool_permitted": false,
+            "pool_command_w": 0,
+            "boiler_expected_w": 0,
+            "boiler_permitted": false,
+            "ev_w": 3450,
+            "room_heating_w": {},
+            "device_loads_w": {},
+            "device_commands": {},
+            "ev_target_current_a": 5,
+            "ev_min_current_a": 0,
+            "ev_max_current_a": 16,
+            "ev_soc": 0.7933400000000005,
+            "ev_connected": true,
+            "load_w": 4150,
+            "battery_idle_w": 0,
+            "battery_charge_w": 0,
+            "battery_discharge_w": 0,
+            "battery_export_w": 0,
+            "battery_command": null,
+            "battery_soc": 0,
+            "grid_import_w": 0,
+            "grid_export_w": 2850,
+            "curtailed_w": 0,
+            "unserved_w": 0,
+            "import_cost_sek": 0,
+            "export_revenue_sek": 0.07125000000000001,
+            "decision": {
+              "schema_version": 1,
+              "store_allocations": [],
+              "battery": null,
+              "grid_balance": {
+                "load_w": 4150,
+                "pv_w": 7000,
+                "battery_charge_w": 0,
+                "battery_discharge_w": 0,
+                "residual_w": -2850,
+                "direction": "export",
+                "power_w": 2850,
+                "limit_w": 15000,
+                "limit_binding": false,
+                "reason": "residual_after_dispatch"
+              }
+            }
+          },
+          {
             "start": "2026-08-20T16:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
@@ -1991,16 +1999,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 5520,
+            "ev_w": 0,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 8,
+            "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
-            "load_w": 6220,
+            "load_w": 700,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -2008,23 +2016,23 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 780,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.019500000000000003,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 6220,
+                "load_w": 700,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -780,
+                "residual_w": -6300,
                 "direction": "export",
-                "power_w": 780,
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -2054,7 +2062,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2110,7 +2118,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2166,7 +2174,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2222,7 +2230,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2278,7 +2286,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2334,7 +2342,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2390,7 +2398,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2446,7 +2454,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2502,7 +2510,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2558,7 +2566,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2614,7 +2622,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2670,7 +2678,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2726,7 +2734,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2782,7 +2790,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2838,7 +2846,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2894,7 +2902,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2950,7 +2958,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3006,7 +3014,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3062,7 +3070,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3118,7 +3126,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3174,7 +3182,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3230,7 +3238,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3286,7 +3294,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3342,7 +3350,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3398,7 +3406,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3454,7 +3462,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3510,7 +3518,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3566,7 +3574,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3622,7 +3630,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3678,7 +3686,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3734,7 +3742,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3790,7 +3798,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3825,22 +3833,22 @@
           }
         ],
         "summary": {
-          "load_kwh": 31.55500000000003,
-          "flexible_load_kwh": 20.355000000000008,
+          "load_kwh": 31.037500000000033,
+          "flexible_load_kwh": 19.83750000000001,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.445000000000004,
+          "grid_export_kwh": 17.962500000000006,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.445000000000004,
-          "net_cost_sek": 8.755500000000001,
-          "terminal_adjusted_cost_sek": 8.755500000000001,
+          "priced_export_kwh": 17.962500000000006,
+          "net_cost_sek": 8.703750000000001,
+          "terminal_adjusted_cost_sek": 8.703750000000001,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 20.355000000000008,
+          "service_delivered_kwh": 19.83750000000001,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
@@ -3916,7 +3924,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -3973,7 +3983,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -4030,7 +4042,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -4087,7 +4101,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -4144,7 +4160,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -4201,7 +4219,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -4258,7 +4278,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -4315,67 +4337,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
-            "duration_hours": 0.25,
-            "binding": true,
-            "pv_raw_w": 7000,
-            "pv_w": 7000,
-            "base_w": 700,
-            "import_price_sek_per_kwh": 1.5,
-            "export_price_sek_per_kwh": 0.1,
-            "shadow_import_sek_per_kwh": 1.5,
-            "shadow_export_sek_per_kwh": 0.1,
-            "pool_w": 0,
-            "pool_permitted": false,
-            "pool_command_w": 0,
-            "boiler_expected_w": 0,
-            "boiler_permitted": false,
-            "ev_w": 0,
-            "room_heating_w": {},
-            "device_loads_w": {},
-            "device_commands": {},
-            "ev_target_current_a": 0,
-            "ev_min_current_a": 0,
-            "ev_max_current_a": 16,
-            "ev_soc": 0.55,
-            "ev_connected": true,
-            "load_w": 700,
-            "battery_idle_w": 0,
-            "battery_charge_w": 0,
-            "battery_discharge_w": 0,
-            "battery_export_w": 0,
-            "battery_command": null,
-            "battery_soc": 0,
-            "grid_import_w": 0,
-            "grid_export_w": 6300,
-            "curtailed_w": 0,
-            "unserved_w": 0,
-            "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
-            "decision": {
-              "schema_version": 1,
-              "store_allocations": [],
-              "battery": null,
-              "grid_balance": {
-                "load_w": 700,
-                "pv_w": 7000,
-                "battery_charge_w": 0,
-                "battery_discharge_w": 0,
-                "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
-                "limit_w": 15000,
-                "limit_binding": false,
-                "reason": "residual_after_dispatch"
-              }
-            },
-            "rule_points": {}
-          },
-          {
-            "start": "2026-08-20T11:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4429,10 +4396,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.1205059435969599
+            }
           },
           {
-            "start": "2026-08-20T11:30:00.000Z",
+            "start": "2026-08-20T11:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4486,10 +4455,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.11351195903027905
+            }
           },
           {
-            "start": "2026-08-20T11:45:00.000Z",
+            "start": "2026-08-20T11:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4543,10 +4514,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.1067699340161188
+            }
           },
           {
-            "start": "2026-08-20T12:00:00.000Z",
+            "start": "2026-08-20T11:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4600,10 +4573,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.10026168005585753
+            }
           },
           {
-            "start": "2026-08-20T12:15:00.000Z",
+            "start": "2026-08-20T12:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4657,10 +4632,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.09396990583531742
+            }
           },
           {
-            "start": "2026-08-20T12:30:00.000Z",
+            "start": "2026-08-20T12:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4714,10 +4691,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.08787819453024052
+            }
           },
           {
-            "start": "2026-08-20T12:45:00.000Z",
+            "start": "2026-08-20T12:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4771,10 +4750,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.08197098111176562
+            }
           },
           {
-            "start": "2026-08-20T13:00:00.000Z",
+            "start": "2026-08-20T12:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4828,10 +4809,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.07623352965190441
+            }
           },
           {
-            "start": "2026-08-20T13:15:00.000Z",
+            "start": "2026-08-20T13:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4885,10 +4868,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.07065191062901811
+            }
           },
           {
-            "start": "2026-08-20T13:30:00.000Z",
+            "start": "2026-08-20T13:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4942,10 +4927,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.06521297823329389
+            }
           },
           {
-            "start": "2026-08-20T13:45:00.000Z",
+            "start": "2026-08-20T13:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -4999,10 +4986,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.059904347672221366
+            }
           },
           {
-            "start": "2026-08-20T14:00:00.000Z",
+            "start": "2026-08-20T13:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5056,10 +5045,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.05471437247606887
+            }
           },
           {
-            "start": "2026-08-20T14:15:00.000Z",
+            "start": "2026-08-20T14:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5113,10 +5104,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.04963212180336028
+            }
           },
           {
-            "start": "2026-08-20T14:30:00.000Z",
+            "start": "2026-08-20T14:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5170,10 +5163,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0446473577463512
+            }
           },
           {
-            "start": "2026-08-20T14:45:00.000Z",
+            "start": "2026-08-20T14:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5227,10 +5222,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.039750512636505524
+            }
           },
           {
-            "start": "2026-08-20T15:00:00.000Z",
+            "start": "2026-08-20T14:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5284,10 +5281,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.034932666349971865
+            }
           },
           {
-            "start": "2026-08-20T15:15:00.000Z",
+            "start": "2026-08-20T15:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5341,10 +5340,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.030185523613060084
+            }
           },
           {
-            "start": "2026-08-20T15:30:00.000Z",
+            "start": "2026-08-20T15:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5398,10 +5399,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.025501391307717686
+            }
           },
           {
-            "start": "2026-08-20T15:45:00.000Z",
+            "start": "2026-08-20T15:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5455,10 +5458,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.02087315577700631
+            }
           },
           {
-            "start": "2026-08-20T16:00:00.000Z",
+            "start": "2026-08-20T15:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5512,10 +5517,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.016294260130578286
+            }
           },
           {
-            "start": "2026-08-20T16:15:00.000Z",
+            "start": "2026-08-20T16:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5569,10 +5576,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.01175868155015282
+            }
           },
           {
-            "start": "2026-08-20T16:30:00.000Z",
+            "start": "2026-08-20T16:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -5626,7 +5635,68 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.007260908594992836
+            }
+          },
+          {
+            "start": "2026-08-20T16:30:00.000Z",
+            "duration_hours": 0.25,
+            "binding": true,
+            "pv_raw_w": 7000,
+            "pv_w": 7000,
+            "base_w": 700,
+            "import_price_sek_per_kwh": 1.5,
+            "export_price_sek_per_kwh": 0.1,
+            "shadow_import_sek_per_kwh": 1.5,
+            "shadow_export_sek_per_kwh": 0.1,
+            "pool_w": 0,
+            "pool_permitted": false,
+            "pool_command_w": 0,
+            "boiler_expected_w": 0,
+            "boiler_permitted": false,
+            "ev_w": 3450,
+            "room_heating_w": {},
+            "device_loads_w": {},
+            "device_commands": {},
+            "ev_target_current_a": 5,
+            "ev_min_current_a": 0,
+            "ev_max_current_a": 16,
+            "ev_soc": 0.7933400000000005,
+            "ev_connected": true,
+            "load_w": 4150,
+            "battery_idle_w": 0,
+            "battery_charge_w": 0,
+            "battery_discharge_w": 0,
+            "battery_export_w": 0,
+            "battery_command": null,
+            "battery_soc": 0,
+            "grid_import_w": 0,
+            "grid_export_w": 2850,
+            "curtailed_w": 0,
+            "unserved_w": 0,
+            "import_cost_sek": 0,
+            "export_revenue_sek": 0.07125000000000001,
+            "decision": {
+              "schema_version": 1,
+              "store_allocations": [],
+              "battery": null,
+              "grid_balance": {
+                "load_w": 4150,
+                "pv_w": 7000,
+                "battery_charge_w": 0,
+                "battery_discharge_w": 0,
+                "residual_w": -2850,
+                "direction": "export",
+                "power_w": 2850,
+                "limit_w": 15000,
+                "limit_binding": false,
+                "reason": "residual_after_dispatch"
+              }
+            },
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T16:45:00.000Z",
@@ -5644,16 +5714,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 5520,
+            "ev_w": 0,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 8,
+            "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
-            "load_w": 6220,
+            "load_w": 700,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -5661,29 +5731,31 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 780,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.019500000000000003,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 6220,
+                "load_w": 700,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -780,
+                "residual_w": -6300,
                 "direction": "export",
-                "power_w": 780,
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -5708,7 +5780,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5740,7 +5812,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -5765,7 +5839,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5797,7 +5871,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -5822,7 +5898,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5854,7 +5930,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -5879,7 +5957,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5911,7 +5989,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -5936,7 +6016,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5968,7 +6048,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -5993,7 +6075,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6025,7 +6107,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -6050,7 +6134,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6082,7 +6166,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -6107,7 +6193,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6139,7 +6225,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -6164,7 +6252,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6196,7 +6284,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -6221,7 +6311,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6253,7 +6343,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -6278,7 +6370,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6310,7 +6402,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -6335,7 +6429,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6367,7 +6461,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -6392,7 +6488,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6424,7 +6520,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -6449,7 +6547,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6481,7 +6579,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -6506,7 +6606,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6538,7 +6638,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -6563,7 +6665,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6595,7 +6697,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -6620,7 +6724,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6652,7 +6756,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -6677,7 +6783,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6709,7 +6815,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -6734,7 +6842,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6766,7 +6874,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -6791,7 +6901,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6823,7 +6933,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -6848,7 +6960,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6880,7 +6992,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -6905,7 +7019,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6937,7 +7051,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -6962,7 +7078,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6994,7 +7110,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -7019,7 +7137,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7051,7 +7169,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -7076,7 +7196,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7108,7 +7228,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -7133,7 +7255,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7165,7 +7287,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -7190,7 +7314,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7222,7 +7346,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -7247,7 +7373,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7279,7 +7405,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -7304,7 +7432,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7336,7 +7464,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -7361,7 +7491,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7393,7 +7523,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -7418,7 +7550,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7450,7 +7582,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -7475,7 +7609,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7507,26 +7641,28 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           }
         ],
         "summary": {
-          "load_kwh": 31.55500000000003,
-          "flexible_load_kwh": 20.355000000000008,
+          "load_kwh": 31.037500000000033,
+          "flexible_load_kwh": 19.83750000000001,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.445000000000004,
+          "grid_export_kwh": 17.962500000000006,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.445000000000004,
-          "net_cost_sek": 8.755500000000001,
-          "terminal_adjusted_cost_sek": 8.755500000000001,
+          "priced_export_kwh": 17.962500000000006,
+          "net_cost_sek": 8.703750000000001,
+          "terminal_adjusted_cost_sek": 8.703750000000001,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 20.355000000000008,
+          "service_delivered_kwh": 19.83750000000001,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
@@ -7602,7 +7738,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -7659,7 +7797,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -7716,7 +7856,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -7773,7 +7915,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -7830,7 +7974,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -7887,7 +8033,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -7944,7 +8092,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -8001,67 +8151,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.12777099609374998
+            }
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
-            "duration_hours": 0.25,
-            "binding": true,
-            "pv_raw_w": 7000,
-            "pv_w": 7000,
-            "base_w": 700,
-            "import_price_sek_per_kwh": 1.5,
-            "export_price_sek_per_kwh": 0.1,
-            "shadow_import_sek_per_kwh": 1.5,
-            "shadow_export_sek_per_kwh": 0.1,
-            "pool_w": 0,
-            "pool_permitted": false,
-            "pool_command_w": 0,
-            "boiler_expected_w": 0,
-            "boiler_permitted": false,
-            "ev_w": 0,
-            "room_heating_w": {},
-            "device_loads_w": {},
-            "device_commands": {},
-            "ev_target_current_a": 0,
-            "ev_min_current_a": 0,
-            "ev_max_current_a": 16,
-            "ev_soc": 0.55,
-            "ev_connected": true,
-            "load_w": 700,
-            "battery_idle_w": 0,
-            "battery_charge_w": 0,
-            "battery_discharge_w": 0,
-            "battery_export_w": 0,
-            "battery_command": null,
-            "battery_soc": 0,
-            "grid_import_w": 0,
-            "grid_export_w": 6300,
-            "curtailed_w": 0,
-            "unserved_w": 0,
-            "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
-            "decision": {
-              "schema_version": 1,
-              "store_allocations": [],
-              "battery": null,
-              "grid_balance": {
-                "load_w": 700,
-                "pv_w": 7000,
-                "battery_charge_w": 0,
-                "battery_discharge_w": 0,
-                "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
-                "limit_w": 15000,
-                "limit_binding": false,
-                "reason": "residual_after_dispatch"
-              }
-            },
-            "rule_points": {}
-          },
-          {
-            "start": "2026-08-20T11:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8115,10 +8210,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.1205059435969599
+            }
           },
           {
-            "start": "2026-08-20T11:30:00.000Z",
+            "start": "2026-08-20T11:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8172,10 +8269,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.11351195903027905
+            }
           },
           {
-            "start": "2026-08-20T11:45:00.000Z",
+            "start": "2026-08-20T11:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8229,10 +8328,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.1067699340161188
+            }
           },
           {
-            "start": "2026-08-20T12:00:00.000Z",
+            "start": "2026-08-20T11:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8286,10 +8387,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.10026168005585753
+            }
           },
           {
-            "start": "2026-08-20T12:15:00.000Z",
+            "start": "2026-08-20T12:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8343,10 +8446,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.09396990583531742
+            }
           },
           {
-            "start": "2026-08-20T12:30:00.000Z",
+            "start": "2026-08-20T12:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8400,10 +8505,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.08787819453024052
+            }
           },
           {
-            "start": "2026-08-20T12:45:00.000Z",
+            "start": "2026-08-20T12:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8457,10 +8564,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.08197098111176562
+            }
           },
           {
-            "start": "2026-08-20T13:00:00.000Z",
+            "start": "2026-08-20T12:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8514,10 +8623,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.07623352965190441
+            }
           },
           {
-            "start": "2026-08-20T13:15:00.000Z",
+            "start": "2026-08-20T13:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8571,10 +8682,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.07065191062901811
+            }
           },
           {
-            "start": "2026-08-20T13:30:00.000Z",
+            "start": "2026-08-20T13:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8628,10 +8741,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.06521297823329389
+            }
           },
           {
-            "start": "2026-08-20T13:45:00.000Z",
+            "start": "2026-08-20T13:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8685,10 +8800,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.059904347672221366
+            }
           },
           {
-            "start": "2026-08-20T14:00:00.000Z",
+            "start": "2026-08-20T13:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8742,10 +8859,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.05471437247606887
+            }
           },
           {
-            "start": "2026-08-20T14:15:00.000Z",
+            "start": "2026-08-20T14:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8799,10 +8918,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.04963212180336028
+            }
           },
           {
-            "start": "2026-08-20T14:30:00.000Z",
+            "start": "2026-08-20T14:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8856,10 +8977,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0446473577463512
+            }
           },
           {
-            "start": "2026-08-20T14:45:00.000Z",
+            "start": "2026-08-20T14:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8913,10 +9036,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.039750512636505524
+            }
           },
           {
-            "start": "2026-08-20T15:00:00.000Z",
+            "start": "2026-08-20T14:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -8970,10 +9095,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.034932666349971865
+            }
           },
           {
-            "start": "2026-08-20T15:15:00.000Z",
+            "start": "2026-08-20T15:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9027,10 +9154,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.030185523613060084
+            }
           },
           {
-            "start": "2026-08-20T15:30:00.000Z",
+            "start": "2026-08-20T15:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9084,10 +9213,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.025501391307717686
+            }
           },
           {
-            "start": "2026-08-20T15:45:00.000Z",
+            "start": "2026-08-20T15:30:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9141,10 +9272,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.02087315577700631
+            }
           },
           {
-            "start": "2026-08-20T16:00:00.000Z",
+            "start": "2026-08-20T15:45:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9198,10 +9331,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.016294260130578286
+            }
           },
           {
-            "start": "2026-08-20T16:15:00.000Z",
+            "start": "2026-08-20T16:00:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9255,10 +9390,12 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.01175868155015282
+            }
           },
           {
-            "start": "2026-08-20T16:30:00.000Z",
+            "start": "2026-08-20T16:15:00.000Z",
             "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 7000,
@@ -9312,7 +9449,68 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.007260908594992836
+            }
+          },
+          {
+            "start": "2026-08-20T16:30:00.000Z",
+            "duration_hours": 0.25,
+            "binding": true,
+            "pv_raw_w": 7000,
+            "pv_w": 7000,
+            "base_w": 700,
+            "import_price_sek_per_kwh": 1.5,
+            "export_price_sek_per_kwh": 0.1,
+            "shadow_import_sek_per_kwh": 1.5,
+            "shadow_export_sek_per_kwh": 0.1,
+            "pool_w": 0,
+            "pool_permitted": false,
+            "pool_command_w": 0,
+            "boiler_expected_w": 0,
+            "boiler_permitted": false,
+            "ev_w": 3450,
+            "room_heating_w": {},
+            "device_loads_w": {},
+            "device_commands": {},
+            "ev_target_current_a": 5,
+            "ev_min_current_a": 0,
+            "ev_max_current_a": 16,
+            "ev_soc": 0.7933400000000005,
+            "ev_connected": true,
+            "load_w": 4150,
+            "battery_idle_w": 0,
+            "battery_charge_w": 0,
+            "battery_discharge_w": 0,
+            "battery_export_w": 0,
+            "battery_command": null,
+            "battery_soc": 0,
+            "grid_import_w": 0,
+            "grid_export_w": 2850,
+            "curtailed_w": 0,
+            "unserved_w": 0,
+            "import_cost_sek": 0,
+            "export_revenue_sek": 0.07125000000000001,
+            "decision": {
+              "schema_version": 1,
+              "store_allocations": [],
+              "battery": null,
+              "grid_balance": {
+                "load_w": 4150,
+                "pv_w": 7000,
+                "battery_charge_w": 0,
+                "battery_discharge_w": 0,
+                "residual_w": -2850,
+                "direction": "export",
+                "power_w": 2850,
+                "limit_w": 15000,
+                "limit_binding": false,
+                "reason": "residual_after_dispatch"
+              }
+            },
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T16:45:00.000Z",
@@ -9330,16 +9528,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 5520,
+            "ev_w": 0,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 8,
+            "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
-            "load_w": 6220,
+            "load_w": 700,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -9347,29 +9545,31 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 780,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.019500000000000003,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 6220,
+                "load_w": 700,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -780,
+                "residual_w": -6300,
                 "direction": "export",
-                "power_w": 780,
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -9394,7 +9594,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9426,7 +9626,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -9451,7 +9653,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9483,7 +9685,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -9508,7 +9712,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9540,7 +9744,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -9565,7 +9771,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9597,7 +9803,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -9622,7 +9830,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9654,7 +9862,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -9679,7 +9889,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9711,7 +9921,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -9736,7 +9948,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9768,7 +9980,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -9793,7 +10007,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9825,7 +10039,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -9850,7 +10066,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9882,7 +10098,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -9907,7 +10125,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9939,7 +10157,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -9964,7 +10184,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9996,7 +10216,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -10021,7 +10243,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10053,7 +10275,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -10078,7 +10302,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10110,7 +10334,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -10135,7 +10361,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10167,7 +10393,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -10192,7 +10420,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10224,7 +10452,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -10249,7 +10479,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10281,7 +10511,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -10306,7 +10538,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10338,7 +10570,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -10363,7 +10597,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10395,7 +10629,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -10420,7 +10656,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10452,7 +10688,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -10477,7 +10715,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10509,7 +10747,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -10534,7 +10774,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10566,7 +10806,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -10591,7 +10833,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10623,7 +10865,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -10648,7 +10892,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10680,7 +10924,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -10705,7 +10951,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10737,7 +10983,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -10762,7 +11010,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10794,7 +11042,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -10819,7 +11069,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10851,7 +11101,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -10876,7 +11128,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10908,7 +11160,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -10933,7 +11187,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10965,7 +11219,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -10990,7 +11246,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11022,7 +11278,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -11047,7 +11305,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11079,7 +11337,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -11104,7 +11364,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11136,7 +11396,9 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -11161,7 +11423,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7996880000000004,
+            "ev_soc": 0.7933400000000005,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11193,26 +11455,28 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {}
+            "rule_points": {
+              "car_floor": -0.0027959185073811945
+            }
           }
         ],
         "summary": {
-          "load_kwh": 31.55500000000003,
-          "flexible_load_kwh": 20.355000000000008,
+          "load_kwh": 31.037500000000033,
+          "flexible_load_kwh": 19.83750000000001,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.445000000000004,
+          "grid_export_kwh": 17.962500000000006,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.445000000000004,
-          "net_cost_sek": 8.755500000000001,
-          "terminal_adjusted_cost_sek": 8.755500000000001,
+          "priced_export_kwh": 17.962500000000006,
+          "net_cost_sek": 8.703750000000001,
+          "terminal_adjusted_cost_sek": 8.703750000000001,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 20.355000000000008,
+          "service_delivered_kwh": 19.83750000000001,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {

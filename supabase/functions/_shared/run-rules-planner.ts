@@ -1,5 +1,6 @@
 /** Browser, replay, fixture and benchmark adapter for the production planner. */
 import { buildPriceOutlook } from "./planner/energy-price-shape.ts";
+import { evReplacementPrice } from "./planner-wasm/ev-price-history.ts";
 import type { EnergyPlanningInput, OptimisationResult } from "./planner/planning-contracts.ts";
 import { resolveRulePolicy, type CriteriaOverrides } from "./planner-wasm/rule-policy.ts";
 import type { PublishedCommandReference } from "./rules-planner.ts";
@@ -16,6 +17,10 @@ export function runRulesPlanner(input: EnergyPlanningInput, reference: Published
     outlook = { shaped: resolved.shaped, observed_days: resolved.observedDays, effective_days: resolved.effectiveDays,
       level_sek_per_kwh: resolved.levelSekPerKwh, shadow_import_sek_per_kwh: resolved.shadowImportSekPerKwh,
       ...(resolved.levelBasis ? { level_basis: resolved.levelBasis } : {}) };
+  }
+  if (outlook.ev_replacement_sek_per_kwh === undefined) {
+    outlook = { ...outlook, ev_replacement_sek_per_kwh: evReplacementPrice(
+      input.price_archive, input.snapshot.captured_at, input.snapshot.timezone) };
   }
   return executeRulesPlanning(captureRulesPlanningInput({ ...input, resolved_price_outlook: outlook }, reference, resolveRulePolicy(criteria)));
 }

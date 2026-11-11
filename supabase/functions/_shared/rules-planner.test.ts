@@ -14,9 +14,11 @@ function snapshot(): OptimisationSnapshot {
   s.comfort = { ev: { target_km: 300 } };
   return s;
 }
-function prepare(s: OptimisationSnapshot, reference: {plan_id:string;slots:PlannedSlot[]} | null = null, now = s.captured_at) {
+function prepare(s: OptimisationSnapshot, reference: {plan_id:string;slots:PlannedSlot[]} | null = null, now = s.captured_at,
+  evReplacementSekPerKwh?: number) {
   return prepareRulesPlanningInput({ snapshot: s, now, price_archive: [], resolved_price_outlook: {
     shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
+    ...(evReplacementSekPerKwh !== undefined ? { ev_replacement_sek_per_kwh: evReplacementSekPerKwh } : {}),
     shadow_import_sek_per_kwh: s.slots.map(slot => slot.import_price_sek_per_kwh!),
   } }, reference, resolveRulePolicy());
 }
@@ -65,7 +67,7 @@ Deno.test("rules native solve materializes missing devices and exact physical ba
 Deno.test("rules plan publishes the points each deduction took, on the selected schedule only", () => {
   const s = snapshot();
   s.slots = s.slots.map((slot, i) => ({ ...slot, import_price_sek_per_kwh: i < 2 ? 0.4 : 1.5 }));
-  const prepared = prepare(s);
+  const prepared = prepare(s, null, s.captured_at, 0.9);
   const { plans } = generateRulesPlan(prepared).plan;
   // The planner is sent the deduction rules only: a cheap quarter is on the bill, not a reward.
   const sent = new Set<string>(prepared.problem.rules.map(rule => rule.key));
@@ -75,9 +77,24 @@ Deno.test("rules plan publishes the points each deduction took, on the selected 
   const charged = plans.priority.slots.flatMap((slot, i) => slot.ev_w > 0 ? [i] : []);
   assertEquals(charged.filter(i => i < 2), [0, 1]);
   assert(plans.baseline.slots.every(slot => slot.rule_points === undefined));
-  // The problem carries what the energy left in the car is worth, at the median price it was told.
+  // The current forecast supplies the common median. The EV uses only its historical replacement value.
   assertEquals(prepared.problem.end_credit.reference_sek_per_kwh, 1.5);
-  assert(prepared.problem.end_credit.ev !== null && prepared.problem.end_credit.battery === null);
+  assertEquals(prepared.problem.end_credit.ev?.tiers, [{up_to: prepared.problem.car_policy!.limit_kwh, sek_per_kwh: 0.9}]);
+  assertEquals(prepared.problem.end_credit.battery, null);
+  assertEquals(prepare(s).problem.end_credit.ev, null);
+});
+Deno.test("historical EV value uses sunny surplus before a dearer published grid opportunity", () => {
+  const s = dispatchedEvSnapshot();
+  s.ev_battery!.soc = 0.7;
+  s.ev_battery!.plugged_in_at = s.captured_at;
+  s.slots = s.slots.map((slot, index) => ({
+    ...slot, base_load_forecast_w: 600, pv_forecast_w: index >= 24 && index < 40 ? 12_000 : 0,
+    import_price_sek_per_kwh: index < 16 ? 0.71 : 4.5, export_price_sek_per_kwh: 0.12,
+  }));
+  const slots = generateRulesPlan(prepare(s, null, s.captured_at, 0.84)).plan.plans.priority.slots;
+  assert(slots.slice(0, 24).every(slot => slot.ev_w === 0));
+  assert(slots.slice(24, 40).some(slot => slot.ev_w > 0));
+  assert(slots.at(-1)!.ev_soc > 0.78);
 });
 Deno.test("rules partial-quarter commitment locks five exact intervals without a fabricated suffix", () => {
   const s = snapshot();

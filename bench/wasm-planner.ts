@@ -20,7 +20,9 @@ import { publishHeater } from "../supabase/functions/_shared/planner/device-mode
 import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 import { completeRulesCandidates } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
-import { caseCarPolicy, type HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
+import { type HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
+import { carReadinessPolicy } from "../supabase/functions/_shared/planner-wasm/car-policy.ts";
+import { evReplacementPrice } from "../supabase/functions/_shared/planner-wasm/ev-price-history.ts";
 import {
   type BenchCase,
   caseTargets,
@@ -206,8 +208,9 @@ export function readyProblem(
     accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
-  problem.car_policy = caseCarPolicy(c, h, target);
-  problem.end_credit = problemEndCredit(problem);
+  problem.car_policy = carReadinessPolicy({ battery: h.car.battery, limitSoc: c.start_state.ev.target_soc,
+    connection: { kind: "plugged", sinceMs: 0 } }, problem.slots, 0);
+  problem.end_credit = problemEndCredit(problem, evReplacementPrice(priceRows, c.start, c.timezone));
   return problem;
 }
 

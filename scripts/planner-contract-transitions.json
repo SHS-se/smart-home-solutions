@@ -39,5 +39,17 @@
         "new_name": "CONTRACT BASIS-2: capture detaches models, policy and accepted commands from caller mutations"
       }
     ]
+  },
+  {
+    "requirement": "User approved the limit-relative 72-hour EV readiness ramp on 11 November 2026. EV-1 now checks that the same charge passes from above to below the rising target as the original plug-in ages. The low-charge and cable-telemetry assertions are retained.",
+    "before": "c46275ca420a21713bde74333e5ddfe0c72b226a",
+    "after": "882a6a8cf6387b66a48fcc09986c75d98fb5e244",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging",
+        "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
+      }
+    ]
   }
 ]

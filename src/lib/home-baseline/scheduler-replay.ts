@@ -7,14 +7,15 @@ import { allocatedBatteryCommand } from '../../../supabase/functions/_shared/pla
 import type { createWasmPlanner, NativeQuarter } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import { noUnservedTrips, recordedTrips, recordUnserved, withdrawTrip } from './trip-ledger.ts';
-import { CAR_FLOOR_SOC_DEFAULT, carPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
+import { carReadinessPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
+import { evReplacementPrice } from '../../../supabase/functions/_shared/planner-wasm/ev-price-history.ts';
 import { electricityLedger } from './controller.ts';
 import { projectionSeries, type BaselineInput } from './model.ts';
 import { finalSimulationState, simulationProblem } from './simulation-state.ts';
 import { quarterPool } from './pool-carry.ts';
 
 export type ReplayEngine = Pick<ReturnType<typeof createWasmPlanner>, 'solve' | 'project'>;
-export const REPLAY_PROTOCOL = 'continuous-stores-72h-refined-battery-car-floor-v7';
+export const REPLAY_PROTOCOL = 'continuous-stores-72h-graded-car-readiness-v8';
 export const REPLAY_ENGINE = `${runtime.recipe.version}:${runtime.policy_manifest.version}:${artifact.wasm_sha256}`;
 
 /** Current optimizer, isolated from live planning/dispatch. Trips are external physical withdrawals. */
@@ -31,11 +32,17 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
       battery_export_min_price: policy.battery_export_min_price_sek_per_kwh } };
   let state = { ...problem.initial }, selected: NativeCommand[] = [], plannedAt = -1, day = '', solves = 0;
   const commands: NativeCommand[] = [], quarters: NativeQuarter[] = [], unserved = noUnservedTrips();
-  const limitSoc = input.settings.ev_battery?.charge_limit_soc ?? 0.8, floorSetting = comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT;
+  const limitSoc = input.settings.ev_battery?.charge_limit_soc ?? 0.8;
+  const startMs = Date.parse(input.start);
+  const priceHistory = problem.car ? problem.slots.map((slot, i) => ({
+    start_ts: new Date(startMs + i * 900_000).toISOString(),
+    import_price_sek_per_kwh: slot.import_price,
+  })) : [];
+  let replacementPrice: number | null = null;
   const forecastSlots = [...problem.slots, ...input.planningTail.slots];
   const trips = recordedTrips([...input.evDemandKwh, ...input.planningTail.evDemandKwh], forecastSlots.length);
   for (let i = 0; i < problem.slots.length; i++) {
-    const at = new Date(Date.parse(input.start) + i * 900_000).toISOString(), currentDay = localDay(at, input.timeZone);
+    const at = new Date(startMs + i * 900_000).toISOString(), currentDay = localDay(at, input.timeZone);
     if (problem.car) {
       const trip = withdrawTrip(state.ev_kwh!, input.evDemandKwh[i]);
       recordUnserved(unserved, i, trip.unservedKwh, problem.car.charge_efficiency);
@@ -60,9 +67,13 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
       // since before this period has long used its grace.
       let home = i;
       while (home > 0 && problem.slots[home - 1].ev_available) home--;
-      if (horizon.car) horizon.car_policy = carPolicy({ battery: horizon.car, limitSoc, floorSetting,
-        connection: home === 0 ? { kind: 'plugged_unknown_since' } : { kind: 'plugged', sinceMs: Date.parse(input.start) + home * 900_000 } }, horizon.slots, Date.parse(at));
-      horizon.end_credit = problemEndCredit(horizon);
+      if (horizon.car) {
+        horizon.car_policy = carReadinessPolicy({ battery: horizon.car, limitSoc,
+          connection: home === 0 ? { kind: 'plugged_unknown_since' } : { kind: 'plugged', sinceMs: startMs + home * 900_000 } },
+        horizon.slots, Date.parse(at));
+        if (currentDay !== day) replacementPrice = evReplacementPrice(priceHistory.slice(Math.max(0, i - 60 * 96), i), at, input.timeZone);
+      }
+      horizon.end_credit = problemEndCredit(horizon, replacementPrice);
       const outcome = engine.solve(horizon).outcome; solves++;
       if (outcome.kind === 'failed') throw new Error(`Historical scheduler at ${at}: ${outcome.issue}`);
       selected = outcome.selection.commands.map((command, n) => allocatedBatteryCommand(command, outcome.selection.quarters[n]));

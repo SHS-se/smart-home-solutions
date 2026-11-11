@@ -41,16 +41,11 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             .as_ref()
             .filter(|_| s.ev_available)
             .map_or(0.0, |car| {
-                let price = if s.solar_w > s.base_w {
-                    s.export_price
-                } else {
-                    s.import_price
-                };
                 p.end_credit
                     .ev
                     .iter()
                     .flat_map(|t| &t.tiers)
-                    .filter(|tier| tier.sek_per_kwh > price)
+                    .filter(|tier| tier.sek_per_kwh > s.import_price)
                     .fold(car.floor_kwh, |goal, tier| goal.max(tier.up_to))
                     .min(car.limit_kwh)
             })
@@ -242,13 +237,22 @@ fn tally(p: &Problem, q: &[Quarter], rows: bool) -> Account {
 pub(crate) fn soc_permille(car: &CarBattery, kwh: f64) -> i32 {
     (kwh / car.capacity_kwh * 1000.0 + 0.5).floor() as i32
 }
-/// Whether a quarter ending at this charge counts as below the floor (car-policy.ts).
-pub(crate) fn car_floor_breached(p: &Problem, i: usize, kwh: f64) -> bool {
+/// Cost per hour of remaining below the charge target. The marginal cost of
+/// another missing kWh is higher at low charge.
+fn car_readiness_cost(p: &Problem, i: usize, kwh: f64) -> f64 {
     p.car
         .as_ref()
         .zip(p.car_policy.as_ref())
-        .is_some_and(|(car, policy)| {
-            policy.breach_permille[i].is_some_and(|line| soc_permille(car, kwh) <= line)
+        .and_then(|(car, policy)| policy.breach_permille[i].map(|line| (car, line)))
+        .map_or(0.0, |(car, line)| {
+            let target = f64::from(line + 1) / 1000.0;
+            let charge = kwh / car.capacity_kwh;
+            if charge >= target {
+                return 0.0;
+            }
+            let low_exposure = ((1.0 - charge).powi(5) - (1.0 - target).powi(5)) / 5.0;
+            (0.02 * (target - charge) + 0.35 * low_exposure)
+                * car.capacity_kwh / car.charge_efficiency
         })
 }
 /// Degree-hours below target − 1°C, integrating the linear water interpolation.
@@ -284,8 +288,9 @@ fn contribution(p: &Problem, r: &Rule, i: usize, v: &Quarter, before_c: f64) -> 
             }
         }
         RuleKey::CarFloor => {
-            if car_floor_breached(p, i, v.ev_kwh.unwrap()) {
-                r.points
+            let cost = car_readiness_cost(p, i, v.ev_kwh.unwrap());
+            if cost > 0.0 {
+                r.points / 2.0 * cost * projected_hours(&p.slots[i])
             } else {
                 0.0
             }
@@ -402,22 +407,25 @@ mod service_tests {
         p.initial.pool_c = Some(27.0);
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        assert_eq!(account(&p, &q).contributions[0], [-1.0, -1.0]);
+        let car = account(&p, &q).contributions[0][1];
+        assert!(car < 0.0 && car > -1.0);
+        assert_eq!(account(&p, &q).contributions[0], [-1.0, car]);
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
-        assert_eq!(account(&p, &q).contributions[0], [0.0, -1.0]);
+        assert_eq!(account(&p, &q).contributions[0], [0.0, car]);
     }
     #[test]
-    fn the_floor_only_counts_at_or_below_the_line_of_that_quarter() {
+    fn readiness_cost_decreases_as_charge_approaches_the_target() {
         let mut p = crate::witnesses::tests::problem(3);
         p.car_policy.as_mut().unwrap().breach_permille = vec![None, Some(250), Some(299)];
         // 60 kWh battery: 15 kWh is 250 permille.
-        assert!(!car_floor_breached(&p, 0, 0.0));
-        assert!(car_floor_breached(&p, 1, 15.0));
-        assert!(!car_floor_breached(&p, 1, 15.06));
-        assert!(car_floor_breached(&p, 2, 17.9));
-        assert!(!car_floor_breached(&p, 2, 18.0));
+        assert_eq!(car_readiness_cost(&p, 0, 0.0), 0.0);
+        assert!(car_readiness_cost(&p, 1, 15.0) > 0.0);
+        assert_eq!(car_readiness_cost(&p, 1, 15.06), 0.0);
+        assert!(car_readiness_cost(&p, 2, 12.0) > car_readiness_cost(&p, 2, 17.9));
+        assert!(car_readiness_cost(&p, 2, 17.9) > 0.0);
+        assert_eq!(car_readiness_cost(&p, 2, 18.0), 0.0);
         assert_eq!(soc_permille(p.car.as_ref().unwrap(), 15.03), 251);
     }
     #[test]

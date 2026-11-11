@@ -109,13 +109,15 @@ Deno.test('water headroom charges the pool start-up and the car at their full dr
   const p = cpuPlanningInput();
   const solved = core.solve(p.problem).outcome; assert(solved.kind === 'selected');
   const selection = structuredClone(solved.selection);
-  const q = selection.quarters[20], limit = p.problem.limits.import_w;
-  // Quarter 20 starts the pool: its quarter average is below the full ON draw the grid check reserves.
+  const start = selection.quarters.findIndex(q => q.pool_command_w - q.pool_w > 400);
+  const q = selection.quarters[start], limit = p.problem.limits.import_w;
+  // A pool start's quarter average is below the full ON draw the grid check reserves.
   assert(q.pool_command_w - q.pool_w > 400);
-  assertEquals(hotWaterHeadroomW(p, selection, 20),
-    limit - q.net_w + q.charge_w + p.boiler_w[20] - (q.pool_command_w - q.pool_w));
+  assertEquals(hotWaterHeadroomW(p, selection, start),
+    limit - q.net_w + q.charge_w + p.boiler_w[start] - (q.pool_command_w - q.pool_w));
   // A car limited by its charge level draws less than its commanded current is admitted at.
   const car = selection.quarters[151], charger = p.problem.charger!;
+  selection.commands[151].ev_amps = 10;
   const admitted = selection.commands[151].ev_amps * charger.voltage_v * charger.phase_count;
   car.ev_w = admitted - 2000;
   assertEquals(hotWaterHeadroomW(p, selection, 151),

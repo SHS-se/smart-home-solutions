@@ -16,6 +16,7 @@ import { blendWeatherPrice, PRICE_WEATHER_TABLE, priceWeatherFeeds } from "../_s
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
 import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { readPlanningSellPrices } from "../_shared/planning-sell-prices.ts";
+import { evReplacementPrice } from "../_shared/planner-wasm/ev-price-history.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { OptimisationPlan, FixedEnergyPlan } from "../_shared/planner/planning-contracts.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -304,6 +305,7 @@ async function refreshPreparedForecasts(
       () => houseTemperatureForecast(starts, source.timezone, (houseResult.data ?? []) as HouseProfileRow[])) };
   const priceOutlook={shaped:outlook.shaped,observed_days:outlook.observedDays,effective_days:outlook.effectiveDays,
     level_sek_per_kwh:outlook.levelSekPerKwh,
+    ev_replacement_sek_per_kwh: evReplacementPrice(priceHistory, source.captured_at, source.timezone),
     shadow_import_sek_per_kwh:(regionalPrices?.prices ?? outlook.shadowImportSekPerKwh).slice(0,product.slots.length),
     ...(regionalPrices ? { weather_price_sources: regionalPrices.sources } : {}),
     ...(outlook.levelBasis?{level_basis:outlook.levelBasis}:{})};

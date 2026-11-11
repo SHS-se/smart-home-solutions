@@ -47,6 +47,29 @@ export type CarConnection =
 
 export interface CarPlan { battery: CarBatteryModel; limitSoc: number; floorSetting: number; connection: CarConnection }
 
+const READINESS_HOURS = 72;
+const HOUR_MS = 3_600_000;
+
+/** The live planner's soft readiness target. The independent bench referee
+ * retains its existing floor when comparing both planner versions. */
+export function carReadinessPolicy(
+  plan: Omit<CarPlan, "floorSetting">,
+  slots: readonly Pick<ReadySlot, "start_seconds" | "hours" | "ev_available">[],
+  originMs: number,
+): NonNullable<ReadyProblem["car_policy"]> {
+  const limit = Math.min(1, Math.max(0, plan.limitSoc));
+  const cap = Math.round(limit * 1000);
+  const anchor = plan.connection.kind === "plugged" ? Math.min(originMs, plan.connection.sinceMs)
+    : plan.connection.kind === "plugged_unknown_since" ? originMs - READINESS_HOURS * HOUR_MS : originMs;
+  const breach_permille = slots.map(slot => {
+    if (!slot.ev_available) return null;
+    const elapsed = Math.max(0, (originMs - anchor) / HOUR_MS + slot.start_seconds / 3600 + slot.hours);
+    const target = Math.min(cap, cap - READINESS_HOURS * 10 + Math.floor(elapsed * 10));
+    return target > 0 ? target - 1 : null;
+  });
+  return { floor_kwh: limit * plan.battery.capacity_kwh, limit_kwh: limit * plan.battery.capacity_kwh, breach_permille };
+}
+
 /** A snapshot's cable state. A missing or unreadable plug-in time never grants a new grace. */
 export function connectionFromSnapshot(ev: { connected: boolean; plugged_in_at?: string | null }): CarConnection {
   if (!ev.connected) return { kind: "unplugged" };

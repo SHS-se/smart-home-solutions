@@ -11,7 +11,7 @@ import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 
 const requestId = "fd1b02a1-0000-4000-8000-000000000001";
 const input = (snapshot: OptimisationSnapshot, execution_replan?: ExecutionReplan) => ({snapshot,
-  now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {...rulesFixtureInput(snapshot).price_outlook, shadow_import_sek_per_kwh: snapshot.slots.map(slot => slot.import_price_sek_per_kwh!)}, execution_replan});
+  now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {...rulesFixtureInput(snapshot, 0.5).price_outlook, shadow_import_sek_per_kwh: snapshot.slots.map(slot => slot.import_price_sek_per_kwh!)}, execution_replan});
 const end = (start: string) => new Date(Date.parse(start) + 900_000).toISOString();
 const change = (owner: string, snapshot: OptimisationSnapshot, status: ExecutionChange["status"] = "faulted"): ExecutionChange => ({
   owner, status, cause: status === "temporarily_absent" ? "vehicle_disconnected" : "actuator_unavailable",

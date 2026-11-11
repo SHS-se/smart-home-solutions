@@ -1,5 +1,16 @@
 # Requirements for planner and controller constraints
 
+User requirement, 11 November 2026: EV readiness uses the car's configured
+charge limit. Its soft target rises by one percentage point per elapsed hour
+from 72 percentage points below that limit, bounded at zero and the limit.
+Shortfall has graded urgency, strongest at low charge. The target stays at
+the limit after 72 hours and replanning retains the plug-in clock.
+Replace EV forecast-percentile inventory tiers with a replacement value
+learned from published household import history. Compare grid and solar
+through joint physical dispatch, including forgone export and battery use.
+This supersedes the former 30% floor and the grace-length expectation in EV-1.
+The cable-telemetry and anchored-clock parts of EV-1 still apply.
+
 User requirement, 5 November 2026: use a linear pool comfort deduction with
 no penalty through 1°C below the desired temperature. Beyond that, each
 additional 0.1°C costs 0.1 point per full quarter: 2°C below costs 1 point;

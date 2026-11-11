@@ -1,5 +1,5 @@
 {
-  "version": "kronor-score-v21",
+  "version": "kronor-score-v22",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"
@@ -29,10 +29,11 @@
     "caps": {
       "battery": "full",
       "pool": "comfort_target",
-      "ev": "min_target_km_charge_limit"
+      "ev": "configured_charge_limit_at_historical_replacement_price"
     },
     "owner": "supabase/functions/_shared/planner-wasm/end-credit.ts"
   },
   "coverage": "bounded_causal_certificates_with_reported_exhaustion",
-  "pool_comfort": "4_sek_per_degree_hour_beyond_1c_shortfall_integrated_linear_water_segments"
+  "pool_comfort": "4_sek_per_degree_hour_beyond_1c_shortfall_integrated_linear_water_segments",
+  "car_readiness": "graded_shortfall_below_limit_relative_72_hour_plug_in_ramp"
 }

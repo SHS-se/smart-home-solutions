@@ -19,7 +19,7 @@ import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter, SolveOutcome } from "./planner-wasm/core.ts";
 import { READY_ABI, builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
-import { CAR_FLOOR_SOC_DEFAULT, carPolicy, connectionFromSnapshot } from "./planner-wasm/car-policy.ts";
+import { carReadinessPolicy, connectionFromSnapshot } from "./planner-wasm/car-policy.ts";
 import { batteryAcCeilings } from './planner/battery-conversion.ts';
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/planning-contracts.ts";
@@ -394,9 +394,16 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
       fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
       locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
     };
-    if (car && ev) problem.car_policy = carPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
-      floorSetting: snapshot.comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT, connection: connectionFromSnapshot(ev) }, problem.slots, effective);
-    problem.end_credit = problemEndCredit(problem);
+    if (car && ev) {
+      problem.car_policy = carReadinessPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
+        connection: connectionFromSnapshot(ev) }, problem.slots, effective);
+      if (outlook.ev_replacement_sek_per_kwh == null) {
+        snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+          "ev_replacement_price_history", "ev", "Historical import prices do not yet provide a charging price reference.",
+          "The car is planned using charge readiness and the available prices.")]);
+      }
+    }
+    problem.end_credit = problemEndCredit(problem, outlook.ev_replacement_sek_per_kwh);
     return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
       price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
       members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
