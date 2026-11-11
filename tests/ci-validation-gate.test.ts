@@ -9,8 +9,9 @@ Deno.test("CI deployment gate waits for quality, every unit shard, Rust and ever
   assert(gate.includes("needs: [changes, quality, unit, planner-rust, planner-contracts, planner-integration, frontend]"));
   assert(gate.includes("!cancelled()"));
   assert(workflow.includes("fail-fast: false"));
-  assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/4"));
-  assert(workflow.includes("node scripts/e2e-shard.mjs ${{ matrix.shard }}/3"));
+  assert(workflow.includes("run: bash .github/ci-images/run.sh deno task test --shard ${{ matrix.shard }}/4"));
+  assert(workflow.includes("SHS_SHARD: ${{ matrix.shard }}"));
+  assert(workflow.includes('node scripts/e2e-shard.mjs "$SHS_SHARD/3"'));
   assert(workflow.includes("npm run test:e2e:local -- --test-list"));
   assert(workflow.includes("needs: [changes, ci]"));
 });
@@ -43,6 +44,7 @@ Deno.test("manual deployment retains accepted contracts while deploying all file
       assert(result.success, new TextDecoder().decode(result.stderr));
       const values = Object.fromEntries((await Deno.readTextFile(output)).trim().split("\n").map(line => line.split("=")));
       assertEquals(values.contract_base, accepted);
+      assertEquals(values.deploy, String(event !== "pull_request"));
       assertEquals(values.sha, event === "workflow_dispatch" ? "" : accepted);
     }
     const check = workflow.split("      - name: Run current and previously accepted contracts against this planner")[1]
