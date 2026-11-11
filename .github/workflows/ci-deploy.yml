@@ -1,6 +1,6 @@
 name: CI & Deploy
 
-# Runs lint, two unit-test shards and three browser-test shards in parallel on push/PR.
+# Runs lint, two unit-test shards and two browser-test shards in parallel on push/PR.
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
 # project, then (2) deploys the Supabase edge functions to that project, then (3) deploys the
 # frontend to a per-environment Cloudflare Pages project and (4) prunes that project's old
@@ -91,35 +91,6 @@ jobs:
       - name: Classify changed files
         id: detect
         run: deno run -A --no-check scripts/ci-changes.ts --base "${{ steps.base.outputs.sha }}" --workflow ci-deploy.yml
-
-  ci-images:
-    name: Publish CI dependency images
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true' && needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      checks: ${{ steps.publish.outputs.checks }}
-      browser: ${{ steps.publish.outputs.browser }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Sign in to GitHub Container Registry
-        env:
-          REGISTRY_TOKEN: ${{ github.token }}
-        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-
-      - name: Publish missing images
-        id: publish
-        env:
-          IMAGE_KEY: deps-${{ hashFiles('.github/ci-images/Dockerfile', '.github/ci-images/Dockerfile.dockerignore', 'package.json', 'package-lock.json') }}
-        run: |
-          bash .github/ci-images/publish.sh checks "$IMAGE_KEY"
-          bash .github/ci-images/publish.sh browser "$IMAGE_KEY"
 
   quality:
     name: Lint & typecheck
@@ -264,29 +235,22 @@ jobs:
 
   frontend-build:
     name: Build frontend
-    needs: [changes, ci-images]
-    if: ${{ !cancelled() && !failure() && needs.changes.outputs.frontend == 'true' }}
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare CI image
-        uses: ./.github/actions/ci-image
-        with:
-          target: checks
-          image: ${{ needs.ci-images.outputs.checks }}
-          token: ${{ github.token }}
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
 
       - name: Build
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
         run: |
-          if [ "${{ github.ref_name }}" = "dev" ]; then
-            bash .github/ci-images/run.sh npm run build:test
+          if [ "$GITHUB_REF_NAME" = "dev" ]; then
+            npm run build:test
           else
-            bash .github/ci-images/run.sh npm run build
+            npm run build
           fi
 
       - name: Upload build output
@@ -298,26 +262,24 @@ jobs:
           retention-days: 7
 
   frontend:
-    name: Browser tests (${{ matrix.shard }}/3)
-    needs: [changes, ci-images, frontend-build]
-    if: ${{ !cancelled() && !failure() && needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
+    name: Browser tests (${{ matrix.shard }}/2)
+    needs: [changes, frontend-build]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare CI image
-        uses: ./.github/actions/ci-image
-        with:
-          target: browser
-          image: ${{ needs.ci-images.outputs.browser }}
-          token: ${{ github.token }}
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
+
+      - name: Install headless Chromium
+        # The Ubuntu runner supplies Chromium's shared libraries. Playwright
+        # installs the headless shell matching the version in the npm lockfile.
+        run: npx playwright install --only-shell chromium
 
       - name: Download build output
         uses: actions/download-artifact@v4
@@ -326,15 +288,12 @@ jobs:
           path: dist
 
       - name: E2E tests (mocked backend)
-        # Same command locally and in CI; Playwright owns the preview server. The shard's
-        # tests are balanced by measured duration (scripts/e2e-shard.mjs), not by count.
+        # Playwright owns the preview server. Balance shards by measured duration.
         env:
           SHS_SHARD: ${{ matrix.shard }}
         run: |
-          bash .github/ci-images/run.sh bash -euc '
-            node scripts/e2e-shard.mjs "$SHS_SHARD/3" > "$RUNNER_TEMP/e2e-shard.txt"
-            npm run test:e2e:local -- --test-list "$RUNNER_TEMP/e2e-shard.txt"
-          '
+          node scripts/e2e-shard.mjs "$SHS_SHARD/2" > "$RUNNER_TEMP/e2e-shard.txt"
+          npm run test:e2e:local -- --workers=2 --test-list "$RUNNER_TEMP/e2e-shard.txt"
 
   ci:
     name: Lint, test & build

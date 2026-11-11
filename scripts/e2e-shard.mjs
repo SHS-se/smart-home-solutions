@@ -8,21 +8,26 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-// Seconds per test from the 2026-10-14 CI log (two workers per shard). These
-// are scheduling weights, never a filter on which tests run; unlisted tests
-// count as DEFAULT_COST.
+// Seconds per test from CI run 43061174266. These are scheduling weights,
+// never a filter on which tests run; unlisted tests count as DEFAULT_COST.
 const COSTS = {
-  'ROI May–August sensor gaps generate, and month graphs use the same ledgers as ROI': 174,
-  'ROI reloads durable monthly totals without fetching history or generating charts': 102,
-  'the estimate holds one pool temperature in both columns, and changing it recalculates': 60,
-  'ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them': 42,
-  'the track record counts only full months SHS controlled, against the estimate for those months': 40,
-  'ROI retains saved months when new prices are unavailable and keeps graph navigation usable': 39,
-  'customer ROI uses optimizer replay and original bills, with subscription only in ROI': 39,
-  'the model check prices metered use like an itemised invoice, both without the demand charge': 27,
-  'delayed meter energy is disclosed as an estimated interval average in the actual chart': 21,
-  'ROI recovers an empty month from hourly history and uses the same costs in its graph': 16,
+  'ROI May–August sensor gaps generate, and month graphs use the same ledgers as ROI': 72,
+  'ROI reloads durable monthly totals without fetching history or generating charts': 66,
+  'equipment comparison keeps the in-progress month when newer readings arrive after the reference was saved': 66,
+  'the estimate holds one pool temperature in both columns, and changing it recalculates': 41,
+  'reloaded equipment trials never save reference months and retain sizes through calculation failure and reload': 40,
+  'a full ROI month completes with bounded native projection memory': 26,
+  'equipment sizing reads published nameplates and supports zero solar and battery': 24,
+  'ROI retains saved months when new prices are unavailable and keeps graph navigation usable': 24,
+  'ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them': 23,
+  'customer ROI uses optimizer replay and original bills, with subscription only in ROI': 23,
+  'equipment trials rerun solar, inverter and battery physics without replacing the saved home report': 21,
+  'the track record counts only full months SHS controlled, against the estimate for those months': 17,
+  'the model check prices metered use like an itemised invoice, both without the demand charge': 17,
+  'ROI recovers an empty month from hourly history and uses the same costs in its graph': 11,
   'shows a rescore queued, then running on the plan it is at, then done': 10,
+  'planning toggles preserve methods across Monitoring and reload without rewriting existing choices': 10,
+  'delayed meter energy is disclosed as an estimated interval average in the actual chart': 9,
 };
 const DEFAULT_COST = 3;
 
