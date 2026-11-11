@@ -37,10 +37,10 @@ Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charg
     const p = plan(s); check(p);
     assert((p.plans.priority.slots[0].rule_points?.car_floor ?? 0) < 0, "shortfall is counted in the opening quarter");
   }
-  // At 80% limit the target is 8% at plug-in, 16% at eight hours,
-  // and 28% at twenty hours. The same 25% reading changes urgency with age.
-  const buffered = structuredClone(connected); buffered.ev_battery!.soc = .25;
-  for (const [hours, target, urgent] of [[8, 161, false], [20, 281, true]] as const) {
+  // The same 30% reading is above the target at one hour and below it
+  // at thirteen hours. The target crosses 30% ten hours after plug-in.
+  const buffered = structuredClone(connected); buffered.ev_battery!.soc = .30;
+  for (const [hours, target, urgent] of [[1, 211, false], [13, 331, true]] as const) {
     const later = structuredClone(buffered);
     later.slots = later.slots.map(slot => ({ ...slot, start: new Date(Date.parse(slot.start) + hours * 3600000).toISOString() }));
     later.captured_at = later.slots[0].start;
@@ -49,6 +49,10 @@ Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charg
     const first = plan(later).plans.priority.slots[0];
     assertEquals(first.ev_target_current_a > 0, urgent);
   }
+  const horizon = syntheticHome(288);
+  horizon.ev_battery!.plugged_in_at = horizon.captured_at;
+  const line = prepare(horizon).problem.car_policy!.breach_permille;
+  assertEquals([line[0], line[39], line[238], line[239], line[287]], [201, 299, 796, 799, 799]);
 });
 
 for (const amps of [12, 15]) Deno.test(`CONTRACT EV-2: ${amps} A fits beside full pool power and is selected`, () => {
