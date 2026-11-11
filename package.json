@@ -84,7 +84,7 @@
     "react-router-dom": "^7.12.0",
     "recharts": "^2.15.4",
     "remark-gfm": "^4.0.1",
-    "sonner": "^1.7.4",
+    "sonner": "^2.0.8",
     "swedish-holidays": "^1.1.2",
     "tailwind-merge": "^3.7.0",
     "tailwindcss-animate": "^1.0.7",
