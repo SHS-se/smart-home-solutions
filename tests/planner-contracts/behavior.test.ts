@@ -37,14 +37,18 @@ Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charg
     const p = plan(s); check(p);
     assert((p.plans.priority.slots[0].rule_points?.car_floor ?? 0) < 0, "shortfall is counted in the opening quarter");
   }
-  // A car in its grace stays free only until the plug-in's own clock runs out, however often it replans.
-  const inGrace = structuredClone(connected); inGrace.ev_battery!.soc = .25;
-  assertEquals(plan(inGrace).plans.priority.slots[0].rule_points?.car_floor ?? 0, 0);
-  const later = structuredClone(inGrace);
-  later.slots = later.slots.map(slot => ({ ...slot, start: new Date(Date.parse(slot.start) + 8 * 3600000).toISOString() }));
-  later.captured_at = later.slots[0].start;
-  later.ev_battery!.available_from = later.slots[0].start;
-  assert(plan(later).plans.priority.slots[0].ev_target_current_a > 0, "a replan must not renew the grace");
+  // At 80% limit the target is 8% at plug-in, 16% at eight hours,
+  // and 28% at twenty hours. The same 25% reading changes urgency with age.
+  const buffered = structuredClone(connected); buffered.ev_battery!.soc = .25;
+  for (const [hours, target, urgent] of [[8, 161, false], [20, 281, true]] as const) {
+    const later = structuredClone(buffered);
+    later.slots = later.slots.map(slot => ({ ...slot, start: new Date(Date.parse(slot.start) + hours * 3600000).toISOString() }));
+    later.captured_at = later.slots[0].start;
+    later.ev_battery!.available_from = later.slots[0].start;
+    assertEquals(prepare(later).problem.car_policy!.breach_permille[0], target);
+    const first = plan(later).plans.priority.slots[0];
+    assertEquals(first.ev_target_current_a > 0, urgent);
+  }
 });
 
 for (const amps of [12, 15]) Deno.test(`CONTRACT EV-2: ${amps} A fits beside full pool power and is selected`, () => {
