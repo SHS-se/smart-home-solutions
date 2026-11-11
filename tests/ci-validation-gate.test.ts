@@ -6,21 +6,31 @@ const script = gate.split("        run: |\n")[1]
   .split("\n").filter(line => line.trim()).map(line => line.slice(10)).join("\n");
 
 Deno.test("CI deployment gate waits for quality, every unit shard, Rust and every browser shard", () => {
-  assert(gate.includes("needs: [changes, quality, unit, planner-rust, planner-contracts, planner-integration, frontend]"));
+  assert(gate.includes("needs: [changes, quality, unit, planner-rust, frontend]"));
   assert(gate.includes("!cancelled()"));
+  const quality = workflow.split("\n  quality:\n")[1].split("\n  unit:\n")[0];
+  assert(quality.includes("deno task test:planner-contracts --base"));
+  assert(quality.includes("scripts/qualify-planner-integration.ts"));
   assert(workflow.includes("fail-fast: false"));
-  assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/4"));
-  assert(workflow.includes("node scripts/e2e-shard.mjs ${{ matrix.shard }}/3"));
-  assert(workflow.includes("npm run test:e2e:local -- --test-list"));
+  assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/2"));
+  assert(workflow.includes("shard: [1, 2]"));
+  const browsers = workflow.split("\n  frontend:\n")[1].split("\n  ci:\n")[0];
+  assert(browsers.includes("needs: [changes, frontend-build]"));
+  assert(browsers.includes("shard: [1, 2, 3]"));
+  assert(browsers.includes("uses: actions/download-artifact@"));
+  assert(!browsers.includes("npm run build"));
+  assert(workflow.includes("SHS_SHARD: ${{ matrix.shard }}"));
+  assert(workflow.includes('node scripts/e2e-shard.mjs "$SHS_SHARD/3"'));
+  assert(workflow.includes("npm run test:e2e:local -- --workers=1 --test-list"));
   assert(workflow.includes("needs: [changes, ci]"));
 });
 
 Deno.test("the actual CI gate rejects failed, cancelled or unexpectedly skipped checks", async () => {
-  const success = { QUALITY_RESULT: "success", UNIT_RESULT: "success", PLANNER_RUST_RESULT: "success", PLANNER_CONTRACTS_RESULT: "success", PLANNER_INTEGRATION_RESULT: "success", FRONTEND_RESULT: "success", FRONTEND_CHANGED: "true" };
+  const success = { QUALITY_RESULT: "success", UNIT_RESULT: "success", PLANNER_RUST_RESULT: "success", FRONTEND_RESULT: "success", FRONTEND_CHANGED: "true" };
   const scenarios = [
     { env: success, passes: true },
     { env: { ...success, FRONTEND_RESULT: "skipped", FRONTEND_CHANGED: "false" }, passes: true },
-    ...["QUALITY_RESULT", "UNIT_RESULT", "PLANNER_RUST_RESULT", "PLANNER_CONTRACTS_RESULT", "PLANNER_INTEGRATION_RESULT", "FRONTEND_RESULT"].flatMap(key =>
+    ...["QUALITY_RESULT", "UNIT_RESULT", "PLANNER_RUST_RESULT", "FRONTEND_RESULT"].flatMap(key =>
       ["failure", "cancelled", "skipped"].map(result => ({ env: { ...success, [key]: result }, passes: false }))),
   ];
   for (const { env, passes } of scenarios) {
@@ -43,10 +53,11 @@ Deno.test("manual deployment retains accepted contracts while deploying all file
       assert(result.success, new TextDecoder().decode(result.stderr));
       const values = Object.fromEntries((await Deno.readTextFile(output)).trim().split("\n").map(line => line.split("=")));
       assertEquals(values.contract_base, accepted);
+      assertEquals(values.deploy, String(event !== "pull_request"));
       assertEquals(values.sha, event === "workflow_dispatch" ? "" : accepted);
     }
     const check = workflow.split("      - name: Run current and previously accepted contracts against this planner")[1]
-      .split("\n  planner-rust:")[0].split("        run: ")[1].trim();
+      .split("        run: ")[1].split("\n")[0].trim();
     assert(!check.includes(":-HEAD"));
     const missing = await new Deno.Command("bash", { args: ["-e", "-c", check], env: { CONTRACT_BASE: "" },
       stdout: "null", stderr: "piped" }).output();
