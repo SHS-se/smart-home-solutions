@@ -238,6 +238,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
+    container:
+      # Match the Playwright version in package-lock.json. The image includes
+      # Chromium and its system dependencies.
+      image: mcr.microsoft.com/playwright:v1.57.0-noble@sha256:3bed4b1a12f2338642f3d8cba28e291deef3c66bd4a964bbeb3e57bbff511dbd
+      options: --user 1001 --ipc=host
     strategy:
       fail-fast: false
       matrix:
@@ -265,24 +270,6 @@ jobs:
           name: dist
           path: dist
           retention-days: 7
-
-      - name: Restore Playwright browser
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
-
-      - name: Install Playwright browser
-        run: |
-          # The Azure HTTP mirror can throttle font downloads for many minutes.
-          # Use Ubuntu's HTTPS archive as the primary source for the same packages.
-          printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = true ]; then
-            npx playwright install-deps chromium
-          else
-            npx playwright install --with-deps chromium
-          fi
 
       - name: E2E tests (mocked backend)
         # Same command locally and in CI; Playwright owns the preview server. The shard's
