@@ -81,8 +81,11 @@ demand. The referee clips and reports fixed-power violations as `battery_supply`
 measured demand-following changes are capped by permission rather than scored
 as an impossible forecast request.
 
-The benchmark import limit is 17.2 kW. Removing the erroneous 13.2 kW import
-restriction and enforcing this permission are separate changes.
+Every case is planned and refereed with the grid import limit captured from
+the home's own profile (15 kW in all current cases, `grid_import_limit_w`).
+The 17.2 kW in `HOUSEHOLD` is only the reference basis for synthetic probes.
+Removing the erroneous 13.2 kW import restriction and enforcing this
+permission are separate changes.
 
 ## Eleven actionable economic audit families
 

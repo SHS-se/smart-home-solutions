@@ -4,7 +4,7 @@ import { assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { solveOutcome } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import { loadCase } from "../src/lib/planner-bench/case.ts";
-import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { caseHousehold } from "../src/lib/planner-bench/household.ts";
 import type { CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { syntheticReadyProblem } from "./planner-synthetic.fixture.ts";
@@ -27,14 +27,11 @@ if (input === "--synthetic") {
     cases: { name: string; dataset: unknown; recorded: unknown }[];
     rules: CriteriaOverrides;
   } = JSON.parse(await Deno.readTextFile(input));
-  workloads = data.cases.map((c) => ({
-    name: c.name,
-    problem: readyProblem(
-      loadCase(c.dataset, c.recorded),
-      HOUSEHOLD,
-      data.rules,
-    ),
-  }));
+  workloads = data.cases.map((c) => {
+    const loaded = loadCase(c.dataset, c.recorded);
+    // Each case is planned with the grid limit captured from the home, as on the bench.
+    return { name: c.name, problem: readyProblem(loaded, caseHousehold(loaded), data.rules) };
+  });
 }
 const root = new URL("..", import.meta.url).pathname;
 const planner = await loadWasmCandidate(root);
