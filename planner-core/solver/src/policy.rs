@@ -251,8 +251,8 @@ fn car_readiness_cost(p: &Problem, i: usize, kwh: f64) -> f64 {
                 return 0.0;
             }
             let low_exposure = ((1.0 - charge).powi(5) - (1.0 - target).powi(5)) / 5.0;
-            (0.02 * (target - charge) + 0.35 * low_exposure)
-                * car.capacity_kwh / car.charge_efficiency
+            (0.02 * (target - charge) + 0.35 * low_exposure) * car.capacity_kwh
+                / car.charge_efficiency
         })
 }
 /// Degree-hours below target − 1°C, integrating the linear water interpolation.
