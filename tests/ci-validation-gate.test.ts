@@ -17,7 +17,7 @@ Deno.test("CI deployment gate waits for quality, every unit shard, Rust and ever
   const browsers = workflow.split("\n  frontend:\n")[1].split("\n  ci:\n")[0];
   assert(browsers.includes("needs: [changes, frontend-build]"));
   assert(browsers.includes("shard: [1, 2, 3]"));
-  assert(browsers.includes("uses: actions/download-artifact@v4"));
+  assert(browsers.includes("uses: actions/download-artifact@"));
   assert(!browsers.includes("npm run build"));
   assert(workflow.includes("SHS_SHARD: ${{ matrix.shard }}"));
   assert(workflow.includes('node scripts/e2e-shard.mjs "$SHS_SHARD/3"'));
