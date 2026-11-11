@@ -1,6 +1,6 @@
 # Planner bench scoring
 
-Scorer v46, referee v31, opportunity audit v22 (11 November 2026).
+Scorer v47, referee v31, opportunity audit v22 (11 November 2026).
 
 ## Score and costs
 
@@ -32,7 +32,6 @@ add into a run score.
 |---|---|---|
 | Pool cold exposure | Free through 1°C shortfall; 1 point per extra °C per full quarter by default | No |
 | EV readiness shortfall | Graded cost below the rising 72-hour target, steeper at low charge | No |
-| Boiler permission shortfall | −1 per missing allowed quarter in each 24-hour sample | No |
 
 Pool cost integrates `max(target − water − 1, 0)`, multiplied by the configured
 coefficient (default 4 SEK per °C·hour). There is no deduction through 1°C
@@ -61,26 +60,8 @@ free band and EV exposure below the readiness ramp. Both plans use the same
 plug-in anchor at the case start. The target rises by up to one percentage
 point per hour until it reaches the car's limit at hour 72.
 
-Boiler permission shortfall is the referee's own check
-(`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it.
-The 72-hour sample is divided into three consecutive 24-hour periods starting
-at the sample's first quarter. Each period needs ten allowed quarters (150
-minutes). Eight allowed quarters lose two points; ten or more lose none.
-Each period's deduction is charged at its final quarter. Extra permissions
-in another period do not cover a shortfall. Uncontrolled/free commands count
-as allowed; controller overruns do not replace planned permissions. Midnight,
-timezone and daylight-saving changes do not introduce extra periods.
-
-This is the only hot-water penalty. It does not require boiler meters, infer
-water temperature, or charge for deferred heating. The electrical simulation
-can still shift recorded heating between quarters, but its remaining energy
-counter is never converted to money or scored. The net bill is grid cost plus
-modelled equipment wear minus the battery, pool and EV store credit.
-
-Discrete rule thresholds and points remain configurable. Pool exposure uses a finite negative monetary coefficient and enabled state; it has no rule temperature threshold. A required
-check firing fails the automatic case verdict; the planner still ranks its
-candidates by the stated numerical score. This cleanup does not introduce a
-new service-priority hierarchy.
+Both comfort checks have configurable weights and can be switched off. Pool
+exposure uses a finite negative monetary coefficient.
 
 ## EV battery supply permission
 

@@ -11,9 +11,7 @@ import { sourceDigest } from "../scripts/build-planner-wasm.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import { problemEndCredit } from "../supabase/functions/_shared/planner-wasm/end-credit.ts";
 import {
-  type PlannerRuleKey,
   type ReadyProblem,
-  RULE_KEYS,
 } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { buildPriceOutlook } from "../supabase/functions/_shared/planner/energy-price-shape.ts";
 import { publishHeater } from "../supabase/functions/_shared/planner/device-models.ts";
@@ -30,15 +28,12 @@ import {
   quarterStarts,
 } from "../src/lib/planner-bench/case.ts";
 import type { Household } from "../src/lib/planner-bench/household.ts";
-import { resolveRules } from "../src/lib/planner-bench/score.ts";
-import { REFEREE_RULE_DEFAULTS } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
+import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import type {
   CriteriaOverrides,
   PlanRecord,
 } from "../src/lib/planner-bench/types.ts";
 
-const supported = (key: string): key is PlannerRuleKey =>
-  RULE_KEYS.some((k) => k === key);
 export const READY_PRODUCER_VERSION = "bench-ready-v13";
 
 /**
@@ -180,20 +175,7 @@ export function readyProblem(
       wear_per_kwh: h.site.battery_degradation_sek_per_kwh,
       ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
-    // The planner optimises the score: only the rules that take points go to it.
-    rules: resolveRules(criteria).flatMap((r) => {
-      // Referee-only rules judge what the kernel does not plan.
-      if (r.key in REFEREE_RULE_DEFAULTS) return [];
-      if (!supported(r.key)) throw new Error(`Unmapped planner rule: ${r.key}`);
-      return r.enabled
-        ? [{
-          key: r.key,
-          threshold: r.threshold,
-          points: r.points,
-          required: r.required ?? false,
-        }]
-        : [];
-    }),
+    rules: resolveRulePolicy(criteria).rules,
     // Filled below from the finished problem and the case's historical EV replacement price.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: null, released: null, unavailable: null,

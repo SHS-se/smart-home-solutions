@@ -2,7 +2,6 @@ import { assert, assertAlmostEquals, assertEquals } from '@std/assert';
 import { QUARTERS } from './case.ts';
 import { HOUSEHOLD } from './household.ts';
 import { referee, simulate, type Decisions, type HotWaterCommand } from './referee.ts';
-import { scoreQuarters } from './score.ts';
 import { TARGETS, plan, quarters, world } from './world.fixture.ts';
 import { hotWaterInput } from '../../../bench/wasm-planner.ts';
 import { scheduleHotWater } from '../../../supabase/functions/_shared/hot-water-opportunities.ts';
@@ -64,16 +63,13 @@ Deno.test('water drawn during a block is owed and heated at running power when t
   assertAlmostEquals(kwh(sim.water!.w), QUARTERS * NEED_W / 4_000, 1e-9);
 });
 
-Deno.test('a boiler left blocked is penalised only for missing permissions, never for deferred energy', () => {
+Deno.test('deferred boiler energy does not add a bill charge', () => {
   const outcome = referee(measured(), HOUSEHOLD, TARGETS, commanding(() => ({ kind: 'inhibit' })));
   const owed = QUARTERS * NEED_W / 4_000;
   assertAlmostEquals(outcome.series.hotWater!.owedKwh[QUARTERS - 1], owed);
   const bill = outcome.series.bill!;
   assertEquals(Object.hasOwn(bill, 'hot_water'), false);
   assertAlmostEquals(bill.net_sek, bill.grid_sek + bill.wear_sek - bill.credit.credit_sek, 1e-3);
-  // Exactly three 24-hour sample periods: ten missing opportunities each.
-  const scored = scoreQuarters(outcome.series, {});
-  assertEquals(scored.counts.water_opportunities, 30);
   assertEquals(outcome.series.hotWater!.command[0], 'inhibit');
 });
 
@@ -81,15 +77,6 @@ Deno.test('in the world the planner was told the heater runs as the plan expecte
   const told = simulate(measured(), HOUSEHOLD, { ...commanding(() => ({ kind: 'permit' })),
     hot_water_expected_w: quarters(() => NEED_W) }, 'told');
   assertEquals(Array.from(told.water!.w), quarters(() => NEED_W));
-});
-
-Deno.test('meeting all three permission quotas adds no water deduction or deferred-energy charge', () => {
-  const result = referee(measured(), HOUSEHOLD, TARGETS, commanding(i => i % 96 < 10 ? { kind: 'permit' } : { kind: 'inhibit' }));
-  assert(result.series.hotWater!.owedKwh.at(-1)! > 0);
-  assertEquals(scoreQuarters(result.series).counts.water_opportunities, undefined);
-  assertEquals(Object.hasOwn(result.series.bill!, 'hot_water'), false);
-  const bill = result.series.bill!;
-  assertAlmostEquals(bill.net_sek, bill.grid_sek + bill.wear_sek - bill.credit.credit_sek, 1e-3);
 });
 
 Deno.test('boiler permission never shifts heat-pump preheating or mixed hot-water totals', () => {
@@ -128,7 +115,4 @@ Deno.test('permission without boiler meters leaves load intact and water assessm
   assertEquals(result.series.hotWater!.demandKnown, false);
   assertEquals(result.series.loadW, quarters(() => 1000));
   assertEquals(Object.hasOwn(result.series.bill!, 'hot_water'), false);
-  // Permissions are assessable even though consumption is not.
-  assertEquals(scoreQuarters(result.series, {}).applicability.water_opportunities.applicable, true);
-  assertEquals(scoreQuarters(result.series, {}).counts.water_opportunities, 30);
 });

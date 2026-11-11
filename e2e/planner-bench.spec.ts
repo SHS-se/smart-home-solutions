@@ -1009,15 +1009,6 @@ test.describe('planner bench', () => {
     await expect(compared).toHaveCount(0);
     await expect(page.locator('[data-slot-energy=pool]')).toHaveText(/35\.0 kWh/);
 
-    // Three sample days with ten permissions each incur no boiler penalty.
-    await page.locator('#bench-untriggered-rules > button').click();
-    const waterRule = page.locator('#bench-rule-water_opportunities');
-    await expect(waterRule).not.toContainText(/missing q|kv saknas/);
-    await waterRule.getByRole('button').first().click();
-    await expect(waterRule).toContainText(/Thermostat consumption is not assessed|Termostatens förbrukning bedöms inte/);
-    await expect(page.locator('#bench-water_opportunities-threshold')).toHaveValue('10');
-    await expect(page.locator('#bench-rule-water_cold')).toHaveCount(0);
-
     // Each planner's bill for the case in view sits in its own box in the case card, with its points; the summary holds totals only.
     const summary = page.locator('#bench-summary');
     const caseCard = page.locator('#bench-show-current').locator('xpath=ancestor::*[contains(@class,"rounded-lg")][1]');
@@ -1073,6 +1064,8 @@ test.describe('planner bench', () => {
     await expect(row('ev_timing')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();
     await expect(row('ev_timing')).toContainText('N/A');
+    await expect(row('water_opportunities')).toHaveCount(0);
+    await expect(row('can_execute')).toHaveCount(0);
     // The list follows the day the chart shows: the battery finding sits in the first hours only.
     await page.locator('#bench-day-2').click();
     await expect(row('battery_price_spread')).not.toContainText(/1\.25 kr/);

@@ -173,8 +173,8 @@ Deno.test('continuous pool costs accept finite negative coefficients and reject 
   assertEquals(criteriaErrors({ car_floor: { threshold: 10 } }).length, 1);
   assertEquals(criteriaErrors({ car_floor: { points: 3 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: 60 }, ev_short: { points: -2 } }), []);
-  assertEquals(resolveRules().map(r => r.key), ['pool_shortfall', 'car_floor', 'water_opportunities']);
-  assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
+  assertEquals(resolveRules().map(r => r.key), ['pool_shortfall', 'car_floor']);
+  assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), ['Unknown rule "water_opportunities".']);
   assertEquals(criteriaFingerprint({ pool_shortfall: { points: -1.5 }, car_floor: { points: -2 } }),
     criteriaFingerprint({ car_floor: { points: -2 }, pool_shortfall: { points: -1.5 } }));
   assertEquals(serviceGuard(), { pool: 'linear_shortfall' });

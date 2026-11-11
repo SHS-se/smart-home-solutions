@@ -47,11 +47,11 @@ Deno.test('one commit on both sides is exported once, and the file is named afte
   assertEquals(benchChartFilename('C-0924', 'main · dev', '25/09'), 'bench-C-0924-main-dev-25-09.json');
 });
 
-Deno.test('exported rule contributions include every missing daily boiler opportunity', () => {
+Deno.test('blocked boiler permissions produce no scoring entries in the chart export', () => {
   const blocked = evaluate(c, { ...record, decisions: { ...plan(), hot_water: quarters(() => ({ kind: 'inhibit' as const })) } }, {});
   const scored = scoreQuarters(blocked.series);
   const file = exported(0, n, 'full 72 h', { ...source('dev', 'b'), series: blocked.series, score: scored });
   const quarters_ = file.plans[1].quarters;
-  assertEquals(quarters_.reduce((sum, q) => sum + (q.rules_fired.water_opportunities ?? 0), 0), -30);
+  assertEquals(quarters_.some(q => Object.hasOwn(q.rules_fired, 'water_opportunities')), false);
   for (const q of quarters_) assertEquals(Object.values(q.rules_fired).reduce((a: number, b) => a + b, 0), q.score);
 });

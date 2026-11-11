@@ -21,7 +21,6 @@ const focus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:rin
 const COLUMNS = 'grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_4rem_9rem_9rem] items-center gap-x-2';
 const NAME = 'col-span-3 sm:col-span-1';
 const POINTS = 'pl-5 sm:pl-0 sm:text-right';
-const LIMIT_KEY = 'can_execute';
 // The palette runs −2…+2, as in the chart's score strip.
 const scoreColour = (points: number) => points === 0 ? undefined : `var(--plan-score-${points < 0 ? 'n' : 'p'}${Math.min(2, Math.ceil(Math.abs(points)))})`;
 
@@ -51,11 +50,7 @@ interface Cell {
 interface Row {
   key: string;
   label: string;
-  /** Points per quarter; null for the physical limits, which fail the case instead. */
-  perQuarter: number | null;
-  /** Economic findings are shown in kronor, without score deductions. */
-  unscored?: 'kr';
-  required: boolean;
+  perQuarter: number;
   cells: Record<Side, Cell>;
   triggered: boolean;
   comfort?: ResolvedRule;
@@ -133,7 +128,7 @@ export default function BenchRuleList({
     if (!next.delete(key)) next.add(key);
     return next;
   });
-  const patch = (key: string, field: 'enabled' | 'threshold' | 'points', value: number | boolean) =>
+  const patch = (key: string, field: 'enabled' | 'points', value: number | boolean) =>
     onDraft({ ...draft, [key]: { ...draft[key], [field]: value } });
 
   const inRange = (i: number) => i >= range.from && i < range.to;
@@ -149,23 +144,18 @@ export default function BenchRuleList({
   const findingsOf = (s: SideData, rule: string): OpportunityFinding[] => auditOf(s)?.findings.filter(f =>
     (f.tags as string[]).includes(rule) && ((f.from < range.to && f.fromEnd >= range.from) || (f.to < range.to && f.toEnd >= range.from))) ?? [];
 
-  const limitCells = bySide(s => s.score?.audit
-    ? counted([...new Set(s.score.audit.violations.map(v => v.quarter))], 0)
-    : nothing(t('Saknar underlag', 'Missing evidence')));
   const rows: Row[] = [
-    { key: LIMIT_KEY, label: t('Planen kan inte utföras', 'Plan cannot be carried out'), perQuarter: null, required: true, cells: limitCells, triggered: fired(limitCells) },
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        if (!s.score || !s.series?.comfort && rule.about !== 'water') return nothing(t('Saknar underlag', 'Missing evidence'));
+        if (!s.score || !s.series?.comfort) return nothing(t('Saknar underlag', 'Missing evidence'));
         if (!rule.enabled) return nothing(t('Av', 'Off'));
         if (application && !application.applicable) return nothing('N/A');
         const cell = counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
         const points = s.score.quarters.reduce((sum, q, i) => sum + (inRange(i) ? q.deductions[rule.key] ?? 0 : 0), 0);
-        return { ...cell, points, note: rule.about === 'water' && cell.events.length
-          ? `${points / rule.points} ${t('kv saknas', 'missing q')} · ${signed(points)}` : null };
+        return { ...cell, points };
       });
-      return { key: rule.key, label: rule.label, perQuarter: rule.points, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
+      return { key: rule.key, label: rule.label, perQuarter: rule.points, cells, triggered: fired(cells), comfort: rule };
     }),
     ...OPPORTUNITY_RULES.map((rule): Row => {
       const cells = bySide(s => {
@@ -180,7 +170,7 @@ export default function BenchRuleList({
           : found.length ? nothing(t(`${found.length} fynd`, `${found.length} found`))
             : audit.applicability[rule.key].applicable ? cell : nothing('N/A');
       });
-      return { key: rule.key, label: rule.label, perQuarter: 0, unscored: 'kr', required: false, cells, triggered: sides.some(s => findingsOf(s, rule.key).length > 0), energy: rule };
+      return { key: rule.key, label: rule.label, perQuarter: 0, cells, triggered: sides.some(s => findingsOf(s, rule.key).length > 0), energy: rule };
     }),
   ];
   const triggered = rows.filter(row => row.triggered);
@@ -194,33 +184,18 @@ export default function BenchRuleList({
 
   const stamp = (s: SideData, quarter: number) => s.series ? formatHomeDayMonthTime(s.series.start[quarter], timeZone) : '';
 
-  /** A quarter rule's settings: on or off, its threshold and its points, saved for the case. */
-  const settings = (rule: ResolvedRule, thresholdLabel: string | null, step: string) => {
+  const settings = (rule: ResolvedRule) => {
     const smooth = rule.key === 'pool_shortfall';
     const lo = smooth ? undefined : RULE_POINTS_MIN, hi = smooth ? -.001 : RULE_POINTS_MAX;
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
-      {thresholdLabel !== null && <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>}
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{smooth ? t('Kostnad (SEK/°C·h)', 'Cost (SEK/°C·h)') : rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Regelvikt', 'Rule weight')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={smooth ? 0 : lo} max={smooth ? undefined : hi} step={smooth ? "0.1" : "1"} value={smooth ? -rule.points : rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = smooth ? -Math.abs(e.target.valueAsNumber) : Math.max(RULE_POINTS_MIN, Math.min(RULE_POINTS_MAX, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{smooth ? t('Kostnad (SEK/°C·h)', 'Cost (SEK/°C·h)') : t('Regelvikt', 'Rule weight')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={smooth ? 0 : lo} max={smooth ? undefined : hi} step={smooth ? "0.1" : "1"} value={smooth ? -rule.points : rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = smooth ? -Math.abs(e.target.valueAsNumber) : Math.max(RULE_POINTS_MIN, Math.min(RULE_POINTS_MAX, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
   };
 
   const comfortDetail = (rule: ResolvedRule) => {
-    if (rule.about === 'water') return <>
-      <p>
-        {t(`Vart och ett av provets tre 24-timmarsperioder behöver ${rule.threshold} tillåtna kvartar. Varje saknad kvart räknas vid periodens sista kvart.`,
-          `Each of the sample’s three consecutive 24-hour periods needs ${rule.threshold} allowed quarters. Each missing quarter is counted at the period’s last quarter.`)}
-        {' '}{t('Termostatens förbrukning bedöms inte. Pågående uppvärmning som får avslutas ersätter inte planerade kvartar. Förbrukningsmätare behövs inte för kontrollen.',
-          'Thermostat consumption is not assessed. Finish-heating overruns do not replace planned quarters. Consumption meters are not needed for this check.')}
-      </p>
-      {sides.map(s => {
-        const application = s.score?.applicability[rule.key];
-        return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
-      })}
-      {settings(rule, t('Tillåtna kvartar per 24 timmar', 'Allowed quarters per 24 hours'), '1')}
-    </>;
     if (rule.key === 'car_floor') return <>
       <p>
         {t('Laddmålet stiger en procentenhet per timme och når bilens laddgräns efter 72 timmar. Avdraget beror på hur långt under målet bilen ligger och är större vid låg laddnivå.',
@@ -231,11 +206,11 @@ export default function BenchRuleList({
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
       })}
-      {settings(rule, null, '1')}
+      {settings(rule)}
     </>;
     return <>
       <PoolComfortRuleInfo coefficient={-rule.points} />
-      {settings(rule, null, '0.1')}
+      {settings(rule)}
     </>;
   };
 
@@ -278,9 +253,8 @@ export default function BenchRuleList({
     </>;
   };
 
-  const cellText = (row: Row, cell: Cell) => cell.note ?? (!cell.events.length ? '—'
-    : row.perQuarter === null ? `${cell.events.length} ${t('kv', 'q')}`
-      : `${cell.events.length} ${t('kv', 'q')} · ${signed(cell.points)}`);
+  const cellText = (cell: Cell) => cell.note ?? (!cell.events.length ? '—'
+    : `${cell.events.length} ${t('kv', 'q')} · ${signed(cell.points)}`);
 
   const renderRow = (row: Row) => {
     const expanded = open.has(row.key);
@@ -289,22 +263,15 @@ export default function BenchRuleList({
         className={`${COLUMNS} w-full py-2 text-left text-sm hover:bg-muted/50 ${focus}`}>
         <span className={`${NAME} flex min-w-0 items-center gap-1.5`}>
           <ChevronRight aria-hidden="true" className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`} />
-          <span className="min-w-0">{row.label}{row.required && row.perQuarter !== null && <span className="text-xs text-muted-foreground"> · {t('krav', 'required')}</span>}</span>
+          <span className="min-w-0">{row.label}{row.comfort?.required && <span className="text-xs text-muted-foreground"> · {t('krav', 'required')}</span>}</span>
         </span>
-        <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.perQuarter === null || row.unscored ? undefined : scoreColour(row.perQuarter) }}>
-          {row.perQuarter === null ? <span className="text-destructive">{t('Fel', 'Fail')}</span>
-            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">kr</span> : <>{signed(row.perQuarter)}{row.key === 'pool_shortfall' && <span className="block text-xs font-normal">/°C·h</span>}</>}
+        <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.energy ? undefined : scoreColour(row.perQuarter) }}>
+          {row.energy ? <span className="text-xs font-normal text-muted-foreground">kr</span> : <>{signed(row.perQuarter)}{row.key === 'pool_shortfall' && <span className="block text-xs font-normal">/°C·h</span>}</>}
         </span>
-        {(['current', 'test'] as const).map(side => <span key={side} className={`text-right font-mono text-xs tabular-nums ${row.cells[side].events.length ? '' : 'text-muted-foreground'}`}>{cellText(row, row.cells[side])}</span>)}
+        {(['current', 'test'] as const).map(side => <span key={side} className={`text-right font-mono text-xs tabular-nums ${row.cells[side].events.length ? '' : 'text-muted-foreground'}`}>{cellText(row.cells[side])}</span>)}
       </button>
       {expanded && <div className="mb-2 ml-5 space-y-2 rounded-md bg-muted/40 p-3 text-sm min-w-0">
-        {row.comfort ? comfortDetail(row.comfort) : row.energy ? energyDetail(row.energy) : <>
-          <p>{t('Planen ber om något hushållet inte kan göra: effektgränser, lagringsgränser eller ogiltiga beslut. En enda överträdelse underkänner fallet, oavsett poäng.', 'The plan asks for something the household cannot do: power limits, storage limits or invalid decisions. A single violation fails the case, whatever its points.')}</p>
-          {sides.map(s => {
-            const kinds = [...new Set(s.score?.audit?.violations.filter(v => inRange(v.quarter)).map(v => v.kind) ?? [])];
-            return kinds.length > 0 && <p key={s.side} className="text-muted-foreground">{s.label}: {kinds.map(kind => kind.replace(/_/g, ' ')).join(' · ')}</p>;
-          })}
-        </>}
+        {row.comfort ? comfortDetail(row.comfort) : row.energy && energyDetail(row.energy)}
         {row.triggered && <div className="space-y-1 pt-1">
           {sides.map(s => <EventStrip key={s.side} label={s.label} events={row.cells[s.side].events} range={range} dayStarts={dayStarts} onSelect={q => onSelect(s.side, q)} />)}
         </div>}

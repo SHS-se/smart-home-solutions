@@ -30,6 +30,7 @@ for (const withBench of [false, true]) {
 }
 
 const cleanupSql = await Deno.readTextFile('supabase/migrations/20261010190000_remove_obsolete_planner_criteria.sql');
+const removeBoilerRuleSql = await Deno.readTextFile('supabase/migrations/20261111150000_remove_boiler_bench_rule.sql');
 const retired = ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy',
   'unplugged_charge', 'ev_short_gap', 'pool_buffer', 'pool_restart', 'cheap_buy', 'cheapest_buy',
   'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter',
@@ -43,7 +44,7 @@ for (const withBench of [false, true]) {
     const db = new PGlite();
     try {
       await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;');
-      if (withBench) await db.exec("CREATE TABLE bench_rules(id boolean PRIMARY KEY,criteria jsonb); INSERT INTO bench_rules VALUES(true,'{}');");
+      if (withBench) await db.exec("CREATE TABLE bench_rules(id boolean PRIMARY KEY,criteria jsonb,updated_at timestamptz DEFAULT now()); INSERT INTO bench_rules(id,criteria) VALUES(true,'{}');");
       await db.exec(sql);
       const criteria = { ...serviceCriteria, ...Object.fromEntries(retired.map(key => [key, { points: -1 }])) };
       if (withBench) await db.query('UPDATE bench_rules SET criteria=$1::jsonb WHERE id=true', [JSON.stringify(criteria)]);
@@ -56,6 +57,17 @@ for (const withBench of [false, true]) {
         assertEquals((await db.query<{ criteria: typeof serviceCriteria }>('SELECT criteria FROM bench_rules WHERE id=true')).rows[0].criteria, serviceCriteria);
         await db.query('UPDATE bench_rules SET criteria=$1::jsonb WHERE id=true', [JSON.stringify({ pool_shortfall: { points: -0.5 } })]);
         assertEquals((await db.query<{ criteria: unknown }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria, { pool_shortfall: { points: -0.5 } });
+      }
+      const table = withBench ? 'bench_rules' : 'energy_planner_rule_policy';
+      await db.query(`UPDATE ${table} SET criteria=$1::jsonb WHERE id=true`, [
+        JSON.stringify({ ...serviceCriteria, water_opportunities: { threshold: 8 } }),
+      ]);
+      await db.exec(removeBoilerRuleSql);
+      const live = await db.query<{ criteria: unknown }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true');
+      assertEquals(live.rows[0].criteria, serviceCriteria);
+      if (withBench) {
+        const bench = await db.query<{ criteria: unknown }>('SELECT criteria FROM bench_rules WHERE id=true');
+        assertEquals(bench.rows[0].criteria, serviceCriteria);
       }
     } finally { await db.close(); }
   });

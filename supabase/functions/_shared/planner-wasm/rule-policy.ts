@@ -1,6 +1,5 @@
 import { PlanningError } from "../planning-errors.ts";
 import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
-import { WATER_MINUTES_PER_DAY } from "../hot-water-opportunities.ts";
 import { CAR_FLOOR_POINTS } from "./car-policy.ts";
 
 export interface CriterionOverride { enabled?: boolean; threshold?: number; points?: number }
@@ -14,15 +13,6 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
   // The floor and its grace are car-policy.ts's; this rule only names the points.
   car_floor: { threshold: 0, points: CAR_FLOOR_POINTS },
 };
-/**
- * Rules only the bench's referee scores. No planner is given them: the kernel
- * has no model of what they measure (the water tank is planned around it), so
- * a saved override for one never reaches a plan.
- */
-export const REFEREE_RULE_DEFAULTS: Record<"water_opportunities", RuleDefault> = {
-  // One deduction per missing quarter in each 24-hour benchmark sample period.
-  water_opportunities: { threshold: WATER_MINUTES_PER_DAY / 15, points: -1 },
-};
 /** Rules that no longer exist; a saved override for one is ignored, not an error. */
 const RETIRED_RULES = new Set(["ev_low", "ev_short"]);
 export const RULE_POINTS_MIN = -2;
@@ -32,7 +22,7 @@ export class CriteriaError extends PlanningError {
 }
 
 export function ruleDefaults(key: string): RuleDefault {
-  const value = [...Object.entries(RULE_DEFAULTS), ...Object.entries(REFEREE_RULE_DEFAULTS)].find(([candidate]) => candidate === key)?.[1];
+  const value = Object.entries(RULE_DEFAULTS).find(([candidate]) => candidate === key)?.[1];
   if (!value) throw new CriteriaError(`Unknown rule "${key}".`);
   return value;
 }
@@ -41,10 +31,9 @@ export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
   for (const [key, o] of Object.entries(overrides ?? {})) {
     if (RETIRED_RULES.has(key)) continue;
     if ((key === "car_floor" || key === "pool_shortfall") && o?.threshold !== undefined) { errors.push(`${key}: temperature and charge targets are settings, not rule thresholds.`); continue; }
-    if (!(key in RULE_DEFAULTS) && !(key in REFEREE_RULE_DEFAULTS)) { errors.push(`Unknown rule "${key}".`); continue; }
+    if (!Object.prototype.hasOwnProperty.call(RULE_DEFAULTS, key)) { errors.push(`Unknown rule "${key}".`); continue; }
     if (typeof o !== "object" || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== "boolean") errors.push(`${key}: enabled must be true or false.`);
-    if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);
     if (key === "pool_shortfall") {
       if (o.points !== undefined && !(Number.isFinite(o.points) && o.points < 0)) errors.push(`${key}: the cost coefficient must be finite and negative.`);
       continue;
