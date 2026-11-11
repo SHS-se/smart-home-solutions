@@ -10,7 +10,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from 
 import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 import { CAR_FLOOR_POINTS } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
 
-export const SCORER_VERSION = 47;
+export const SCORER_VERSION = 48;
 /** What a rule can see about one quarter. */
 export interface QuarterView {
   s: BenchSeries;
@@ -48,7 +48,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
     describe: () => 'temperature shortfall beyond 1°C × hours', fires: poolShortfall, eligibleFrom: poolAny },
   {
     key: 'car_floor', about: 'car', label: 'EV readiness shortfall',
-    describe: () => 'graded shortfall below the 72-hour charge target, with a higher cost at low charge',
+    describe: () => 'graded shortfall below the 60-hour charge target, with a higher cost at low charge',
     fires: carShortfall, eligibleFrom: carFrom,
   },
 ];

@@ -1,6 +1,6 @@
 // The planner and bench referee use the car's charge limit and plug-in time
 // to define one readiness target per quarter. The target reaches the limit
-// 72 hours after plug-in. The savings replay still uses the floor and grace
+// 60 hours after plug-in. The savings replay still uses the floor and grace
 // formula defined below.
 
 import type { CarBatteryModel } from "../planner/device-models.ts";
@@ -34,7 +34,7 @@ export type CarConnection =
 
 export interface CarPlan { battery: CarBatteryModel; limitSoc: number; floorSetting: number; connection: CarConnection }
 
-const READINESS_HOURS = 72;
+const READINESS_HOURS = 60;
 const HOUR_MS = 3_600_000;
 
 /** The soft readiness target used by the planner and independent referee. */

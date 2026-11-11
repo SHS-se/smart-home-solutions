@@ -2,9 +2,10 @@
 
 User requirement, 11 November 2026: EV readiness uses the car's configured
 charge limit. Its soft target rises by one percentage point per elapsed hour
-from 72 percentage points below that limit, bounded at zero and the limit.
+from 60 percentage points below that limit, bounded at zero and the limit.
+With an 80% limit, the target starts at 20% and reaches 30% after 10 hours.
 Shortfall has graded urgency, strongest at low charge. The target stays at
-the limit after 72 hours and replanning retains the plug-in clock.
+the limit after 60 hours and replanning retains the plug-in clock.
 Replace EV forecast-percentile inventory tiers with a replacement value
 learned from published household import history. Compare grid and solar
 through joint physical dispatch, including forgone export and battery use.

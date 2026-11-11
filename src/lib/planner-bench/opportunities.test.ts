@@ -245,7 +245,7 @@ Deno.test('comfort is guarded store by store: a warmer pool never pays for a sho
   // A low car gets two hours at 7 A at a dear time. Waiting until the cheapest day
   // would extend the shortfall below its readiness target.
   // (The battery starts empty and the spread is too thin for it, so the car is the only thing to move.)
-  const prices = { buy: (i: number) => within(i, 90, 98) ? 1.8 : i >= 200 ? 0.5 : 1.5, published: 288 };
+  const prices = { buy: (i: number) => within(i, 90, 98) ? 1.8 : i >= 192 ? 0.5 : 1.5, published: 288 };
   const low = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.22 } } });
   const short = audited(low, plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   const car = (audit: OpportunityAudit) => audit.findings.filter(f => f.device === 'ev');
@@ -253,10 +253,10 @@ Deno.test('comfort is guarded store by store: a warmer pool never pays for a sho
   const belowTarget = (km: number[]) => km.filter((v, i) => readiness[i] !== null && v < readiness[i]!).length;
   for (const f of car(short)) assert(belowTarget(f.after.carKm) <= belowTarget(f.before.carKm), `${f.id} extends the readiness shortfall`);
   // A car that stays above its target until the cheap day can defer the same charge.
-  const ready = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.64 } } });
+  const ready = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.68 } } });
   const earlyCharge = plan({ ev: i => within(i, 90, 98) ? 4830 : 0 });
   const fine = audited(ready, earlyCharge);
-  assert(car(fine).some(f => f.to >= 200), JSON.stringify(car(fine).map(f => [f.rule, f.to])));
+  assert(car(fine).some(f => f.to >= 192), JSON.stringify(car(fine).map(f => [f.rule, f.to])));
   assertAlmostEquals(fine.rules.ev_timing.knownSek, 9.66 * 1.3, 0.01);
   // Every alternative the audit made for the car is one the charger can carry out.
   const levels = new Set(Array.from({ length: 12 }, (_, i) => (5 + i) * 690).concat(0));

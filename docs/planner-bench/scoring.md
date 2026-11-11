@@ -31,7 +31,7 @@ add into a run score.
 | Check | Cost | Automatic case failure |
 |---|---|---|
 | Pool cold exposure | Free through 1°C shortfall; 1 point per extra °C per full quarter by default | No |
-| EV readiness shortfall | Graded cost below the rising 72-hour target, steeper at low charge | No |
+| EV readiness shortfall | Graded cost below the rising 60-hour target, steeper at low charge | No |
 
 Pool cost integrates `max(target − water − 1, 0)`, multiplied by the configured
 coefficient (default 4 SEK per °C·hour). There is no deduction through 1°C
@@ -57,8 +57,9 @@ recovery grace are replaced by this single continuous account. Cold initial
 water remains valid; unavoidable exposure is a cost, never admission failure.
 Equal-comfort economic witnesses compare total linear pool exposure beyond the
 free band and EV exposure below the readiness ramp. Both plans use the same
-plug-in anchor at the case start. The target rises by up to one percentage
-point per hour until it reaches the car's limit at hour 72.
+plug-in anchor at the case start. The target starts 60 percentage points below
+the car's limit, bounded at zero, and rises by one percentage point per hour
+until it reaches the limit at hour 60.
 
 Both comfort checks have configurable weights and can be switched off. Pool
 exposure uses a finite negative monetary coefficient.

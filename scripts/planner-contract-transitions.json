@@ -51,5 +51,17 @@
         "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
       }
     ]
+  },
+  {
+    "requirement": "User approved the limit-relative 60-hour EV readiness ramp on 11 November 2026. At an 80% limit the target starts at 20%, reaches 30% at ten hours, and stays at 80% from sixty hours. EV-1 retains cable equivalence, urgency at low charge, and the original plug-in clock.",
+    "before": "2b1e9e4872c11b159ed99721a3ae3755ebb837e8",
+    "after": "7eb413375adf26f5a45528d62b487fbaf176c9e6",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging",
+        "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
+      }
+    ]
   }
 ]

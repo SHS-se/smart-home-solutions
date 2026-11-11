@@ -10,7 +10,7 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v22",
+    "version": "kronor-score-v23",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
@@ -46,6 +46,6 @@
     },
     "coverage": "bounded_causal_certificates_with_reported_exhaustion",
     "pool_comfort": "4_sek_per_degree_hour_beyond_1c_shortfall_integrated_linear_water_segments",
-    "car_readiness": "graded_shortfall_below_limit_relative_72_hour_plug_in_ramp"
+    "car_readiness": "graded_shortfall_below_limit_relative_60_hour_plug_in_ramp"
   }
 }

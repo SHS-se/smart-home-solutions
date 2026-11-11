@@ -44,7 +44,7 @@ import { assertDecisions, carReadinessKm, evLevels, evLimitKwh, evMaxW, HOURS, h
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 22;
+export const OPPORTUNITY_AUDIT_VERSION = 23;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;

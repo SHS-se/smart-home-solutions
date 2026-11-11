@@ -198,8 +198,8 @@ export default function BenchRuleList({
   const comfortDetail = (rule: ResolvedRule) => {
     if (rule.key === 'car_floor') return <>
       <p>
-        {t('Laddmålet stiger en procentenhet per timme och når bilens laddgräns efter 72 timmar. Avdraget beror på hur långt under målet bilen ligger och är större vid låg laddnivå.',
-          'The charge target rises by one percentage point per hour and reaches the car’s charge limit after 72 hours. The deduction grows with the shortfall and is steeper at low charge.')}
+        {t('Laddmålet stiger en procentenhet per timme och når bilens laddgräns efter 60 timmar. Avdraget beror på hur långt under målet bilen ligger och är större vid låg laddnivå.',
+          'The charge target rises by one percentage point per hour and reaches the car’s charge limit after 60 hours. The deduction grows with the shortfall and is steeper at low charge.')}
         {' '}{t('I bänken räknas bilen som inkopplad när fallet börjar.', 'On the bench the car counts as plugged in when the case starts.')}
       </p>
       {sides.map(s => {
