@@ -132,7 +132,7 @@ jobs:
           CONTRACT_BASE: ${{ needs.changes.outputs.contract_base }}
         run: deno task test:planner-contracts --base "${CONTRACT_BASE:?Cannot find an accepted revision for planner contracts}"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Read reviewed integration revision
