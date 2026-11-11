@@ -92,44 +92,81 @@ jobs:
         id: detect
         run: deno run -A --no-check scripts/ci-changes.ts --base "${{ steps.base.outputs.sha }}" --workflow ci-deploy.yml
 
+  ci-images:
+    name: Publish CI dependency images
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      checks: ${{ steps.publish.outputs.checks }}
+      browser: ${{ steps.publish.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Sign in to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish missing images
+        id: publish
+        env:
+          IMAGE_KEY: deps-${{ hashFiles('.github/ci-images/Dockerfile', '.github/ci-images/Dockerfile.dockerignore', 'package.json', 'package-lock.json') }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+        run: |
+          bash .github/ci-images/publish.sh checks "$IMAGE_KEY"
+          if [ "$FRONTEND_CHANGED" = true ]; then
+            bash .github/ci-images/publish.sh browser "$IMAGE_KEY"
+          fi
+
   quality:
     name: Lint & typecheck
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, ci-images]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node and dependencies
-        uses: ./.github/actions/node-deps
+      - name: Prepare CI image
+        uses: ./.github/actions/ci-image
+        with:
+          target: checks
+          image: ${{ needs.ci-images.outputs.checks }}
+          token: ${{ github.token }}
 
       - name: Lint
-        run: npm run lint
+        run: bash .github/ci-images/run.sh npm run lint
 
       - name: Typecheck
         # vite build uses SWC and never runs tsc, so without this step type errors
         # would ship silently.
-        run: npm run typecheck
-
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.9.8
+        run: bash .github/ci-images/run.sh npm run typecheck
 
       - name: Check isolated edge-function dependencies
-        run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
+        run: bash .github/ci-images/run.sh deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
 
       - name: Audit dependencies (website lockfile and deployed edge functions)
         # Dependabot reads only package-lock.json; this also audits what each edge
         # function resolves at deploy time. Fails on high or critical advisories
         # not in .github/dependency-audit-allowlist.json.
-        run: deno task audit:dependencies
+        run: bash .github/ci-images/run.sh deno task audit:dependencies
 
   unit:
     name: Unit tests (${{ matrix.shard }}/4)
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, ci-images]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -137,35 +174,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node and dependencies
-        uses: ./.github/actions/node-deps
-
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
+      - name: Prepare CI image
+        uses: ./.github/actions/ci-image
         with:
-          deno-version: v2.9.8
+          target: checks
+          image: ${{ needs.ci-images.outputs.checks }}
+          token: ${{ github.token }}
 
       - name: Unit tests
-        run: deno task test --shard ${{ matrix.shard }}/4
+        run: bash .github/ci-images/run.sh deno task test --shard ${{ matrix.shard }}/4
 
   planner-contracts:
     name: Accepted planner behavior
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, ci-images]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Set up Node and dependencies
-        uses: ./.github/actions/node-deps
-      - uses: denoland/setup-deno@v2
+      - name: Prepare CI image
+        uses: ./.github/actions/ci-image
         with:
-          deno-version: v2.9.8
+          target: checks
+          image: ${{ needs.ci-images.outputs.checks }}
+          token: ${{ github.token }}
       - name: Run current and previously accepted contracts against this planner
         env:
           CONTRACT_BASE: ${{ needs.changes.outputs.contract_base }}
-        run: deno task test:planner-contracts --base "${CONTRACT_BASE:?Cannot find an accepted revision for planner contracts}"
+        run: bash .github/ci-images/run.sh deno task test:planner-contracts --base "${CONTRACT_BASE:?Cannot find an accepted revision for planner contracts}"
 
   planner-rust:
     name: Rust planner & Wasm parity
@@ -235,14 +275,12 @@ jobs:
 
   frontend:
     name: Build & browser tests (${{ matrix.shard }}/3)
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    needs: [changes, ci-images]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
-    container:
-      # Match the Playwright version in package-lock.json. The image includes
-      # Chromium and its system dependencies.
-      image: mcr.microsoft.com/playwright:v1.57.0-noble@sha256:3bed4b1a12f2338642f3d8cba28e291deef3c66bd4a964bbeb3e57bbff511dbd
-      options: --user 1001 --ipc=host
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -250,16 +288,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node and dependencies
-        uses: ./.github/actions/node-deps
+      - name: Prepare CI image
+        uses: ./.github/actions/ci-image
+        with:
+          target: browser
+          image: ${{ needs.ci-images.outputs.browser }}
+          token: ${{ github.token }}
 
       - name: Build
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then
-            npm run build:test
+            bash .github/ci-images/run.sh npm run build:test
           else
-            npm run build
+            bash .github/ci-images/run.sh npm run build
           fi
 
       - name: Upload build output
@@ -274,9 +316,13 @@ jobs:
       - name: E2E tests (mocked backend)
         # Same command locally and in CI; Playwright owns the preview server. The shard's
         # tests are balanced by measured duration (scripts/e2e-shard.mjs), not by count.
+        env:
+          SHS_SHARD: ${{ matrix.shard }}
         run: |
-          node scripts/e2e-shard.mjs ${{ matrix.shard }}/3 > "$RUNNER_TEMP/e2e-shard.txt"
-          npm run test:e2e:local -- --test-list "$RUNNER_TEMP/e2e-shard.txt"
+          bash .github/ci-images/run.sh bash -euc '
+            node scripts/e2e-shard.mjs "$SHS_SHARD/3" > "$RUNNER_TEMP/e2e-shard.txt"
+            npm run test:e2e:local -- --test-list "$RUNNER_TEMP/e2e-shard.txt"
+          '
 
   ci:
     name: Lint, test & build

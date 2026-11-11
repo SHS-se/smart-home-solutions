@@ -142,6 +142,12 @@ if (import.meta.main) {
     "scripts/ci-changes.ts",
     "scripts/e2e-shard.mjs",
     ".github/actions/node-deps/action.yml",
+    ".github/actions/ci-image/action.yml",
+    ".github/ci-images/Dockerfile",
+    ".github/ci-images/Dockerfile.dockerignore",
+    ".github/ci-images/build.sh",
+    ".github/ci-images/publish.sh",
+    ".github/ci-images/run.sh",
     ...(workflow ? [`.github/workflows/${workflow}`] : []),
   ]);
   const lines = [

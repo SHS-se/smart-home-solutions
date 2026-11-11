@@ -1,0 +1,36 @@
+name: Prepare CI image
+description: Pull a published dependency image or build the candidate image for a pull request.
+inputs:
+  target:
+    description: Dockerfile target (checks or browser).
+    required: true
+  image:
+    description: Published image digest from the CI image job.
+    required: false
+  token:
+    description: GitHub token with read access to the registry.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Pull published image
+      if: github.event_name != 'pull_request' && (github.ref_name == 'dev' || github.ref_name == 'main')
+      shell: bash
+      env:
+        SHS_REGISTRY_TOKEN: ${{ inputs.token }}
+        SHS_PUBLISHED_IMAGE: ${{ inputs.image }}
+      run: |
+        : "${SHS_PUBLISHED_IMAGE:?CI image publication did not return an image}"
+        printf '%s' "$SHS_REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        docker pull "$SHS_PUBLISHED_IMAGE"
+        printf 'SHS_CI_IMAGE=%s\n' "$SHS_PUBLISHED_IMAGE" >> "$GITHUB_ENV"
+
+    - name: Build pull request image
+      if: github.event_name == 'pull_request' || (github.ref_name != 'dev' && github.ref_name != 'main')
+      shell: bash
+      env:
+        SHS_IMAGE_TARGET: ${{ inputs.target }}
+      run: |
+        tag="shs-ci-$SHS_IMAGE_TARGET:candidate"
+        bash .github/ci-images/build.sh "$SHS_IMAGE_TARGET" "$tag"
+        printf 'SHS_CI_IMAGE=%s\n' "$tag" >> "$GITHUB_ENV"
