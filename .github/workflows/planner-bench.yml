@@ -49,7 +49,7 @@ jobs:
       SUPABASE_PROJECT_REF: vxqpgbzseckgceopitpm
       BENCH_SUPABASE_URL: https://vxqpgbzseckgceopitpm.supabase.co
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Run the current dev harness; planner versions use historical worktrees.
           ref: dev
