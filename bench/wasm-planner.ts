@@ -21,10 +21,11 @@ import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planne
 import { completeRulesCandidates } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { type HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
-import { carReadinessPolicy } from "../supabase/functions/_shared/planner-wasm/car-policy.ts";
-import { evReplacementPrice } from "../supabase/functions/_shared/planner-wasm/ev-price-history.ts";
 import {
   type BenchCase,
+  caseCarReadiness,
+  caseEvReplacementPrice,
+  casePriceArchive,
   caseTargets,
   quarterStarts,
 } from "../src/lib/planner-bench/case.ts";
@@ -99,17 +100,7 @@ export function readyProblem(
   const starts = quarterStarts(c.start);
   const months = localMonths(starts, c.timezone);
   const level = demandLevel(c.recorded.history.demand_days, localDay(c.start, c.timezone));
-  const priceRows = c.recorded.history.prices.import_sek_per_kwh.flatMap((
-    price,
-    i,
-  ) =>
-    price === null ? [] : [{
-      start_ts: new Date(
-        Date.parse(c.recorded.history.prices.start) + i * 900_000,
-      ).toISOString(),
-      import_price_sek_per_kwh: price,
-    }]
-  );
+  const priceRows = casePriceArchive(c);
   const outlook = buildPriceOutlook(
     starts.map((start, i) => ({
       start,
@@ -203,14 +194,13 @@ export function readyProblem(
         }]
         : [];
     }),
-    // Filled below from the finished problem: the credit's reference is the median of the prices it was told.
+    // Filled below from the finished problem and the case's historical EV replacement price.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
-  problem.car_policy = carReadinessPolicy({ battery: h.car.battery, limitSoc: c.start_state.ev.target_soc,
-    connection: { kind: "plugged", sinceMs: 0 } }, problem.slots, 0);
-  problem.end_credit = problemEndCredit(problem, evReplacementPrice(priceRows, c.start, c.timezone));
+  problem.car_policy = caseCarReadiness(c, h.car.battery);
+  problem.end_credit = problemEndCredit(problem, caseEvReplacementPrice(c, priceRows));
   return problem;
 }
 

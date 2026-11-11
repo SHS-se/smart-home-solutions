@@ -12,8 +12,7 @@
 // credited nothing, and one that ends below where it started, under the
 // target, is debited.
 //
-// The independent bench referee retains its tiered car valuation. The live
-// planner uses a separate history-based replacement price for the EV.
+// The EV uses its own history-based replacement price.
 //
 // This is the only definition of those caps, conversions and the price. The
 // bench referee applies it at real prices; the planner's problem producers
@@ -59,20 +58,18 @@ export interface EndCredit {
   credit_sek: number;
 }
 
-/** A percentile of the import prices, never below zero: stored energy is not worth less than nothing. */
-export function pricePercentile(importSekPerKwh: readonly number[], share: number): number {
+/** The upper median of the import prices, never below zero. */
+export function referencePrice(importSekPerKwh: readonly number[]): number {
   if (!importSekPerKwh.length) return 0;
   const sorted = [...importSekPerKwh].sort((a, b) => a - b);
-  return Math.max(0, sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * share))]);
+  return Math.max(0, sorted[Math.floor(sorted.length / 2)]);
 }
-/** The upper median of the import prices. */
-export const referencePrice = (importSekPerKwh: readonly number[]) => pricePercentile(importSekPerKwh, 0.5);
 
 export function endCreditTerms(input: {
   battery: BatteryModel | null;
   /** The heat pump at the level it runs at, the pump that must run with it included. */
   pool: { store: ThermalStoreModel; draw_w: number; heat_w: number; target_c: number } | null;
-  car: { battery: CarBatteryModel; floor_kwh: number; limit_kwh: number } | null;
+  car: { battery: CarBatteryModel; limit_kwh: number; replacement_sek_per_kwh: number } | null;
   import_sek_per_kwh: readonly number[];
 }): EndCreditTerms {
   const { battery, pool, car } = input;
@@ -83,10 +80,7 @@ export function endCreditTerms(input: {
     pool: pool && { cap: pool.target_c, grid_kwh_per_unit: pool.store.capacity_kwh_per_c * pool.draw_w / pool.heat_w },
     ev: car && {
       grid_kwh_per_unit: 1 / car.battery.charge_efficiency,
-      tiers: [
-        { up_to: (car.floor_kwh + car.limit_kwh) / 2, sek_per_kwh: pricePercentile(input.import_sek_per_kwh, 0.75) },
-        { up_to: car.limit_kwh, sek_per_kwh: pricePercentile(input.import_sek_per_kwh, 0.25) },
-      ],
+      tiers: [{ up_to: car.limit_kwh, sek_per_kwh: car.replacement_sek_per_kwh }],
     },
   };
 }
@@ -96,20 +90,15 @@ export function problemEndCredit(
   p: Pick<ReadyProblem, "battery" | "car" | "car_policy" | "pool_store" | "heater" | "targets" | "slots">,
   evReplacementSekPerKwh: number | null = null,
 ): EndCreditTerms {
-  const terms = endCreditTerms({
+  return endCreditTerms({
     battery: p.battery,
     pool: p.pool_store && p.heater && p.targets.pool_c !== null
       ? { store: p.pool_store, draw_w: p.heater.compressor_w + p.heater.auxiliary_w, heat_w: p.heater.heat_w, target_c: p.targets.pool_c } : null,
-    car: null,
+    car: p.car && p.car_policy && evReplacementSekPerKwh !== null ? {
+      battery: p.car, limit_kwh: p.car_policy.limit_kwh, replacement_sek_per_kwh: evReplacementSekPerKwh,
+    } : null,
     import_sek_per_kwh: p.slots.map(slot => slot.import_price),
   });
-  if (p.car && p.car_policy && evReplacementSekPerKwh !== null) {
-    terms.ev = {
-      grid_kwh_per_unit: 1 / p.car.charge_efficiency,
-      tiers: [{ up_to: p.car_policy.limit_kwh, sek_per_kwh: evReplacementSekPerKwh }],
-    };
-  }
-  return terms;
 }
 
 /** The level of a store that counts: no further than its cap. */

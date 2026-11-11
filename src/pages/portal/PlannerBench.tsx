@@ -623,7 +623,6 @@ const SuiteTable: React.FC<{
     line(t('Köpt från nätet', 'Bought from grid'), 'kWh', 1, 'grid_import_kwh', null),
     line(t('Sålt till nätet', 'Sold to grid'), 'kWh', 1, 'grid_export_kwh', null),
     line(t('Hembatteri laddat', 'Home battery charged'), 'kWh', 1, 'battery_charge_kwh', null),
-    line(t('Elbil laddad', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
   ]];
   const solar: Group = [t('Sol', 'Solar'), [
     line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher',
@@ -652,7 +651,16 @@ const SuiteTable: React.FC<{
         `${wearRate.toFixed(2)} kr per kWh discharged. Not on the electricity bill. Pool-heater starts cost an additional 3 kr each.`)),
     line(t('Hembatteri urladdat', 'Home battery discharged'), 'kWh', 1, 'battery_discharge_kwh', null),
   ]];
-  const columns: Group[][] = [[cost, energy, wear], [solar, pool]];
+  const ev: Group = [t('Elbil', 'EV charging'), [
+    line(t('Laddad el', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
+    line(t('Snittladdnivå vid slut', 'Avg ending charge'), '%', 1, 'ev_end_soc', null,
+      t('Varje testfall väger lika.', 'Each test case has equal weight.')),
+    line(t('Tid under laddmålet', 'Time below readiness target'), 'h', 1, 'ev_readiness_shortfall_hours', 'lower',
+      t('Tid under det stigande 72-timmarsmålet, summerad över testfallen.', 'Time below the rising 72-hour target, summed across cases.')),
+    line(t('Laddvärde vid slut', 'EV closing value'), 'kr', 1, 'ev_closing_value_sek', null,
+      t('Ökningen från startnivån värderas med elpriser före testfallet.', 'Charge added above the starting level is valued using import prices from before the case.')),
+  ]];
+  const columns: Group[][] = [[cost, energy, ev], [solar, pool, wear]];
   const scoreTone = toneOf(scores.current, scores.test, 'higher');
   const scoreDelta = scores.current !== null && scores.test !== null ? scores.test - scores.current : null;
   // A sum that rounds to nothing is shown as 0, never as −0.

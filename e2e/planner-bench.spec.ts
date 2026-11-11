@@ -135,7 +135,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.batteryDischargeW.push(0);
     s.baseLoadBatteryCoverW.push(0);
     s.homeSoc.push(50);
-    s.carSoc.push(null);
+    s.carSoc.push(58 + i / n * 12);
     s.carConnected.push(1);
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
@@ -145,13 +145,14 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     command: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 'permit' : 'inhibit') };
   s.deviceW = { pool: s.poolW, car: s.carW };
   s.carKm = new Array(n).fill(0);
+  s.evReadinessLossSek = s.start.map((_slot, i) => i >= 240 ? 0.1 : 0);
   // The bill the score is made of: this fixture's grid cost, no wear and nothing left in the stores.
   s.wearSek = new Array(n).fill(0);
   const grid = Math.round(s.costSek.reduce((a, b) => a + b, 0) * 10_000) / 10_000;
   // The battery ends 2.3 kWh below its start: a debit of 3.4 kr at 1.40 kr/kWh.
   const battery = { start: 8, end: 5.7, cap: 17, counted: -2.3, grid_kwh: -2.4286, credit_sek: -3.4 };
   s.bill = { grid_sek: grid, wear_sek: 0, net_sek: Math.round((grid + 3.4) * 10_000) / 10_000, credit: { reference_sek_per_kwh: 1.4, battery, pool: null, ev: null, credit_sek: -3.4 } };
-  s.comfort = { pool_target_c: 30.5, ev_target_km: 300, carFloorKm: new Array(n).fill(120), pool_start_c: 29.5, ev_start_km: 0,
+  s.comfort = { pool_target_c: 30.5, ev_target_km: 300, carReadinessKm: new Array(n).fill(120), pool_start_c: 29.5, ev_start_km: 0,
     poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
   // A synthetic transport fixture for the audit UI, not an optimiser correctness test.
   const before = { poolC: s.poolC.map(v => v!), carKm: [...s.carKm], homeSoc: new Array(n).fill(50) };
@@ -909,6 +910,10 @@ test.describe('planner bench', () => {
     // What a kWh cost is per kWh bought, and wear stands apart from what the grid charged.
     await expect(page.locator('#bench-total-import_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
     await expect(page.locator('#bench-total-pool_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
+    await expect(page.getByText(/^(EV charging|Elbil)$/).first()).toBeVisible();
+    await expect(page.locator('#bench-total-ev_end_soc')).toContainText('70.0');
+    await expect(page.locator('#bench-total-ev_readiness_shortfall_hours')).toContainText('24.0');
+    await expect(page.locator('#bench-total-ev_closing_value_sek')).toContainText('kr');
     await expect(page.locator('#bench-total-solar_export_price')).toBeVisible();
     // Solar by where it went; the four uses add up to the solar used, to the rounding of each figure.
     const mainKwh = async (key: string) => Number((await page.locator(`#bench-total-${key} > span`).nth(1).textContent())!.replace('−', '-'));
@@ -989,9 +994,9 @@ test.describe('planner bench', () => {
     await expect(page.locator('[data-slot-energy=boiler]')).toHaveText(/1\.5 kWh/);
     // So is the pool's temperature, with the owner's target drawn in.
     await expect(page.locator('#plan-temperature')).toContainText(/30\.5 °C (target|mål)/);
-    // The test plan is drawn against the current planner's battery and pool, dashed.
+    // The test plan is drawn against the current planner's battery, EV and pool, dashed.
     const compared = page.locator('#plan-storage path[stroke-dasharray="5 3"], #plan-temperature path[stroke-dasharray="5 3"]');
-    await expect(compared).toHaveCount(2);
+    await expect(compared).toHaveCount(3);
     await expect(page.locator('#plan-storage')).toContainText(/(dashed|streckat) = main/);
     await expect(page.locator('#plan-temperature')).toContainText(/(dashed|streckat) = main/);
     await page.getByRole('group', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });

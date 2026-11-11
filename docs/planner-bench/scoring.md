@@ -1,6 +1,6 @@
 # Planner bench scoring
 
-Scorer v45, referee v30, opportunity audit v21 (5 November 2026).
+Scorer v46, referee v31, opportunity audit v22 (11 November 2026).
 
 ## Score and costs
 
@@ -17,10 +17,12 @@ continuing an already-running heater costs no new start. These costs belong to
 both planner physics and the independent referee, without extra cycle penalties.
 
 End-store credit values the change from the starting state up to each store's
-target, at the nonnegative upper median import price. Battery credit caps at
-full charge, pool credit at comfort temperature, and car credit at the requested
-range within its charge limit. Shared charging losses and heat-pump electricity
-conversion are defined in `planner-wasm/end-credit.ts`. Above-target inventory
+target. Battery and pool use the case's nonnegative upper median import price.
+Battery credit caps at full charge and pool credit at comfort temperature. EV
+credit caps at the car's own charge limit and uses the lower-tail replacement
+price learned from four-hour import windows before the case. Shared charging
+losses and heat-pump electricity conversion are defined in
+`planner-wasm/end-credit.ts`. Above-target inventory
 earns no extra credit. Scores compare planners on the same case; case scores
 add into a run score.
 
@@ -29,7 +31,7 @@ add into a run score.
 | Check | Cost | Automatic case failure |
 |---|---|---|
 | Pool cold exposure | Free through 1°C shortfall; 1 point per extra °C per full quarter by default | No |
-| Car below its floor | −2 per quarter after its existing grace | No |
+| EV readiness shortfall | Graded cost below the rising 72-hour target, steeper at low charge | No |
 | Boiler permission shortfall | −1 per missing allowed quarter in each 24-hour sample | No |
 
 Pool cost integrates `max(target − water − 1, 0)`, multiplied by the configured
@@ -54,9 +56,10 @@ and capped at the comfort target for this initial comparison.
 The pool's former 1°C/2°C deductions, overheating heuristic and replanning
 recovery grace are replaced by this single continuous account. Cold initial
 water remains valid; unavoidable exposure is a cost, never admission failure.
-Equal-comfort economic witnesses compare total linear pool exposure beyond the free band, separately
-from the existing car floor checks. Main search may trade comfort for money.
-The car's safety floor, charge limit and existing plug-in grace are unchanged.
+Equal-comfort economic witnesses compare total linear pool exposure beyond the
+free band and EV exposure below the readiness ramp. Both plans use the same
+plug-in anchor at the case start. The target rises by up to one percentage
+point per hour until it reaches the car's limit at hour 72.
 
 Boiler permission shortfall is the referee's own check
 (`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it.

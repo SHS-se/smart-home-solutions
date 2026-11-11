@@ -11,7 +11,7 @@ import type { BenchSeries, BenchStats } from './types';
  * older version are then recomputed from the stored decisions, with no planner
  * run and no change to the score.
  */
-export const STATS_VERSION = 3;
+export const STATS_VERSION = 4;
 export const statsCurrent = (stats: BenchStats | null | undefined): stats is BenchStats => stats?.version === STATS_VERSION;
 
 /** A pool quarter counts as heating above this, so standby noise does not. */
@@ -56,6 +56,7 @@ export function planStats(series: BenchSeries): BenchStats {
     pool_kwh: 0, pool_cost_sek: 0, pool_published_kwh: 0, pool_estimated_kwh: 0, pool_cheap_kwh: 0, pool_heating_hours: 0,
     pool_min_c: null, pool_max_c: null, pool_end_c: null,
     battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_wear_sek: 0, ev_kwh: 0, ev_unplugged_kwh: 0, ev_unplugged_quarters: 0,
+    ev_end_soc: series.carSoc.at(-1) ?? null, ev_readiness_shortfall_hours: 0, ev_closing_value_sek: series.bill?.credit.ev?.credit_sek ?? 0,
     solar_kwh: 0, solar_used_kwh: 0, solar_base_kwh: 0, solar_pool_kwh: 0, solar_ev_kwh: 0, solar_battery_kwh: 0, solar_exported_kwh: 0,
     import_price_paid: null, import_price_mean: 0,
   };
@@ -85,6 +86,7 @@ export function planStats(series: BenchSeries): BenchStats {
     s.battery_wear_sek += series.wearSek?.[i] ?? 0;
     const car = kwh(series.carW[i], h);
     s.ev_kwh += car;
+    if ((series.evReadinessLossSek?.[i] ?? 0) > 0) s.ev_readiness_shortfall_hours += h;
     if (!series.carConnected[i]) { s.ev_unplugged_quarters++; s.ev_unplugged_kwh += car; }
 
     const sun = solarUse(series, i);
@@ -134,6 +136,9 @@ export interface SuiteStats {
   battery_discharge_kwh: number;
   battery_wear_sek: number;
   ev_kwh: number;
+  ev_end_soc: number | null;
+  ev_readiness_shortfall_hours: number;
+  ev_closing_value_sek: number;
   solar_used_kwh: number;
   solar_base_kwh: number;
   solar_pool_kwh: number;
@@ -163,6 +168,8 @@ export function suiteStats(all: readonly BenchStats[]): SuiteStats {
     battery_discharge_kwh: sum(s => s.battery_discharge_kwh),
     battery_wear_sek: sum(s => s.battery_wear_sek),
     ev_kwh: sum(s => s.ev_kwh),
+    ev_readiness_shortfall_hours: sum(s => s.ev_readiness_shortfall_hours),
+    ev_closing_value_sek: sum(s => s.ev_closing_value_sek),
     solar_used_kwh: sum(s => s.solar_used_kwh),
     solar_base_kwh: sum(s => s.solar_base_kwh),
     solar_pool_kwh: sum(s => s.solar_pool_kwh),
@@ -176,6 +183,7 @@ export function suiteStats(all: readonly BenchStats[]): SuiteStats {
     import_price: per(s.grid_import_sek, s.grid_import_kwh),
     export_price: per(s.export_revenue_sek, s.grid_export_kwh),
     pool_price: per(sum(s => s.pool_cost_sek), s.pool_kwh),
+    ev_end_soc: per(sum(s => s.ev_end_soc ?? 0), all.filter(s => s.ev_end_soc !== null).length),
     pool_min_c: mins.length ? Math.min(...mins) : null,
     pool_max_c: maxs.length ? Math.max(...maxs) : null,
     solar_export_price: per(sum(s => s.solar_export_revenue_sek), s.solar_exported_kwh),

@@ -201,7 +201,7 @@ export default function BenchRuleList({
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       {thresholdLabel !== null && <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>}
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{smooth ? t('Kostnad (SEK/°C·h)', 'Cost (SEK/°C·h)') : rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={smooth ? 0 : lo} max={smooth ? undefined : hi} step={smooth ? "0.1" : "1"} value={smooth ? -rule.points : rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = smooth ? -Math.abs(e.target.valueAsNumber) : Math.max(RULE_POINTS_MIN, Math.min(RULE_POINTS_MAX, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{smooth ? t('Kostnad (SEK/°C·h)', 'Cost (SEK/°C·h)') : rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Regelvikt', 'Rule weight')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={smooth ? 0 : lo} max={smooth ? undefined : hi} step={smooth ? "0.1" : "1"} value={smooth ? -rule.points : rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = smooth ? -Math.abs(e.target.valueAsNumber) : Math.max(RULE_POINTS_MIN, Math.min(RULE_POINTS_MAX, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
@@ -223,8 +223,8 @@ export default function BenchRuleList({
     </>;
     if (rule.key === 'car_floor') return <>
       <p>
-        {t('Bilen är under sin säkerhetsnivå när dess respit sedan inkopplingen har gått ut: tio timmar vid nivån, en halvtimme kortare för varje procentenhet under den.',
-          'The car is below its safety floor once its grace since plug-in has run out: ten hours at the floor, half an hour less for each point below it.')}
+        {t('Laddmålet stiger en procentenhet per timme och når bilens laddgräns efter 72 timmar. Avdraget beror på hur långt under målet bilen ligger och är större vid låg laddnivå.',
+          'The charge target rises by one percentage point per hour and reaches the car’s charge limit after 72 hours. The deduction grows with the shortfall and is steeper at low charge.')}
         {' '}{t('I bänken räknas bilen som inkopplad när fallet börjar.', 'On the bench the car counts as plugged in when the case starts.')}
       </p>
       {sides.map(s => {

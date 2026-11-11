@@ -8,8 +8,9 @@ import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } fr
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
+import { CAR_FLOOR_POINTS } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
 
-export const SCORER_VERSION = 45;
+export const SCORER_VERSION = 46;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -39,12 +40,9 @@ export interface QuarterRule {
   eligibleFrom: (s: BenchSeries, threshold: number) => number;
 }
 
-const carBelowFloor = (q: QuarterView) => {
-  const line = q.s.comfort?.carFloorKm?.[q.i], km = q.s.carKm?.[q.i];
-  return line !== null && line !== undefined && km !== null && km !== undefined && km < line;
-};
+const carShortfall = (q: QuarterView) => (q.s.evReadinessLossSek?.[q.i] ?? 0) / Math.abs(CAR_FLOOR_POINTS);
 const poolAny = (s: BenchSeries) => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity;
-const carFrom = (s: BenchSeries) => s.comfort && s.carKm ? 0 : Infinity;
+const carFrom = (s: BenchSeries) => s.comfort && s.evReadinessLossSek ? 0 : Infinity;
 const poolShortfall = (q: QuarterView) => {
   const c = q.s.comfort, after = q.s.poolC[q.i];
   const before = q.i === 0 ? c?.pool_start_c : q.s.poolC[q.i-1];
@@ -55,7 +53,9 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
   { key: 'pool_shortfall', about: 'pool', label: 'Pool cold exposure',
     describe: () => 'temperature shortfall beyond 1°C × hours', fires: poolShortfall, eligibleFrom: poolAny },
   {
-    key: 'car_floor', about: 'car', label: 'Car below its safety floor', describe: () => 'below the floor after its grace since plug-in', fires: carBelowFloor, eligibleFrom: carFrom,
+    key: 'car_floor', about: 'car', label: 'EV readiness shortfall',
+    describe: () => 'graded shortfall below the 72-hour charge target, with a higher cost at low charge',
+    fires: carShortfall, eligibleFrom: carFrom,
   },
   {
     key: 'water_opportunities', about: 'water', label: 'Boiler permission shortfall',
@@ -183,7 +183,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
       deductions[rule.key] = rule.points * occurrences;
       score += deductions[rule.key];
       fired.push(rule.key);
-      counts[rule.key] = (counts[rule.key] ?? 0) + (rule.key === 'pool_shortfall' ? 1 : occurrences);
+      counts[rule.key] = (counts[rule.key] ?? 0) + (rule.key === 'water_opportunities' ? occurrences : 1);
     }
     histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
     sum += score;
@@ -196,7 +196,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
     const reason = !rule.enabled ? 'Switched off for this case.'
       : rule.about === 'water' ? s.hotWater ? 'Counts missing permissions in each consecutive 24-hour sample period, independently of thermostat consumption.' : 'The plan has no boiler permissions.'
       : !s.comfort ? 'The plan carries no targets.'
-        : !eligibleQuarters ? 'No temperature projection is available.'
+        : !eligibleQuarters ? rule.about === 'car' ? 'No EV readiness projection is available.' : 'No temperature projection is available.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;
     return [rule.key, { applicable: rule.enabled && eligibleQuarters > 0, reason, eligibleQuarters }];
   }));

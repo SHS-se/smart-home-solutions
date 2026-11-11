@@ -11,7 +11,7 @@ const level = poolLevels(HOUSEHOLD).at(-1)!;
 const termsOf = (c: BenchCase) => endCreditTerms({
   battery: HOUSEHOLD.battery,
   pool: { store: HOUSEHOLD.pool.store, draw_w: level.draw_w, heat_w: level.heat_w, target_c: TARGETS.pool_c },
-  car: { battery: HOUSEHOLD.car.battery, floor_kwh: Math.min(TARGETS.ev_floor_soc * HOUSEHOLD.car.battery.capacity_kwh, evLimitKwh(c, HOUSEHOLD)), limit_kwh: evLimitKwh(c, HOUSEHOLD) },
+  car: { battery: HOUSEHOLD.car.battery, limit_kwh: evLimitKwh(c, HOUSEHOLD), replacement_sek_per_kwh: 0.85 },
   import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh,
 });
 const record = (c: BenchCase, decisions: Decisions) => ({ decisions, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } });
@@ -37,9 +37,8 @@ Deno.test('each store is credited as the grid electricity it takes to put the en
   assertEquals(terms.reference_sek_per_kwh, 2);
   // The home battery counts to full and converts like the car: what it takes to charge it.
   assertEquals(terms.battery, { cap: h.battery.max_soc * h.battery.capacity_kwh, grid_kwh_per_unit: 1 / h.battery.charge_efficiency });
-  // The car is priced in two tiers, up to the middle of its range and on to its own charge limit.
-  const limit = evLimitKwh(c, h), floor = Math.min(TARGETS.ev_floor_soc * h.car.battery.capacity_kwh, limit);
-  assertEquals(terms.ev, { grid_kwh_per_unit: 1 / h.car.battery.charge_efficiency, tiers: [{ up_to: (floor + limit) / 2, sek_per_kwh: 2 }, { up_to: limit, sek_per_kwh: 2 }] });
+  const limit = evLimitKwh(c, h);
+  assertEquals(terms.ev, { grid_kwh_per_unit: 1 / h.car.battery.charge_efficiency, tiers: [{ up_to: limit, sek_per_kwh: 0.85 }] });
   // A degree of pool water is its heat over what the heat pump gives per watt drawn, the pump included.
   assertEquals(terms.pool!.cap, TARGETS.pool_c);
   assertAlmostEquals(terms.pool!.grid_kwh_per_unit, h.pool.store.capacity_kwh_per_c * level.draw_w / level.heat_w, 1e-9);
@@ -48,7 +47,7 @@ Deno.test('each store is credited as the grid electricity it takes to put the en
   // The pool is credited for the degree up to its target, not the three above it.
   assertAlmostEquals(credit.pool!.credit_sek, terms.pool!.grid_kwh_per_unit * 2, 1e-9);
   // A car that ends below where it started is a debit.
-  assertAlmostEquals(credit.ev!.credit_sek, -5 / h.car.battery.charge_efficiency * 2, 1e-9);
+  assertAlmostEquals(credit.ev!.credit_sek, -5 / h.car.battery.charge_efficiency * 0.85, 1e-9);
   assertAlmostEquals(credit.credit_sek, credit.battery!.credit_sek + credit.pool!.credit_sek + credit.ev!.credit_sek, 1e-9);
   // A household without a store has no term and no credit for it.
   const bare = endCreditTerms({ battery: null, pool: null, car: null, import_sek_per_kwh: [1] });
@@ -93,3 +92,17 @@ Deno.test('energy above a target earns nothing: heating the pool past it only co
 function assert(condition: unknown, message = 'assertion failed'): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+Deno.test('both EV schedules use the same replacement price from before the case', () => {
+  const c = world({ buy: () => 4, start: { ev: { soc: 0.2 } } });
+  c.recorded.history.prices.import_sek_per_kwh = Array(16).fill(0.8);
+  const early = plan({ ev: i => within(i, 0, 8) ? 4830 : 0 });
+  const late = plan({ ev: i => within(i, 280, 288) ? 4830 : 0 });
+  const first = referee(c, HOUSEHOLD, TARGETS, early).series.bill!.credit.ev!;
+  c.recorded.prices.import_sek_per_kwh.fill(8);
+  const second = referee(c, HOUSEHOLD, TARGETS, late).series.bill!.credit.ev!;
+  assertEquals(first, second);
+  assertAlmostEquals(first.credit_sek, 4.83 * 2 * 0.8, 0.0001);
+  c.recorded.history.prices.import_sek_per_kwh = [];
+  assertEquals(referee(c, HOUSEHOLD, TARGETS, early).series.bill!.credit.ev, null);
+});

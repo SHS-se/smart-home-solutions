@@ -462,6 +462,7 @@ Deno.test("native accounts match the independent pool scorer and graded EV expos
       assertAlmostEquals(cost, quarters[i].deductions.pool_shortfall ?? 0, 1e-8);
       return;
     }
+    assertAlmostEquals(cost, quarters[i].deductions[rule.key] ?? 0, 1e-8);
     const target = ((p.car_policy!.breach_permille[i] ?? -1) + 1) / 1000;
     const charge = native.quarters[i].ev_kwh! / capacity_kwh;
     const gap = Math.max(0, target - charge);

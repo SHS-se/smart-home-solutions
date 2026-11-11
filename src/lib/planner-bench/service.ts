@@ -1,4 +1,4 @@
-// Independent equal-comfort guards: pool cold exposure with a 1°C free band and the car floor.
+// Independent equal-comfort guards for pool cold exposure and EV readiness.
 import type { BenchSeries } from './types';
 import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 
@@ -21,7 +21,7 @@ export function poolExposure(comfort: Comfort, values: ArrayLike<number | null>,
 
 export function evExposure(comfort: Comfort, carKm: ArrayLike<number | null>): StoreExposure {
   const out: StoreExposure = { mild: 0, severe: 0, worst: 0, mildDeficitHours: 0, severeDeficitHours: 0 };
-  comfort.carFloorKm?.forEach((line, i) => {
+  comfort.carReadinessKm?.forEach((line, i) => {
     const km = carKm[i];
     if (line === null || km === null || km === undefined || km >= line) return;
     out.mild++; out.mildDeficitHours += (line - km) * .25; out.worst = Math.max(out.worst, line-km);

@@ -1,20 +1,7 @@
-// How the planner values and protects the car's charge.
-//
-// Everything is relative to the car's own charge limit L, which the integration
-// reads from the car. P is the home's floor setting, F = min(P, L) the floor the
-// car can actually reach, and M = (F + L) / 2 the middle of what is left. Energy
-// up to M is valued at the plan's 75th-percentile import price and M to L at its
-// 25th (end-credit.ts), so the car fills cheaply and never at the peak.
-//
-// Below F the car is short of a safe charge. Each plugged-in quarter still below
-// F once its grace has passed costs CAR_FLOOR_POINTS. The grace runs from the
-// moment the car was plugged in, so no replan renews it, and shrinks with the
-// charge: GRACE_AT_FLOOR_H at P, half an hour less per point below it, none from
-// 20 points below.
-//
-// This is the only definition of those levels and of the grace. The planner gets
-// them as one whole-number line per quarter and only compares against it; the
-// bench referee and the savings replay call the same functions.
+// The planner and bench referee use the car's charge limit and plug-in time
+// to define one readiness target per quarter. The target reaches the limit
+// 72 hours after plug-in. The savings replay still uses the floor and grace
+// formula defined below.
 
 import type { CarBatteryModel } from "../planner/device-models.ts";
 import type { ReadyProblem, ReadySlot } from "./ready-problem.ts";
@@ -50,8 +37,7 @@ export interface CarPlan { battery: CarBatteryModel; limitSoc: number; floorSett
 const READINESS_HOURS = 72;
 const HOUR_MS = 3_600_000;
 
-/** The live planner's soft readiness target. The independent bench referee
- * retains its existing floor when comparing both planner versions. */
+/** The soft readiness target used by the planner and independent referee. */
 export function carReadinessPolicy(
   plan: Omit<CarPlan, "floorSetting">,
   slots: readonly Pick<ReadySlot, "start_seconds" | "hours" | "ev_available">[],
@@ -68,6 +54,16 @@ export function carReadinessPolicy(
     return target > 0 ? target - 1 : null;
   });
   return { floor_kwh: limit * plan.battery.capacity_kwh, limit_kwh: limit * plan.battery.capacity_kwh, breach_permille };
+}
+
+/** Default readiness deduction in SEK before the configured rule multiplier. */
+export function carReadinessLoss(battery: CarBatteryModel, line: number | null, storedKwh: number, hours: number): number {
+  if (line === null) return 0;
+  const target = (line + 1) / 1000;
+  const charge = storedKwh / battery.capacity_kwh;
+  if (charge >= target) return 0;
+  const lowExposure = ((1 - charge) ** 5 - (1 - target) ** 5) / 5;
+  return (0.02 * (target - charge) + 0.35 * lowExposure) * battery.capacity_kwh / battery.charge_efficiency * hours;
 }
 
 /** A snapshot's cable state. A missing or unreadable plug-in time never grants a new grace. */

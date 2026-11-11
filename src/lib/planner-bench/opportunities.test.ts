@@ -7,7 +7,7 @@ import { LANES, type LaneId } from './lanes.ts';
 import {
   findOpportunities, MAX_TRIALS, NOT_MODELLED, OPPORTUNITY_RULES, ruleState, summariseAudit, type OpportunityAudit,
 } from './opportunities.ts';
-import { carFloorKm, referee, type Decisions } from './referee.ts';
+import { carReadinessKm, referee, type Decisions } from './referee.ts';
 import { scoreQuarters, storedPassed, storedScore } from './score.ts';
 import { DEFAULT_SERVICE_GUARD, serviceNotWorse, type ServiceExposure, type ServiceGuard } from './service.ts';
 import type { PlanRecord } from './types.ts';
@@ -47,7 +47,7 @@ function audited(c: BenchCase, d: Decisions, lane: LaneId = 'told/nominal', guar
   const was = scoreQuarters(before.series), is = scoreQuarters(after.series);
   const poolCost = (score: typeof was) => -score.quarters.reduce((sum, q) => sum + (q.deductions.pool_shortfall ?? 0), 0);
   assert(poolCost(is) <= poolCost(was) + 1e-8, 'continuous pool comfort got worse');
-  assert((is.counts.car_floor ?? 0) <= (was.counts.car_floor ?? 0), 'car floor got worse');
+  assert((is.counts.car_floor ?? 0) <= (was.counts.car_floor ?? 0), 'EV readiness shortfall lasted longer');
   // One saving, counted once: the findings add up to the difference between the two plans.
   assertAlmostEquals(after.series.bill!.wear_sek - before.series.bill!.wear_sek, audit.wearSek, 2e-3);
   assertAlmostEquals(audit.originalCostSek - audit.improvedCostSek - audit.wearSek, audit.avoidableSek, 2e-3);
@@ -242,23 +242,25 @@ Deno.test('comfort is guarded store by store: a warmer pool never pays for a sho
   // The same count, deeper: still worse.
   assertEquals(serviceNotWorse(exposure(10, 0), { ...exposure(10, 0), pool: 11 }), false);
 
-  // A car below its floor that the plan charges at 7 A for two hours, at a dear time. Power is cheapest on the last day,
-  // but waiting for it would leave the car below the floor after its grace: no alternative may add a quarter there.
+  // A low car gets two hours at 7 A at a dear time. Waiting until the cheapest day
+  // would extend the shortfall below its readiness target.
   // (The battery starts empty and the spread is too thin for it, so the car is the only thing to move.)
   const prices = { buy: (i: number) => within(i, 90, 98) ? 1.8 : i >= 200 ? 0.5 : 1.5, published: 288 };
   const low = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.22 } } });
   const short = audited(low, plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   const car = (audit: OpportunityAudit) => audit.findings.filter(f => f.device === 'ev');
-  const floorLines = carFloorKm(low, HOUSEHOLD, TARGETS);
-  const belowFloor = (km: number[]) => km.filter((v, i) => floorLines[i] !== null && v < floorLines[i]!).length;
-  for (const f of car(short)) assert(belowFloor(f.after.carKm) <= belowFloor(f.before.carKm), `${f.id} leaves the car below its floor`);
-  // The same charge for a car above its floor can all wait for the cheap day.
-  const fine = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
+  const readiness = carReadinessKm(low, HOUSEHOLD);
+  const belowTarget = (km: number[]) => km.filter((v, i) => readiness[i] !== null && v < readiness[i]!).length;
+  for (const f of car(short)) assert(belowTarget(f.after.carKm) <= belowTarget(f.before.carKm), `${f.id} extends the readiness shortfall`);
+  // A car that stays above its target until the cheap day can defer the same charge.
+  const ready = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.64 } } });
+  const earlyCharge = plan({ ev: i => within(i, 90, 98) ? 4830 : 0 });
+  const fine = audited(ready, earlyCharge);
   assert(car(fine).some(f => f.to >= 200), JSON.stringify(car(fine).map(f => [f.rule, f.to])));
   assertAlmostEquals(fine.rules.ev_timing.knownSek, 9.66 * 1.3, 0.01);
   // Every alternative the audit made for the car is one the charger can carry out.
   const levels = new Set(Array.from({ length: 12 }, (_, i) => (5 + i) * 690).concat(0));
-  const moved = findOpportunities(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), HOUSEHOLD, TARGETS, plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }), 'told/nominal').improved;
+  const moved = findOpportunities(ready, HOUSEHOLD, TARGETS, earlyCharge, 'told/nominal').improved;
   assert(moved.ev_w.every(w => levels.has(w)), `the car is charged between two amp steps: ${[...new Set(moved.ev_w)]}`);
   assertAlmostEquals(sum(moved.ev_w), 8 * 4830, 1e-6);
 });
@@ -357,9 +359,8 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
 });
 
 Deno.test('a case scores its net bill; what the audit proves is evidence beside it, hindsight apart', () => {
-  // Isolate the economic audit from pool comfort deductions.
-  const unheated = { pool_shortfall: { enabled: false } };
-  const lost = evaluate(spilled(), record(plan()), unheated, 'told/nominal');
+  const billOnly = { pool_shortfall: { enabled: false }, car_floor: { enabled: false } };
+  const lost = evaluate(spilled(), record(plan()), billOnly, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));
   assertEquals([score.audit.findingCount, 'findings' in score.audit], [audit.findings.length, false]);
@@ -373,14 +374,14 @@ Deno.test('a case scores its net bill; what the audit proves is evidence beside 
   assertAlmostEquals(score.points, score.sum - bill.net_sek, 1e-3);
   assertEquals([score.grid_sek, score.wear_sek, score.credit_sek], [bill.grid_sek, bill.wear_sek, bill.credit.credit_sek]);
   // The same miss, unknowable when planned: shown, not scored.
-  const unforeseen = evaluate(spilled(40), record(plan()), unheated, 'told/nominal');
+  const unforeseen = evaluate(spilled(40), record(plan()), billOnly, 'told/nominal');
   assert(unforeseen.series.audit!.hindsightSek > 15);
-  const foreseen = evaluate(spilled(40), record(plan()), unheated, 'oracle/nominal');
+  const foreseen = evaluate(spilled(40), record(plan()), billOnly, 'oracle/nominal');
   assert(foreseen.series.audit!.knownSek > 15);
   // What could be known does not change the bill: both lanes score the same decisions the same.
   assertEquals(foreseen.score.points, unforeseen.score.points);
   // A plan that takes the opportunity is left with next to nothing.
-  const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), unheated, 'told/nominal');
+  const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), billOnly, 'told/nominal');
   assertEquals(taken.outcome.violations, []);
   assert(taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.series.audit!.knownSek}`);
   assert(taken.score.points > lost.score.points, `${taken.score.points} ${lost.score.points}`);

@@ -40,11 +40,11 @@ import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './cas
 import { poolInventoryC, thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
-import { assertDecisions, carFloorKm, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, wearOf, type Decisions, type Simulation, type Violation } from './referee';
+import { assertDecisions, carReadinessKm, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, wearOf, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 21;
+export const OPPORTUNITY_AUDIT_VERSION = 22;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -376,7 +376,7 @@ export function findOpportunities(
 
   const reach = reachability(c, h);
   const comfort: Comfort = {
-    pool_target_c: targets.pool_c, ev_target_km: evLimitKwh(c, h) / h.car.battery.kwh_per_km, carFloorKm: carFloorKm(c, h, targets),
+    pool_target_c: targets.pool_c, ev_target_km: evLimitKwh(c, h) / h.car.battery.kwh_per_km, carReadinessKm: carReadinessKm(c, h),
     pool_start_c: original.start.poolC, ev_start_km: original.start.evKwh / h.car.battery.kwh_per_km,
     poolReachableC: reach.poolC, carReachableKm: reach.carKm,
   };

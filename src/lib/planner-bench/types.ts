@@ -56,6 +56,8 @@ export interface BenchSeries {
   carSoc: (number | null)[];
   /** Range in the car, km. */
   carKm?: number[];
+  /** Default graded readiness loss per quarter, in SEK, before rule overrides. */
+  evReadinessLossSek?: number[];
   carConnected: number[];
   /** Pool temperature at the end of each quarter, °C; null without a pool model. */
   poolC: (number | null)[];
@@ -81,8 +83,8 @@ export interface BenchSeries {
     pool_target_c: number;
     /** The car's charge limit as a range: the top of what it is charged to. */
     ev_target_km: number;
-    /** Per quarter, the range below which that quarter counts as below the floor. */
-    carFloorKm?: (number | null)[];
+    /** Per quarter, the range targeted by the EV readiness ramp. */
+    carReadinessKm?: (number | null)[];
     pool_start_c: number; ev_start_km: number;
     poolReachableC: number[]; carReachableKm: number[];
   };
@@ -135,6 +137,9 @@ export interface BenchStats {
   /** Battery wear on discharged energy, SEK: modelled, not on the electricity bill. */
   battery_wear_sek: number;
   ev_kwh: number;
+  ev_end_soc: number | null;
+  ev_readiness_shortfall_hours: number;
+  ev_closing_value_sek: number;
   /** Car energy planned in quarters where the car is not plugged in. */
   ev_unplugged_kwh: number;
   ev_unplugged_quarters: number;

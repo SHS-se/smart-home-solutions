@@ -1,5 +1,6 @@
-import { CAR_FLOOR_SOC_DEFAULT } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
-import { parseHeaterState, type HeaterState } from '../../../supabase/functions/_shared/planner/device-models';
+import { CAR_FLOOR_SOC_DEFAULT, carReadinessPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
+import { evReplacementPrice } from '../../../supabase/functions/_shared/planner-wasm/ev-price-history';
+import { parseHeaterState, type CarBatteryModel, type HeaterState } from '../../../supabase/functions/_shared/planner/device-models';
 
 // A planner bench test case (docs/planner-bench/test-cases.md).
 //
@@ -20,6 +21,24 @@ export const CASE_VERSION = 3;
 
 /** One value per quarter. */
 export type Series = number[];
+
+export function casePriceArchive(c: BenchCase) {
+  const history = c.recorded.history.prices;
+  const start = Date.parse(history.start);
+  return history.import_sek_per_kwh.flatMap((price, i) => price === null ? [] : [{
+    start_ts: new Date(start + i * QUARTER_MS).toISOString(), import_price_sek_per_kwh: price,
+  }]);
+}
+
+export function caseEvReplacementPrice(c: BenchCase, prices = casePriceArchive(c)) {
+  return evReplacementPrice(prices, c.start, c.timezone);
+}
+
+/** Both planners are evaluated as plugged in from the start of the same case. */
+export function caseCarReadiness(c: BenchCase, battery: CarBatteryModel) {
+  return carReadinessPolicy({ battery, limitSoc: c.start_state.ev.target_soc, connection: { kind: 'plugged', sinceMs: 0 } },
+    Array.from({ length: QUARTERS }, (_, i) => ({ start_seconds: i * 900, hours: .25, ev_available: true })), 0);
+}
 
 export interface CaseStartState {
   battery_soc: number;

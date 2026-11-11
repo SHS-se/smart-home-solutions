@@ -91,6 +91,7 @@ const stats = (over: Partial<BenchStats>): BenchStats => ({
   solar_export_revenue_sek: 0,
   pool_kwh: 20, pool_cost_sek: 30, pool_published_kwh: 20, pool_estimated_kwh: 0, pool_cheap_kwh: 10, pool_heating_hours: 5,
   pool_min_c: 29, pool_max_c: 31, pool_end_c: 30, battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_wear_sek: 0, ev_kwh: 0,
+  ev_end_soc: null, ev_readiness_shortfall_hours: 0, ev_closing_value_sek: 0,
   ev_unplugged_kwh: 0, ev_unplugged_quarters: 0, solar_kwh: 0, solar_used_kwh: 0, solar_base_kwh: 0, solar_pool_kwh: 0, solar_ev_kwh: 0, solar_battery_kwh: 0, solar_exported_kwh: 0,
   import_price_paid: 1.4, import_price_mean: 2, ...over,
 });
@@ -130,13 +131,14 @@ Deno.test('pool cold exposure is fractional, linear beyond 1°C and duration wei
   assertAlmostEquals(scoreQuarters(partial).quarters[0].score, -.2, 1e-9);
 });
 
-Deno.test('the car loses two points in a quarter below its floor line, and never fails the case', () => {
-  const lines = Array.from({ length: 288 }, (_, i) => i < 4 ? null : 100);
-  const low = scoreQuarters(comfortSeries(() => 30, i => i < 8 ? 99 : 100, { carFloorKm: lines }));
-  assertEquals(low.quarters[3], { score: 0, fired: [], deductions: {} });
-  assertEquals(low.quarters[4], { score: -2, fired: ['car_floor'], deductions: { car_floor: -2 } });
-  assertEquals(low.quarters[8], { score: 0, fired: [], deductions: {} });
-  assertEquals([low.counts.car_floor, low.sum, low.requiredFired], [4, -8, []]);
+Deno.test('EV readiness scores fractional losses, with one affected count per quarter', () => {
+  const s = comfortSeries(() => 30, () => 100);
+  s.evReadinessLossSek = Array.from({ length: 288 }, (_, i) => i === 4 ? 0.125 : i === 5 ? 0.5 : 0);
+  const score = scoreQuarters(s);
+  assertEquals(score.quarters[3], { score: 0, fired: [], deductions: {} });
+  assertEquals(score.quarters[4], { score: -0.125, fired: ['car_floor'], deductions: { car_floor: -0.125 } });
+  assertEquals([score.counts.car_floor, score.sum, score.requiredFired], [2, -0.625, []]);
+  assertEquals(scoreQuarters(s, { car_floor: { points: -1 } }).sum, -0.3125);
 });
 
 Deno.test('warm water earns no comfort reward or arbitrary next-day deduction', () => {
