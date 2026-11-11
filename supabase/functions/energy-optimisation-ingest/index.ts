@@ -1096,17 +1096,25 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           };
         }),
       };
-      const [targetResult, settingsResult] = await Promise.all([
+      // These reads describe the home and do not depend on one another, so
+      // they travel together: one round trip's wait instead of five. Each
+      // result is judged below in the order it used to be read. The optional
+      // model read settles to a value, so its failure stays a warning.
+      const [targetResult, settingsResult, importLimitW, modelCapture, { data: fixedState, error: fixedReadError }] = await Promise.all([
         supabase.from("energy_optimisation_comfort_targets")
           .select("pool_target_c, ev_floor_soc").eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km").eq("home_id", auth.homeId).maybeSingle(),
+        // The grid import limit is the owner's answer in the home profile: the
+        // main fuse, or less if they chose less. The figure a snapshot carries
+        // is not used.
+        readHomeGridImportLimitW(supabase, auth.homeId),
+        captureDeviceModels(supabase, auth.homeId).then(
+          (bundle): { bundle: DeviceModelBundle | null; error: unknown } => ({ bundle, error: null }),
+          (error: unknown): { bundle: DeviceModelBundle | null; error: unknown } => ({ bundle: null, error })),
+        supabase.rpc("get_energy_replan_state", { p_home_id: auth.homeId }),
       ]);
       if (targetResult.error) throw new Error(targetResult.error.message);
-      // The grid import limit is the owner's answer in the home profile: the
-      // main fuse, or less if they chose less. The figure a snapshot carries is
-      // not used.
-      const importLimitW = await readHomeGridImportLimitW(supabase, auth.homeId);
       if (importLimitW === null) {
         return json({ error: "invalid_snapshot",
           detail: "The home profile on the website has no main fuse size, so the plan has no grid import limit" }, 400);
@@ -1120,11 +1128,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         battery_curve_mode: "balanced",
       };
 
-      let modelBundle: DeviceModelBundle | null = null;
-      try {
-        modelBundle = await captureDeviceModels(supabase, auth.homeId);
-      } catch (error) {
-        console.warn("[ENERGY-OPTIMISATION] optional device models unavailable", describeThrown(error));
+      const modelBundle: DeviceModelBundle | null = modelCapture.bundle;
+      if (!modelBundle) {
+        console.warn("[ENERGY-OPTIMISATION] optional device models unavailable", describeThrown(modelCapture.error));
         snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
           "device_model_read", "models", "Stored device model evidence could not be read.",
           "Planning continues with known comfort intent, current equipment and measured demand.")]);
@@ -1201,7 +1207,6 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
       }
 
-      const { data: fixedState, error: fixedReadError } = await supabase.rpc("get_energy_replan_state", { p_home_id: auth.homeId });
       if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;

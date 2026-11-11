@@ -256,6 +256,8 @@ struct Search<'a> {
     first: Vec<i64>,
     last: Vec<i64>,
     indices: Vec<i64>,
+    /// An action was scored against a table cell that was never computed.
+    unreached: bool,
 }
 fn js_round(value: f64) -> f64 {
     let floor = value.floor();
@@ -306,6 +308,7 @@ impl<'a> Search<'a> {
             first: vec![0; n],
             last: vec![0; n],
             indices: vec![0; n],
+            unreached: false,
         }
     }
     fn choose<const SHARED: bool>(
@@ -319,7 +322,6 @@ impl<'a> Search<'a> {
     ) -> Result<f64, String> {
         let room = if SHARED { q.room_target.as_ref() } else { None };
         let memo_row = self.memo.cursor;
-        self.memo.cursor += 1;
         if self.memo.replay && output.is_none() {
             if let Some(row) = self.memo.rows.get(memo_row).copied().flatten() {
                 let mut best = f64::INFINITY;
@@ -333,6 +335,7 @@ impl<'a> Search<'a> {
                         action.watts,
                         action.future.read(table),
                     ) {
+                        self.unreached |= value.is_nan();
                         if best == f64::INFINITY
                             || value < best - 1e-9
                             || (value - best).abs() <= 1e-9 && action.watts < best_watts
@@ -516,6 +519,7 @@ impl<'a> Search<'a> {
                     evaluation.expect("a room action must have a projected trajectory");
                 let watts = action.watts;
                 if let Some(value) = value {
+                    self.unreached |= value.is_nan();
                     if best_score == f64::INFINITY
                         || value < best_score - 1e-9
                         || (value - best_score).abs() <= 1e-9 && watts < best_watts
@@ -559,8 +563,11 @@ impl<'a> Search<'a> {
             }
         }
         if capture {
+            if self.memo.rows.len() <= memo_row {
+                self.memo.rows.resize(memo_row + 1, None);
+            }
             if memo_complete {
-                self.memo.rows.push(Some(CachedRow {
+                self.memo.rows[memo_row] = Some(CachedRow {
                     start: memo_start,
                     end: self.memo.actions.len(),
                     bounds: RoomBounds {
@@ -568,10 +575,9 @@ impl<'a> Search<'a> {
                         committed_peak: self.committed.peak,
                         committed_next: self.committed.state.temperature,
                     },
-                }));
+                });
             } else {
                 self.memo.actions.truncate(memo_start);
-                self.memo.rows.push(None);
             }
         }
         if best_score == f64::INFINITY {
@@ -609,7 +615,73 @@ fn relay_choices(q: &Quarter) -> Vec<RelayChoice> {
 pub fn plan(input: &Input) -> Result<Plan, String> {
     plan_with_memo_budget(input, 32 * 1024 * 1024)
 }
+/// The temperature rows of each quarter's table that the plan can read, as
+/// inclusive row ranges; `None` for the first quarter, whose table is never
+/// read. A room left alone cools no faster than its passive transition and a
+/// room heated with everything it has warms no faster than its full one, so a
+/// quarter's states lie between those two carried forward from the start, and
+/// the rows a state's actions read are the two around each next temperature.
+/// Returns `None` where the transition is not monotone, and the whole table is
+/// then computed.
+fn reachable_rows(input: &Input, grid: &Grid, top: f64) -> Option<Vec<Option<(usize, usize)>>> {
+    // Minute steps and the quarter's own transition round differently.
+    const SLACK_C: f64 = 1e-6;
+    let thermostat_w: f64 = input.thermostats.iter().map(|t| t.power_w).sum();
+    let mut rows = vec![None; input.quarters.len()];
+    let (mut coldest, mut warmest) = (input.start_c, input.start_c);
+    let row = |c: f64| {
+        let position = ((c - grid.low) / grid.step)
+            .max(0.)
+            .min((grid.temperatures - 1) as f64);
+        (position.floor() as usize).min(grid.temperatures - 2)
+    };
+    // A quarter's rows follow from the states of the quarter before it.
+    for (rows, before) in rows.iter_mut().skip(1).zip(&input.quarters) {
+        let s = before.transition;
+        let total = thermostat_w + before.relay_w.iter().sum::<f64>();
+        // Written so that a NaN fails the test.
+        if !(s.decay >= 0.
+            && s.delivered_gain_c_per_w >= 0.
+            && s.gain_c_per_w >= 0.
+            && total >= 0.
+            && top >= total
+            && input.start_delivered_w >= 0.)
+        {
+            return None;
+        }
+        let idle = State {
+            temperature: coldest,
+            delivered: 0.,
+            mask: 0,
+        };
+        let heated = State {
+            temperature: warmest,
+            delivered: top,
+            mask: 0,
+        };
+        let passive = temperature(s, idle, 0.) - SLACK_C;
+        let full = temperature(s, heated, total) + SLACK_C;
+        if !(passive.is_finite() && full.is_finite()) {
+            return None;
+        }
+        let (from, to) = (row(passive), row(full) + 1);
+        *rows = Some((from, to));
+        coldest = grid.low + from as f64 * grid.step;
+        warmest = grid.low + to as f64 * grid.step;
+    }
+    Some(rows)
+}
 fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, String> {
+    // Only the rows the plan can read are searched. Should a read ever fall
+    // outside them, the whole table is computed instead, as it always was.
+    if let Some(plan) = plan_rows(input, payload_limit, true)? {
+        return Ok(plan);
+    }
+    plan_rows(input, payload_limit, false)?
+        .ok_or_else(|| "Room search read a table cell it never computed".into())
+}
+/// `Ok(None)` when `restrict` left out a cell that the plan then read.
+fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Option<Plan>, String> {
     let Input {
         start_c,
         start_delivered_w,
@@ -677,19 +749,30 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
     let options: Vec<_> = quarters.iter().map(relay_choices).collect();
     let mut values: Vec<Vec<f64>> = vec![vec![]; quarters.len() + 1];
     let mut search = Search::new(thermostats, payload_limit);
+    let reachable = if restrict {
+        reachable_rows(input, &grid, top)
+    } else {
+        None
+    };
     for i in (0..quarters.len()).rev() {
         search
             .memo
             .quarter(&quarters[i], i.checked_sub(1).map(|j| &quarters[j]));
-        let mut table = vec![0.; size];
+        // A cell left out stays NaN, so a read of it cannot pass for a value.
+        let rows = match &reachable {
+            Some(rows) => rows[i],
+            None => Some((0, grid.temperatures - 1)),
+        };
+        let mut table = vec![if reachable.is_some() { f64::NAN } else { 0. }; size];
         let next = if i + 1 == quarters.len() {
             None
         } else {
             Some(values[i + 1].as_slice())
         };
-        for t in 0..grid.temperatures {
+        for t in rows.map_or(0..0, |(from, to)| from..to + 1) {
             for d in 0..points {
                 for mask in 0..grid.masks {
+                    search.memo.cursor = (t * points + d) * grid.masks + mask;
                     let state = State {
                         temperature: low + t as f64 * step,
                         delivered: d as f64 * grid.delivered_step,
@@ -703,6 +786,9 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
                     };
                 }
             }
+        }
+        if reachable.is_some() && search.unreached {
+            return Ok(None);
         }
         values[i] = table;
     }
@@ -751,7 +837,10 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
             .push((q.required_c - out.state.temperature).max(0.));
         state = out.state;
     }
-    Ok(result)
+    if reachable.is_some() && search.unreached {
+        return Ok(None);
+    }
+    Ok(Some(result))
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -807,6 +896,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reachable_rows_give_the_full_table_plan_without_falling_back() {
+        let vectors: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../tests/room-heating-native.fixture.json"
+        ))
+        .unwrap();
+        for vector in vectors.as_array().unwrap() {
+            let input: Input = serde_json::from_value(vector["input"].clone()).unwrap();
+            let full = plan_rows(&input, 32 * 1024 * 1024, false).unwrap();
+            for bytes in [0, 32 * 1024 * 1024] {
+                let restricted = plan_rows(&input, bytes, true).unwrap();
+                assert!(
+                    restricted.is_some(),
+                    "{} read a cell outside its reachable rows",
+                    vector["name"]
+                );
+                assert_eq!(restricted, full, "{}", vector["name"]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_transition_that_is_not_monotone_searches_the_whole_table() {
+        let vectors: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../tests/room-heating-native.fixture.json"
+        ))
+        .unwrap();
+        let mut input: Input =
+            serde_json::from_value(vectors.as_array().unwrap()[0]["input"].clone()).unwrap();
+        let grid = Grid {
+            low: 0.,
+            step: 0.1,
+            temperatures: 400,
+            delivered_step: 0.,
+            points: 1,
+            masks: 1,
+        };
+        assert!(reachable_rows(&input, &grid, 1e6).is_some());
+        input.quarters[0].transition.gain_c_per_w = -1e-6;
+        assert!(reachable_rows(&input, &grid, 1e6).is_none());
+        input.quarters[0].transition.gain_c_per_w = f64::NAN;
+        assert!(reachable_rows(&input, &grid, 1e6).is_none());
     }
 
     #[test]

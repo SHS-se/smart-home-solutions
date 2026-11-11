@@ -63,6 +63,34 @@ application payload counts, not billed traffic or a fleet capacity guarantee.
 Final assembly also remains a synchronous Edge CPU section; the measured live
 assembly took 184ms, which does not guarantee the same margin for larger homes.
 
+## Where a replan's seconds go
+
+Measured on TEST, 11 November 2026, from `energy_replan_events` and the stored
+job and run rows. A manual replan took 11–16 s from the click to publication:
+
+| Segment | Seconds | What it is |
+|---|---|---|
+| Click to capture | about 2 | The realtime wake of Home Assistant's long poll. |
+| Capture to admitted | 6–7.5 | Home Assistant finishes its capture and uploads; ingest stores telemetry and prepares the frozen input. The split between the two is not recorded. |
+| Admitted to solving | 1.5–2 | The poll that starts the solve. |
+| Solving to published | 3–5.5 | Room preparation, search, assembly (`summary.calculation_ms`, 4–5 s) and publication. |
+
+Two changes shorten this without changing any plan:
+
+- A job that nobody has claimed is ready at once, so its receipt asks for the
+  first poll after 100 ms instead of a full second
+  (`20261111170000_start_admitted_planning_jobs_at_once.sql`). A leased or
+  retried job keeps its paced wait of at least a second.
+- The room search computes only the temperature rows a room can reach
+  (`reachable_rows` in `planner-core/solver/src/room_heating.rs`): between its
+  passive and its fully heated transition carried forward from the start. The
+  plan is identical; a read outside those rows recomputes the whole table. On
+  the TEST home's floor-heated room this took the preparation request from 843
+  to 506 ms locally. Rooms that can reach their whole grid gain nothing.
+
+Ingest reads the comfort targets, value settings, grid limit, device models and
+replan state together instead of one after another.
+
 ## Room preparation within the hosted CPU limit
 
 The hosted planner prepares one room per request before solving the household.

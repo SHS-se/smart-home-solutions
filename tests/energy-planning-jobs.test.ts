@@ -1504,3 +1504,24 @@ Deno.test('older battery repair accepts intentionally pruned ended slots but ref
     }finally{await db.close();}
   }
 });
+
+Deno.test('an unclaimed job asks for its first poll at once; a leased or retried one keeps its paced wait', async () => {
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261111170000_start_admitted_planning_jobs_at_once'));
+    const state = await acceptedState(db);
+    const args = capturedSubmission(snapshot, {reference_plan_id: state?.reference_plan_id ?? null, accepted_reference_revision: state?.accepted_reference_revision ?? 0});
+    const accepted = await rpc<Receipt & {retry_after_ms: number}>(db, 'accept_energy_planning_job', args);
+    assertEquals(accepted.state, 'pending');
+    assertEquals(accepted.retry_after_ms, 100, 'nothing is working on a fresh job, so the poll that starts it need not wait');
+    assertEquals((await read(db, accepted.job_id) as Receipt & {retry_after_ms: number}).retry_after_ms, 100);
+    const owned = (await attemptClaim(db, accepted.job_id))!;
+    const leased = await read(db, accepted.job_id) as Receipt & {retry_after_ms: number};
+    assert(leased.retry_after_ms > 1000 && leased.retry_after_ms <= 60000, 'a leased job is paced by its lease');
+    const retried = await rpc<Receipt & {retry_after_ms: number}>(db, 'retry_energy_planning_attempt',
+      {...attemptIdentity(owned), code: 'planning_deadline_exceeded', detail: 'Synthetic worker timeout'});
+    assert(retried.retry_after_ms >= 1000, 'a retried job is paced by its retry time');
+    await db.query("UPDATE private.energy_planning_jobs SET wake_after=clock_timestamp()-interval '1 second' WHERE id=$1", [accepted.job_id]);
+    assertEquals((await read(db, accepted.job_id) as Receipt & {retry_after_ms: number}).retry_after_ms, 1000, 'never below a second once it has been claimed');
+  } finally { await db.close(); }
+});
