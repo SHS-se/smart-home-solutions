@@ -1,6 +1,7 @@
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 import type { NativeOwnerMask, NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.ts";
+import type { NativeQuarter } from "./planner-wasm/core.ts";
 import type { PreparedRulesInput, PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
 
 import { poolElectricalDemand } from "./planner/models/pool/electrical.ts";
@@ -9,10 +10,56 @@ import { planningWarning, type PlanningWarning } from "./planner/planning-warnin
 export type RetainedCommandSlot = Partial<PublishedCommandSlot> & { start: string };
 const HOUR = 3_600_000, QUARTER = 900_000;
 const emptyMask = (): NativeOwnerMask => ({pool: false, ev: false, battery: false});
+// The app admits blocked battery work from 100 Wh. Use the same energy
+// scale per retained charging run for a forecast-only correction.
+const BATTERY_RESIZE_MAX_WH = 100;
 
 export function nativeOwnerHeld(problem: ReadyProblem, i: number, owner: keyof NativeOwnerMask): boolean {
   return !!problem.fixed_commands?.[i] || !!problem.accepted?.[i] &&
     problem.slots[i].start_seconds < problem.locked_through_seconds && !problem.released?.[i]?.[owner];
+}
+
+/** Retain the selected charging run with only its proven, immaterial clips. */
+export function resizeRetainedCharge(input: PreparedRulesInput, quarters: readonly NativeQuarter[]): PreparedRulesInput | null {
+  const {problem} = input;
+  const changes: Array<{index: number; start: string; before_w: number; after_w: number; lost_wh: number}> = [];
+  let runLossWh = 0;
+  for (const [i, old] of (problem.accepted ?? []).entries()) {
+    if (!old || old.battery !== 'grid_charge' || !nativeOwnerHeld(problem, i, 'battery') ||
+        input.fixed_slots[i] || problem.fixed_commands?.[i]) {
+      runLossWh = 0;
+      continue;
+    }
+    // One-watt command resolution is also used by native held allocation
+    // validation. The next native solve verifies the revised hold exactly.
+    const actual = quarters[i].charge_w;
+    const resized = Math.ceil(actual);
+    if (resized >= old.charge_limit_w) continue;
+    if (resized <= 0) return null;
+    const slot = problem.slots[i];
+    const lostWh = (old.charge_limit_w - actual) * (slot.hours + Math.min(0, slot.start_seconds) / 3600);
+    runLossWh += lostWh;
+    if (runLossWh >= BATTERY_RESIZE_MAX_WH) return null;
+    changes.push({index: i, start: input.held_reference[i].start, before_w: old.charge_limit_w, after_w: resized, lost_wh: lostWh});
+  }
+  if (!changes.length) return null;
+  const accepted = [...problem.accepted!];
+  const locked = [...input.locked_slots], reference = [...input.held_reference];
+  for (const {index, after_w} of changes) {
+    accepted[index] = {...accepted[index]!, charge_limit_w: after_w};
+    for (const rows of [locked, reference]) {
+      const old = rows[index];
+      const command = old.battery_command!;
+      const instruction = old.battery_instruction;
+      rows[index] = {...old, battery_command: {...command, charge_limit_w: Math.min(command.charge_limit_w, after_w)},
+        ...(instruction?.kind === 'grid_charge' ? {battery_instruction: {...instruction, charge_ac_w: after_w}} : {})};
+    }
+  }
+  return {...input, problem: {...problem, accepted}, locked_slots: locked, held_reference: reference,
+    snapshot: {...input.snapshot, planning_warnings: [...(input.snapshot.planning_warnings ?? []), planningWarning(
+      'battery_commitment_resized', 'battery', 'The forecast calls for a small reduction in accepted battery charging.',
+      'Only the affected charging intervals were reduced to fit the house import target.',
+      {intervals: JSON.stringify(changes)})]}};
 }
 
 /** A proved impossible retained battery request may move; bookings and other owners may not. */

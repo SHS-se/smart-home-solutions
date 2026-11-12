@@ -35,7 +35,7 @@ import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./plan
 import { allocatedBatteryCommand } from "./planner-wasm/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { planningStage, type PlanningTrace } from "./planning-trace.ts";
-import { assertHeldCommands, applyNativeHolds, commandOwner, compileCommitments, ownerLabel, unavailableOwner, evCurrentCeiling, recoverRetainedBattery, type RetainedCommandSlot } from "./rules-commitments.ts";
+import { assertHeldCommands, applyNativeHolds, commandOwner, compileCommitments, ownerLabel, unavailableOwner, evCurrentCeiling, recoverRetainedBattery, resizeRetainedCharge, type RetainedCommandSlot } from "./rules-commitments.ts";
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
 
@@ -583,6 +583,15 @@ export function solveRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace)
       const proof = planningStage(trace, 'battery_commitment_attribution', () => core.project(problem, witness)).outcome;
       if (proof.kind !== 'projected' || proof.quarters.some(q =>
         q.net_w > problem.limits.import_w + 1e-7 || q.net_w < -problem.limits.export_w - 1e-7)) recovered = null;
+      if (recovered) {
+        const held = witness.map((command, i) => applyNativeHolds(input.problem, i, command));
+        const projection = planningStage(trace, 'battery_commitment_resize_projection', () => core.project(problem, held)).outcome;
+        const resized = projection.kind === 'projected' ? resizeRetainedCharge(input, projection.quarters) : null;
+        if (resized) {
+          const attempted = planningStage(trace, 'battery_commitment_resize', () => core.solve(resized.problem, trace)).outcome;
+          if (attempted.kind === 'selected') return {input: resized, selection: attempted.selection};
+        }
+      }
     }
     if (recovered) {
       input = recovered;

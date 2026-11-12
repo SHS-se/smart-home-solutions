@@ -41,7 +41,7 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
     },
     snapshot_id: "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     captured_at: slots[0].start,
-    comfort: { ev: { target_km: 300 }, pool: { target_c: 30 } },
+    comfort: { ev: { floor_soc: 0.30 }, pool: { target_c: 30 } },
     value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     timezone: "Europe/Stockholm",
     slot_minutes: 15,
@@ -129,7 +129,7 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
 export function rulesFixtureInput(source: OptimisationSnapshot, evReplacementSekPerKwh?: number) {
   const snapshot = structuredClone(source);
   snapshot.captured_at = new Date(Math.max(Date.parse(snapshot.captured_at), Date.parse(snapshot.slots[0].start))).toISOString();
-  snapshot.comfort = { ...(snapshot.capabilities.ev ? { ev: { target_km: 300 } } : {}),
+  snapshot.comfort = { ...(snapshot.capabilities.ev ? { ev: { floor_soc: 0.30 } } : {}),
     ...(snapshot.capabilities.pool ? { pool: { target_c: 30 } } : {}) };
   snapshot.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
   if (snapshot.capabilities.pool) {

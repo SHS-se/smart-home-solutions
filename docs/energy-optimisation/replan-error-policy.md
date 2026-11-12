@@ -1,32 +1,51 @@
 # Readiness and automatic replan error policy
 
-Settled implementation, 24 October 2026. Supersedes any generic “error or recovery means replan” rule.
-
-Superseded in part on 30 October 2026: the car is protected by a safety floor (30 % by default, capped at the car's own charge limit) instead of range bands, and its grace runs from the plug-in time the integration records and keeps across restarts. No replan renews that clock: a new plan reads the same plug-in time. There is still no departure time or trip deadline. The car's own charge limit is the top of what it is charged to, and a physical cap. Energy up to the middle of floor and limit is valued at the plan's 75th-percentile import price, the rest at its 25th (`car-policy.ts`, `end-credit.ts`). The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. The independent bench uses the same rule under scorer version 42, counting the car as plugged in at the start of each case.
+Revised 12 November 2026. The app admits execution evidence when accepted work
+is materially blocked. The planner owns quarter-hour allocations, and the app
+owns live responses within the accepted plan.
 
 ## Admission thresholds
 
-All comparisons use current received observations. Available, unchanged readings never expire because of their report timestamp.
+Available readings remain current until Home Assistant changes their value or
+reports them unavailable.
 
-| Evidence | Automatic replan condition | Clearing and repeat behavior |
+| Evidence | Automatic replan condition | Local behaviour |
 |---|---|---|
-| EV disconnected | Accepted charging is due now and the car cannot charge because disconnected | Immediate. Idle unplug/replug creates no episode or replan. |
-| Actual actuator or dispatched-command failure | A required actuator is unavailable or an actually dispatched scheduled command fails | Immediate, once per physical episode. Configuration errors and generic exceptions do not count. |
-| Required observation unavailable | The specific source has continuously reported unknown/unavailable for 15 minutes and prevents accepted work | Five-minute status attention remains; hold the last setting throughout. Each source has its own clock. Usable recovery only replans service previously suppressed by an admitted physical failure. |
-| Battery energy shortfall | At least 0.200 kWh cannot be delivered to an accepted stored-energy objective with its remaining nominal and authorized recovery capacity, continuously for 2 minutes | Clear below 0.100 kWh for 2 minutes. Exact shortfall remains diagnostic below the threshold. |
-| Pool model shortfall | Measured water is at least 0.5°C below the accepted water-temperature trajectory at the same instant, continuously for 30 minutes | Clear below 0.25°C for 5 minutes. A pool merely below the desired comfort target is not a model error. |
+| EV disconnected | Accepted charging is due and a usable plug reading says the car is disconnected | Immediate. An idle unplug/replug requires no replan. |
+| Command failure | A required scheduled command is rejected, fails or cannot be confirmed | The app records the failure with its cause and holds the last setting. |
+| Required observation unavailable | The same source is still unavailable after 15 minutes and prevents due accepted work | Hold the last setting. Show attention after five minutes. Usable readings resume ordinary evaluation. Recovery needs a new plan only if the accepted or pending plan suppresses that work. |
+| Live battery energy shortfall | Work actually cannot run in a quarter scheduling at least 100 Wh of battery energy | A shortfall against an otherwise executable battery target is diagnostic. |
+| Live car capacity shortfall | The run is being trimmed and the energy it can no longer recover is at least one native current step over one planner quarter | The app adjusts current locally whenever needed. For a one-amp step on three 230 V phases the replan scale is 172.5 Wh. |
+| Live room capacity shortfall | Scheduled heat is being trimmed, its comfort outlook is short by at least one 15-minute allocation, and a fresh check confirms it after the 60-second equipment response window | The app can pause and resume locally before then. |
+| Small shared-grid forecast conflict | The native planner can keep the held charging run by clipping less than 100 Wh of forecast AC charge in the affected run | Resize only the affected battery charge intervals. Keep other held commands and bookings. Material or otherwise infeasible commitments use the existing native recovery path. |
 
-Battery quantities use integer mWh; pool residuals are rounded to 0.001°C before threshold comparison. Stale reference samples cannot admit a correction against a replacement. Crossings at the stated magnitude and duration count; values below the entry threshold interrupt an unadmitted crossing. Missing evidence interrupts persistence instead of proving either continued error or recovery. A clock rollback cannot mature a timer early. Numeric admission latches once per accepted reference until the clear band is sustained; a replacement reference starts comparison against its own measured trajectory. Source outage episodes survive reference changes and restarts until usable observations return. Failed submissions retain immutable admitted evidence for the existing delivery retry owner.
+The former battery residual rule of 0.200 kWh for two minutes was superseded
+by the 26 October execution rule. There is currently no live automatic-replan
+producer for the historical pool trajectory threshold of 0.5°C for 30 minutes.
 
-## Ownership and execution
+The app tracks unavailable sources by owner and source using its local
+observation clock. A rollback restarts an affected timer. The five-minute
+display threshold is independent of the 15-minute evidence threshold.
+Unadmitted observations remain outside planner captures. Equipment can keep
+working on its last setting through a reporting gap. On return, the app uses
+the recovered values to check the accepted instructions and continues them
+whenever they can still run.
 
-`shs_core/replan_policy.py` is the single admission-policy owner in both HA and the bundled app. The household serializes its durable signal map under the existing exchange lock. The normal five-second battery observation path and read-only controller observation timer feed it; controller threshold deadlines only request fresh observations.
+## Ownership and grid limits
 
-Exact battery accounting, nominal instructions, authorized recovery recipes and physical admission remain independent of these tolerances. No threshold grants extra energy, makes missing evidence usable, releases control, stops a device or writes a default. The existing control-continuity contract is unchanged.
+The household serializes admitted evidence and source gaps with planning receipts
+through the existing exchange lock. `shs_core/execution_replan.py` owns the
+durable evidence rules. Failed deliveries keep their admitted evidence for the
+existing retry path.
 
-Actual physical failures use `faulted`/`temporarily_absent` with genuine blocked intervals and can affect `execution_availability`. A model miss uses a separate `plan_deviation` request with affected intervals, numeric magnitude and observed persistence. It releases only that owner's accepted commands for correction. It never enters physical availability, so a healthy heater or battery remains usable in the replacement. Other owners keep their accepted next-hour requests.
-
-Capture producers, backend readers and strict API schemas roll forward together. There is no compatibility parser. Historical observations and old score identities remain evidence, not current instructions.
+The configured aggregate import target is 15 kW for this installation. Forecast
+allocations respect it and a small conflict can be absorbed by local sizing.
+The app continues to size live commands against measured and reserved import,
+including pending starts, and redistributes capacity as equipment responds.
+The electrical protection is 25 A per phase. At nominal 230 V, 17.25 kW is the
+balanced three-phase equivalent. Individual phases can exceed 25 A at much
+lower total power. Raising aggregate admission requires verified per-phase
+measurements and reservations for pending controllable loads.
 
 ## Regression evidence
 

@@ -115,3 +115,20 @@ Deno.test('a retained battery purchase that alone exceeds headroom is reschedule
     assert(result.plans.priority.slots[i].grid_import_w <= 750 + 1e-6);
   }
 });
+
+Deno.test('a 17 W import forecast change trims one held charge without reopening the hour', () => {
+  const snapshot = household(.5), reference = accepted(snapshot);
+  snapshot.grid.import_limit_w = 15_000;
+  snapshot.slots[1].base_load_forecast_w = 14_017;
+  for (const slot of reference.slots) slot.ev_target_current_a = 0;
+  const prior = structuredClone(reference);
+
+  const plan = runRulesPlanner(input(snapshot), reference).plan;
+  const slots = plan.plans.priority.slots;
+  assertEquals(reference, prior);
+  assertEquals(slots[1].battery_command?.charge_limit_w, 983);
+  assertEquals(slots[1].grid_import_w, 15_000);
+  for (const i of [0, 2, 3]) assertEquals(slots[i].battery_command, reference.slots[i].battery_command);
+  assert(plan.planning_warnings?.some(w => w.code === 'battery_commitment_resized'));
+  assert(!plan.planning_warnings?.some(w => w.code === 'battery_commitment_rescheduled'));
+});
