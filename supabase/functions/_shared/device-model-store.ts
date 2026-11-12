@@ -1,3 +1,4 @@
+import { isWeatherHeatingBinding } from "./planner/weather-heating.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { poolHeaters, type PoolDevice } from "./planner/pool-devices.ts";
 /** Database capture owns calibration identity; forecasts and solvers cannot select it. */
@@ -16,7 +17,7 @@ export interface StoredPoolModel extends StoredDeviceModel {
 export interface DeviceModelBundle {
   rooms: StoredDeviceModel[];
   pool: StoredPoolModel | null;
-  /** Variable-power devices' operating points. Learned only; planning does not read them. */
+  /** Learned operating points and weather-dependent heating profiles. */
   devices: StoredDeviceModel[];
   revisions: { rooms: Record<string, number>; pool: number | null };
 }
@@ -69,4 +70,12 @@ export function variablePowerLearningOwners(
 ): LearningOwner[] {
   return devices.filter(device => device.control_type === "variable_power" && !poolMemberKeys.has(device.key))
     .map(device => device.key).sort().map(key => ({ kind: "device" as const, key, input: {} }));
+}
+
+export function weatherHeatingOwners(snapshot: OptimisationSnapshot): LearningOwner[] {
+  return snapshot.device_models.flatMap(model =>
+    model.control_type === "setpoint" && model.planning_service !== "pool" &&
+    isWeatherHeatingBinding(model.weather_heating_binding)
+      ? [{ kind: "device", key: model.key, input: { weather_heating_binding: model.weather_heating_binding } }]
+      : []);
 }

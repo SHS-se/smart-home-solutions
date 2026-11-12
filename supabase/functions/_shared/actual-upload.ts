@@ -1,3 +1,4 @@
+import { isWeatherHeatingBinding } from "./planner/weather-heating.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 
 const SLOT_MS = 900_000;
@@ -58,6 +59,7 @@ export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyM
     // An unusable one is not observed; it never costs the quarter's energy.
     const settings = record(item.device_power_setting) ? item.device_power_setting : {};
     const heat = record(item.device_heat_kwh) ? item.device_heat_kwh : {};
+    const weatherHeating = record(item.device_weather_heating) ? item.device_weather_heating : {};
     if (item.device_power_setting != null && !record(item.device_power_setting)) ignore("invalid_device_setting");
     if (item.device_heat_kwh != null && !record(item.device_heat_kwh)) ignore("invalid_device_heat");
     let accepted = householdRow;
@@ -68,7 +70,8 @@ export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyM
       if (setting != null && !powerSetting(setting)) ignore("invalid_device_setting");
       if (metered != null && !energy(metered)) ignore("invalid_device_heat");
       deviceSlotRows.push({ ...context, device_id: device.id, start_ts: startTs, energy_kwh: round(value),
-        power_setting: powerSetting(setting) ? setting : null, heat_kwh: energy(metered) ? round(metered) : null, quality });
+        power_setting: powerSetting(setting) ? setting : null, heat_kwh: energy(metered) ? round(metered) : null,
+        quality: isWeatherHeatingBinding(weatherHeating[key]) ? { ...quality, weather_heating_binding: weatherHeating[key] } : quality });
       accepted = true;
     }
     if (accepted && (latestAccepted === null || start > latestAccepted)) latestAccepted = start;

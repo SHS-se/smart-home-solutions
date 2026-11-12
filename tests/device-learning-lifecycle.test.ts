@@ -2,6 +2,7 @@
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { ROOM_EXCHANGE_FAMILY } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
+import { WEATHER_HEATING_METHOD } from "../supabase/functions/_shared/planner/weather-heating.ts";
 const home = "11111111-1111-4111-8111-111111111111";
 const method = "interval_mean_transition_holdout_v1";
 async function database() {
@@ -20,6 +21,8 @@ async function database() {
       device_key text,planning_role_override text,retired_at timestamptz,UNIQUE(id,home_id,customer_id));
     CREATE TABLE energy_optimisation_device_slots(device_id uuid,home_id uuid,customer_id uuid,
       start_ts timestamptz,energy_kwh numeric);
+    ALTER TABLE energy_optimisation_device_slots ADD COLUMN quality jsonb;
+    CREATE TABLE energy_optimisation_outdoor_slots(home_id uuid,customer_id uuid,start_ts timestamptz,temperature_c numeric);
     CREATE TABLE energy_optimisation_zone_models(
       home_id uuid,customer_id uuid,room_key text,room_name text,trained boolean,last_attempted_at timestamptz,
       last_fit_attempt jsonb,gain_c_per_wh numeric,sample_count integer DEFAULT 0,
@@ -36,6 +39,7 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261104150000_learn_joint_room_heat_exchange.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261108120200_learn_variable_power_devices.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261109110000_learn_monitored_room_heat.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261112150000_learn_weather_heating_draw.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -226,6 +230,43 @@ Deno.test("a variable-power device learns on its own cadence and publishes only 
     assertEquals(bundle.devices.map(d => [d.device_key, d.operating_points, d.model_revision]), [["synthetic-charger", points, 1]]);
     // Fitted today: not due again until tomorrow.
     assertEquals(await ask("synthetic-charger"), 0);
+  } finally { await db.close(); }
+});
+
+Deno.test("weather learning groups only matched heating quarters and fences a replaced binding", async () => {
+  const db = await database();
+  const meter = "22222222-2222-4222-8222-222222222222";
+  const key = "synthetic-heat-pump";
+  const ask = async (binding: string) => (await db.query<{ n: number }>(
+    "SELECT request_energy_device_learning($1,$1,$2::jsonb) n", [home,
+      [{ kind: "device", key, input: { weather_heating_binding: binding } }]])).rows[0].n;
+  try {
+    await db.query("INSERT INTO energy_optimisation_devices VALUES($1,$2,$2,$3,'controllable',NULL)", [meter, home, key]);
+    await db.query(`INSERT INTO energy_optimisation_device_slots VALUES
+      ($1,$2,$2,'2026-01-01T00:00:00Z',.25,'{"weather_heating_binding":"a"}'),
+      ($1,$2,$2,'2026-01-01T00:15:00Z',.50,'{"weather_heating_binding":"a"}'),
+      ($1,$2,$2,'2026-01-01T00:30:00Z',1.00,'{"weather_heating_binding":"b"}'),
+      ($1,$2,$2,'2026-01-01T00:45:00Z',1.00,NULL),
+      ($1,$2,$2,'2026-01-01T01:00:00Z',1.00,'{"weather_heating_binding":"a"}')`, [meter, home]);
+    await db.query(`INSERT INTO energy_optimisation_outdoor_slots VALUES
+      ($1,$1,'2026-01-01T00:00:00Z',-4.5),($1,$1,'2026-01-01T00:15:00Z',-4.25),
+      ($1,$1,'2026-01-01T00:30:00Z',-4.5),($1,$1,'2026-01-01T00:45:00Z',-4.5),
+      ($1,$2,'2026-01-01T01:00:00Z',-4.5)`, [home, meter]);
+    const evidence = await db.query<{ days: unknown }>(
+      "SELECT get_energy_weather_heating_days($1,$1,$2,'a','2026-01-01','2026-01-02') days", [home, key]);
+    assertEquals(evidence.rows[0].days, [{ day: "2026-01-01", hours: .5, outdoor_c: -4.375, watts: 1500 }]);
+
+    assertEquals(await ask("a"), 1);
+    const initial = await claim(db, key);
+    const row = { home_id: home, customer_id: home, device_key: key,
+      operating_points: { method: WEATHER_HEATING_METHOD, binding: "a", points: [] },
+      last_attempted_at: new Date().toISOString(), last_fit_attempt: { learning: { method: WEATHER_HEATING_METHOD } } };
+    assert(await publish(db, initial, 0, row));
+    assertEquals(await ask("a"), 0);
+    assertEquals(await ask("b"), 1);
+    const replaced = await claim(db, key);
+    assertEquals(await ask("a"), 1);
+    assertEquals(await publish(db, replaced, 1, row), false);
   } finally { await db.close(); }
 });
 

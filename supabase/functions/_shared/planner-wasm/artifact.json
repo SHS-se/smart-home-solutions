@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "d88d3262b38d4515849615372bcad71bbbfa98d0916ea8d1bd17d01c4dad6ce7",
-  "source_sha256": "d6edea3fe09bcb0b65b763f3ff7e8ebfba74989896cf7539a0c75a115625593d",
+  "wasm_sha256": "796d5a67916636f4e387e700f3c83ce5e0b0c007b3f7b8b13aff0f4093a662c1",
+  "source_sha256": "5084049e0d3f59e86901a72ac7bcec3f6137304b0c9e265140665b5e9667f881",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -90,6 +90,7 @@
     "supabase/functions/_shared/planner/store-value.ts",
     "supabase/functions/_shared/planner/thermostat.ts",
     "supabase/functions/_shared/planner/value-curves.ts",
+    "supabase/functions/_shared/planner/weather-heating.ts",
     "supabase/functions/_shared/planning-errors.ts",
     "supabase/functions/_shared/planning-trace.ts",
     "supabase/functions/_shared/room-heating-schedule.ts",

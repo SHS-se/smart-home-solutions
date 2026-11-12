@@ -14,6 +14,7 @@ pub struct Quarter {
     maximum_c: f64,
     maximum_w: f64,
     relay_w: Vec<f64>,
+    thermostat_power_w: Option<Vec<f64>>,
     fixed_relays: Vec<Option<bool>>,
     fixed_targets_c: Vec<Option<f64>>,
     import_sek_per_kwh: f64,
@@ -131,6 +132,10 @@ fn physics_key(q: &Quarter) -> Vec<u64> {
         q.transition.carry.to_bits(),
     ];
     key.extend(q.relay_w.iter().map(|w| w.to_bits()));
+    if let Some(power) = &q.thermostat_power_w {
+        key.push(power.len() as u64);
+        key.extend(power.iter().map(|w| w.to_bits()));
+    }
     key.extend(q.fixed_relays.iter().map(|v| match v {
         None => 0,
         Some(false) => 1,
@@ -638,7 +643,11 @@ fn reachable_rows(input: &Input, grid: &Grid, top: f64) -> Option<Vec<Option<(us
     // A quarter's rows follow from the states of the quarter before it.
     for (rows, before) in rows.iter_mut().skip(1).zip(&input.quarters) {
         let s = before.transition;
-        let total = thermostat_w + before.relay_w.iter().sum::<f64>();
+        let heater_w = before
+            .thermostat_power_w
+            .as_ref()
+            .map_or(thermostat_w, |w| w.iter().sum());
+        let total = heater_w + before.relay_w.iter().sum::<f64>();
         // Written so that a NaN fails the test.
         if !(s.decay >= 0.
             && s.delivered_gain_c_per_w >= 0.
@@ -689,7 +698,10 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
         quarters,
     } = input;
     if quarters.iter().any(|q| {
-        q.fixed_targets_c.len() != thermostats.len()
+        q.thermostat_power_w
+            .as_ref()
+            .is_some_and(|power| power.len() != thermostats.len())
+            || q.fixed_targets_c.len() != thermostats.len()
             || q.fixed_relays.len() != q.relay_w.len()
             || q.room_target
                 .as_ref()
@@ -705,8 +717,14 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     }
     low -= 2.;
     let delayed = quarters.iter().any(|q| q.transition.carry > 0.);
+    let base_thermostat_w = thermostats.iter().map(|t| t.power_w).sum::<f64>();
+    let thermostat_w = quarters
+        .iter()
+        .filter_map(|q| q.thermostat_power_w.as_ref())
+        .map(|power| power.iter().sum())
+        .fold(base_thermostat_w, f64::max);
     let top = start_delivered_w.max(
-        thermostats.iter().map(|t| t.power_w).sum::<f64>()
+        thermostat_w
             + quarters
                 .iter()
                 .map(|q| q.relay_w.iter().sum::<f64>())
@@ -748,6 +766,23 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
         .ok_or("Room grid size overflow")?;
     let options: Vec<_> = quarters.iter().map(relay_choices).collect();
     let mut values: Vec<Vec<f64>> = vec![vec![]; quarters.len() + 1];
+    // Outdoor draw is fixed per quarter and independent of the candidate target.
+    // The exact target trace can continue to compare thermostat latch decisions.
+    let quarter_thermostats: Vec<_> = quarters
+        .iter()
+        .map(|q| {
+            q.thermostat_power_w.as_ref().map(|power| {
+                thermostats
+                    .iter()
+                    .zip(power)
+                    .map(|(t, &power_w)| Thermostat {
+                        power_w,
+                        ..t.clone()
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
     let mut search = Search::new(thermostats, payload_limit);
     let reachable = if restrict {
         reachable_rows(input, &grid, top)
@@ -755,6 +790,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
         None
     };
     for i in (0..quarters.len()).rev() {
+        search.thermostats = quarter_thermostats[i].as_deref().unwrap_or(thermostats);
         search
             .memo
             .quarter(&quarters[i], i.checked_sub(1).map(|j| &quarters[j]));
@@ -805,6 +841,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
             .sum(),
     };
     for (i, q) in quarters.iter().enumerate() {
+        search.thermostats = quarter_thermostats[i].as_deref().unwrap_or(thermostats);
         let mut out = Choice {
             room_target_c: 0.,
             score: 0.,

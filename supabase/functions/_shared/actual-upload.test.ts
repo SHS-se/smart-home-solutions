@@ -60,3 +60,14 @@ Deno.test("an unusable setting or heat reading is not observed and keeps the qua
   const plain = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75 } }], devices, context, now);
   assertEquals([plain.deviceSlotRows[0].power_setting, plain.deviceSlotRows[0].heat_kwh], [null, null]);
 });
+
+Deno.test("confirmed heating provenance follows the associated meter quarter", () => {
+  const result = prepareActualUpload([{ ...row(), device_energy_kwh: { first: .3, second: .1 },
+    device_weather_heating: { first: "climate.unit|sensor.power|sensor.energy", second: {} } }],
+  new Map([["first", { id: "a" }], ["second", { id: "b" }]]), context, now);
+  assertEquals(result.deviceSlotRows.map(slot => slot.quality), [
+    { ...row().quality, weather_heating_binding: "climate.unit|sensor.power|sensor.energy" },
+    row().quality,
+  ]);
+  assertEquals(result.actualRows[0].quality, row().quality);
+});

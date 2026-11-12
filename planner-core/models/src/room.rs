@@ -9,7 +9,7 @@ pub struct Transition {
     pub gain_c_per_w: f64,
     pub carry: f64,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Thermostat {
     pub minimum_c: f64,
     pub maximum_c: f64,

@@ -1,3 +1,4 @@
+import type { WeatherHeatingProfile } from "./weather-heating.ts";
 import type { HouseholdProblem, HouseholdCandidate } from "./household-case.ts";
 /** Shared planning inputs and published commands; no planner implementation. */
 import type { PlanningWarning } from "./planning-warnings.ts";
@@ -231,6 +232,10 @@ export interface EmpiricalDeviceModelInput {
   active_power_w: number | null;
   /** Native thermostat sensor, target, HVAC state and supported target grid. */
   thermostat?: ThermostatInput | null;
+  /** Meter and actuator identity attached to observed heating quarters. */
+  weather_heating_binding?: string;
+  /** Backend-owned profile captured with a single model revision. */
+  weather_heating?: WeatherHeatingProfile & { revision: number };
   /** Current room relay observation captured from the existing actuator. */
   relay_on?: boolean | null;
   /** Explicit membership resolved from the installation mapping, never category alone. */

@@ -1,3 +1,4 @@
+import { heatingWatts, isWeatherHeatingBinding, readWeatherHeating } from "./planner/weather-heating.ts";
 /** Joins current room evidence with one model capture; never learns or schedules. */
 import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";
@@ -60,6 +61,19 @@ export function prepareRoomModels(
   const storedByKey = new Map(
     storedDevices.map((device) => [device.key, device]),
   );
+  const scope = snapshot.operating_scope;
+  const weatherByDevice = new Map((bundle?.devices ?? []).map(row => [row.device_key, row]));
+  snapshot = { ...snapshot, device_models: snapshot.device_models.map(model => {
+    // Only server-owned, versioned calibration can enter the planner.
+    const { weather_heating: _supplied, ...device } = model;
+    const binding = device.weather_heating_binding;
+    if (device.control_type !== "setpoint" || device.planning_service === "pool" ||
+      scope?.modes[scope.device_owners[device.key]] !== "control_verification" ||
+      !isWeatherHeatingBinding(binding)) return device;
+    const row = weatherByDevice.get(device.key);
+    const profile = row && readWeatherHeating(row.operating_points, binding);
+    return profile && row ? { ...device, weather_heating: { ...profile, revision: row.model_revision } } : device;
+  }) };
   const roomModels = snapshot.device_models.filter((model) => {
     if (model.planning_role !== "controllable" || model.planning_service === "pool") return false;
     if (model.control_type === "setpoint") return true;
@@ -143,6 +157,26 @@ export function prepareRoomModels(
     const fitted = trainedByRoom.get(room.key);
     const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
     const historical = starts.map((_start, i) => room.models.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
+    const baselineCapW = Math.max(ratedPowerW, ...historical);
+    const weather = outdoor && room.models.some(model => model.weather_heating)
+      ? outdoor.map(temperature => room.models.reduce((sum, model) => sum + (
+        (model.weather_heating ? heatingWatts(model.weather_heating, temperature) : null) ?? model.active_power_w ?? 0
+      ), 0))
+      : null;
+    for (const member of room.models) {
+      const profile = member.weather_heating;
+      if (!profile && isWeatherHeatingBinding(member.weather_heating_binding) &&
+        scope?.modes[scope.device_owners[member.key]] === "control_verification") {
+        snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+          "weather_heating_draw_learning", member.key, `${member.name}: heating draw across outdoor temperatures is still being learned.`,
+          "Verification uses the existing running-power estimate until a weather profile is available.")]);
+      }
+      if (profile && outdoor?.some(temperature => heatingWatts(profile, temperature) === null)) {
+        snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+          "weather_heating_draw_estimated", member.key, `${member.name}: forecast temperatures extend beyond observed heating draw.`,
+          "Verification uses the existing running-power estimate for quarters outside the learned temperature range.")]);
+      }
+    }
     const attempt = fitted?.last_fit_attempt as { issues?: string[]; passive_heat?: { status?: string } } | undefined;
     const passive = readPassiveHeatModel(fitted?.passive_heat);
     if (!passive && attempt?.passive_heat?.status === "awaiting_validation") {
@@ -156,7 +190,7 @@ export function prepareRoomModels(
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model: readThermalModel(fitted), rated_power_w: ratedPowerW,
       ...(passive ? { passive_heat: passive } : {}),
-      maximum_power_w_by_slot: summerLockout.map(locked => locked ? 0 : Math.max(ratedPowerW, ...historical)) });
+      maximum_power_w_by_slot: summerLockout.map((locked, i) => locked ? 0 : Math.max(baselineCapW, weather?.[i] ?? 0)) });
   }
   return { snapshot, rooms: prepared };
 }

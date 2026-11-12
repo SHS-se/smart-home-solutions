@@ -1,3 +1,4 @@
+import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { roomTransition, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
@@ -48,4 +49,24 @@ Deno.test("delayed heat continues after the thermostat stops and rack energy sta
   assertEquals(projected.thermostat_w, [0]);
   assert(projected.state.temperature_c > 21);
   assert(projected.state.delivered_w < 686.3 && projected.state.delivered_w > 150);
+});
+
+Deno.test("native and reference room projections use each quarter's outdoor-conditioned draw", () => {
+  const power = [1350, 450, 450, 1350];
+  const target = 24;
+  const quarters: RoomQuarter[] = power.map(w => ({
+    ...quarter(), thermostat_power_w: [w],
+    transition: roomTransition(model, { hours: .25, outdoor_c: 0, background_c_per_h: 0 }),
+    required_c: 21, maximum_c: 24, maximum_w: 2000, relay_w: [], fixed_relays: [], fixed_targets_c: [target],
+    import_sek_per_kwh: 1, export_sek_per_kwh: 1, surplus_w: 0,
+  }));
+  const native = planRoomHeating(21, [thermostat], quarters);
+  let previous = state();
+  for (const [i, q] of quarters.entries()) {
+    const reference = projectThermostatQuarter(q, [thermostat], previous, [target], 0);
+    assertAlmostEquals(native.thermostat_w[i][0], power[i]);
+    assertAlmostEquals(native.thermostat_w[i][0], reference.thermostat_w[0]);
+    assertAlmostEquals(native.temperature_c[i], reference.state.temperature_c);
+    previous = reference.state;
+  }
 });

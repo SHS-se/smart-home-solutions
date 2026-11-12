@@ -1,3 +1,4 @@
+import { heatingWatts } from "./planner/weather-heating.ts";
 import { PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
@@ -193,13 +194,19 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
     minimum_c: 0, maximum_c: 100, step_c: 0.1, target_temperature_c: zone.start_temperature_c!,
     entity_id: m.key, hvac_action: m.relay_on ? "heating" as const : "idle" as const,
   }))] : thermostats;
+  const weather = members.some(member => member.weather_heating);
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
     const steps = Math.ceil(hours * 60);
     const conditions = { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!, house_c: snapshot.house_temperature_c?.[i],
       background_c_per_h: backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2, zone.passive_heat_c_per_h) };
     const maximum_w = Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i]));
+    const thermostatPower = weather ? actuators.map((actuator, j) => {
+      const profile = members[j]?.weather_heating;
+      return (profile ? heatingWatts(profile, conditions.outdoor_c) : null) ?? actuator.power_w;
+    }) : undefined;
     return { hours, steps, transition: roomTransition(model, conditions),
+      ...(thermostatPower ? { thermostat_power_w: thermostatPower } : {}),
       step: roomTransition(model, { ...conditions, hours: steps ? hours / steps : 0 }),
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
       maximum_c: zone.comfort_max_c[i], maximum_w,

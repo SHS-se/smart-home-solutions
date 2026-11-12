@@ -150,3 +150,27 @@ Deno.test("monitored heat warms the native room projection without creating appl
   assertEquals(observed.commands[source], undefined);
   assertEquals(observed.power[source], undefined);
 });
+
+Deno.test("weather draw is pinned only for the matching device in Verification", () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const device = snapshot.device_models.find(model => model.key === mappings[0].key)!;
+  const read = (value: typeof snapshot) => value.device_models.find(model => model.key === device.key)?.weather_heating;
+  const binding = "climate.unit|sensor.power|sensor.energy";
+  device.weather_heating_binding = binding;
+  const p = (outdoor_c: number, watts: number) =>
+    ({ outdoor_c, min_c: outdoor_c, max_c: outdoor_c, watts, spread_w: 50, hours: 4, days: 2 });
+  bundle.devices = [{ device_key: device.key, model_revision: 14, operating_points: {
+    method: "weather_heating_draw_v1", binding, points: [p(-10, 1600), p(20, 500)],
+  } }];
+  snapshot.outdoor_temperature_c = snapshot.slots.map(() => -10);
+  snapshot.operating_scope = { modes: { [device.key]: "control_verification" },
+    device_owners: { [device.key]: device.key }, external_demands: {} };
+  const prepared = prepareRoomModels(snapshot, mappings, bundle);
+  assertEquals(read(prepared.snapshot)?.revision, 14);
+  assertEquals(prepared.rooms[0].maximum_power_w_by_slot[0], 1600);
+  snapshot.operating_scope.modes[device.key] = "controlling";
+  assertEquals(read(prepareRoomModels(snapshot, mappings, bundle).snapshot), undefined);
+  snapshot.operating_scope.modes[device.key] = "control_verification";
+  device.weather_heating_binding = "replaced";
+  assertEquals(read(prepareRoomModels(snapshot, mappings, bundle).snapshot), undefined);
+});

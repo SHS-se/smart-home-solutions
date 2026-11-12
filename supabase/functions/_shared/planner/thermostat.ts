@@ -19,6 +19,7 @@ export interface RoomThermostat extends ThermostatInput {
 export interface ThermostatRoomState extends RoomState { heating_mask: number }
 export interface ThermostatQuarter {
   hours: number;
+  thermostat_power_w?: readonly number[];
   /** Exact constant-input transition for each equal, at most one-minute step. */
   step: RoomTransition;
   steps: number;
@@ -84,7 +85,12 @@ export function projectThermostatQuarter(q: ThermostatQuarter, thermostats: read
       const wasOn = Math.floor(previousMask / 2 ** j) % 2 === 1;
       const on = own >= targets[j] - 1e-9 ? false :
         targets[j] - own >= .5 - 1e-9 ? true : wasOn;
-      if (on) { mask += 2 ** j; watts += t.power_w; energy[j] += t.power_w * hours; }
+      if (on) {
+        const draw = q.thermostat_power_w?.[j] ?? t.power_w;
+        mask += 2 ** j;
+        watts += draw;
+        energy[j] += draw * hours;
+      }
     }
     peakW = Math.max(peakW, watts);
     temperature = step.decay * temperature + step.offset_c + step.delivered_gain_c_per_w * delivered + step.gain_c_per_w * watts;
