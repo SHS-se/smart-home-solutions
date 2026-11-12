@@ -468,11 +468,14 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
   let binding = true;
   const slots: PlannedSlot[] = quarters.map((q, i) => {
     const f = p.slots[i], source = snapshot.slots[i], command = commands[i];
+    const poolUnavailable = unavailableOwner(snapshot, "$pool", source.start);
+    // The solver masks unavailable pool work; publication must tell execution
+    // to hold its last setting for that interval.
+    const poolPermitted = poolUnavailable ? null : input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on;
     const hours = f.hours + Math.min(0, f.start_seconds) / 3600;
     const loads = Object.fromEntries(Object.entries(input.passive_w).map(([k, values]) => [k, values[i]]));
-    if (!unavailableOwner(snapshot, "$pool", source.start)) {
+    if (!poolUnavailable) {
       allocate(input.members.heater, q.pool_compressor_w, loads);
-
     }
     if (f.pool_auxiliary_dispatch) {
       for (const member of input.members.auxiliary) {
@@ -481,7 +484,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
         const dispatch = input.auxiliary_dispatch[member.key][i];
         loads[member.key] = dispatch.fixed_w + (command.pool_on ? dispatch.on_w : 0);
       }
-    } else if (!unavailableOwner(snapshot, "$pool", source.start)) allocate(input.members.auxiliary, q.pool_auxiliary_w, loads);
+    } else if (!poolUnavailable) allocate(input.members.auxiliary, q.pool_auxiliary_w, loads);
     if (!unavailableOwner(snapshot, "$ev", source.start)) allocate(input.members.ev, q.ev_w, loads);
     allocate(input.members.boiler, input.boiler_w[i], loads);
     const unrepresented = (input.members.heater.length + input.members.auxiliary.length ? 0 : q.pool_w) +
@@ -504,8 +507,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       shadow_import_sek_per_kwh: f.import_price,
       shadow_export_sek_per_kwh: source.export_price_sek_per_kwh ?? input.price_outlook.shadow_export_sek_per_kwh?.[i] ?? null,
       pool_w: input.pool_service.empirical ? input.pool_service.total_w[i] : q.pool_w,
-      pool_permitted: input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on,
-      ...(input.pool_service.empirical && input.pool_service.permitted[i] === null ? {} : {
+      pool_permitted: poolPermitted,
+      ...(poolPermitted === null ? {} : {
         pool_command_w: locked?.pool_command_w ?? (input.pool_service.empirical ? input.pool_service.command_w[i]!
           : command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0) }),
       ...(q.pool_c === null ? {} : { pool_temperature_c: q.pool_c }),

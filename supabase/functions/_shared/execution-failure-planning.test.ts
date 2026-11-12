@@ -102,13 +102,32 @@ for (const native of [false, true]) Deno.test(`a scoped ${native ? "native" : "e
   const plan = runRulesPlanner(input(snapshot)).plan;
   const reference = {plan_id: plan.plan_id, slots: plan.plans.priority.slots};
   const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [change("$pool", snapshot)])), reference).plan;
-  assert(result.plans.priority.slots.every(slot => !slot.pool_permitted));
+  assert(result.plans.priority.slots.every(slot => slot.pool_permitted === null && slot.pool_command_w === undefined));
   for (let i = 0; i < 5; i++) {
     assertEquals(result.plans.priority.slots[i].battery_command, reference.slots[i].battery_command);
     assertEquals(result.plans.priority.slots[i].device_commands!.pool_pump, reference.slots[i].device_commands!.pool_pump);
     assertEquals(result.plans.priority.slots[i].device_loads_w.pool_pump, reference.slots[i].device_loads_w.pool_pump);
   }
   assert(result.plans.priority.slots[0].device_loads_w.pool_heater > 0, "an unavailable actuator is not evidence that measured demand stopped");
+});
+
+Deno.test("a temporary pool reading gap issues no switch instruction for the blocked quarter", () => {
+  const snapshot = rulesFixtureInput(mixedModeSnapshot()).snapshot;
+  snapshot.operating_scope!.modes.$pool = "controlling";
+  delete snapshot.operating_scope!.external_demands.pool_heater;
+  const original = runRulesPlanner(input(snapshot)).plan;
+  assertEquals(original.pool!.planning_basis, "thermal");
+  const reference = {plan_id: original.plan_id, slots: original.plans.priority.slots};
+  const start = snapshot.slots[0].start;
+  const gap: ExecutionChange = {owner: "$pool", status: "temporarily_absent", cause: "pool_temperature_unavailable",
+    blocked_intervals: [{start, end: end(start)}]};
+  const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [gap])), reference).plan;
+  const [blocked, next] = result.plans.priority.slots;
+  assertEquals(blocked.pool_permitted, null);
+  assertEquals(blocked.pool_command_w, undefined);
+  assertEquals(blocked.device_commands!.pool_heater.type, "unavailable");
+  assertEquals(next.pool_permitted, reference.slots[1].pool_permitted);
+  assertEquals(next.pool_command_w, reference.slots[1].pool_command_w);
 });
 
 Deno.test("generic room faults preserve other held commands and avoid invented thermal delivery", () => {
