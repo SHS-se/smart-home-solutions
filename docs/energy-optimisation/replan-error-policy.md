@@ -13,15 +13,13 @@ reports them unavailable.
 |---|---|---|
 | EV disconnected | Accepted charging is due and a usable plug reading says the car is disconnected | Immediate. An idle unplug/replug requires no replan. |
 | Command failure | A required scheduled command is rejected, fails or cannot be confirmed | The app records the failure with its cause and holds the last setting. |
-| Required observation unavailable | The same source is still unavailable after 15 minutes and prevents due accepted work | Hold the last setting. Show attention after five minutes. Usable readings resume ordinary evaluation. Recovery needs a new plan only if the accepted or pending plan suppresses that work. |
+| Required observation unavailable | The same source is still unavailable after 15 minutes and prevents due accepted work | Hold the last setting. Show attention after five minutes. Usable readings resume ordinary evaluation. Recovery needs a new plan when an admitted failure suppressed work that cannot resume from the accepted instructions. A room relay waiting on its temperature reading holds its accepted target locally. |
 | Live battery energy shortfall | Work actually cannot run in a quarter scheduling at least 100 Wh of battery energy | A shortfall against an otherwise executable battery target is diagnostic. |
-| Live car capacity shortfall | The run is being trimmed and the energy it can no longer recover is at least one native current step over one planner quarter | The app adjusts current locally whenever needed. For a one-amp step on three 230 V phases the replan scale is 172.5 Wh. |
+| Live car capacity shortfall | A running car is being trimmed and the energy it can no longer recover is at least one native current step over one planner quarter | The app adjusts current locally whenever needed. For a one-amp step on three 230 V phases the replan scale is 172.5 Wh. A separate gateway capacity episode can report a supported current ceiling for the affected opportunity. |
 | Live room capacity shortfall | Scheduled heat is being trimmed, its comfort outlook is short by at least one 15-minute allocation, and a fresh check confirms it after the 60-second equipment response window | The app can pause and resume locally before then. |
-| Small shared-grid forecast conflict | The native planner can keep the held charging run by clipping less than 100 Wh of forecast AC charge in the affected run | Resize only the affected battery charge intervals. Keep other held commands and bookings. Material or otherwise infeasible commitments use the existing native recovery path. |
 
-The former battery residual rule of 0.200 kWh for two minutes was superseded
-by the 26 October execution rule. There is currently no live automatic-replan
-producer for the historical pool trajectory threshold of 0.5°C for 30 minutes.
+A pool temperature differing from its forecast is diagnostic. The automatic
+pool path uses evidence of blocked scheduled work.
 
 The app tracks unavailable sources by owner and source using its local
 observation clock. A rollback restarts an affected timer. The five-minute
@@ -38,20 +36,27 @@ through the existing exchange lock. `shs_core/execution_replan.py` owns the
 durable evidence rules. Failed deliveries keep their admitted evidence for the
 existing retry path.
 
-The configured aggregate import target is 15 kW for this installation. Forecast
-allocations respect it and a small conflict can be absorbed by local sizing.
-The app continues to size live commands against measured and reserved import,
-including pending starts, and redistributes capacity as equipment responds.
-The electrical protection is 25 A per phase. At nominal 230 V, 17.25 kW is the
-balanced three-phase equivalent. Individual phases can exceed 25 A at much
-lower total power. Raising aggregate admission requires verified per-phase
+The planner and app use the home's configured aggregate import limit. During
+a solve, the planner can resize a retained battery grid-charge run if the
+native projection verifies the change and the forecast loss is under 100 Wh AC
+in the run. It adjusts only the affected charging intervals and keeps other
+held commands and bookings. Material or otherwise infeasible commitments use
+the existing native recovery path.
+
+The app sizes live commands against measured and reserved import, including
+pending starts, and redistributes capacity as equipment responds. For a
+connection rated 25 A per phase at nominal 230 V, 17.25 kW is the balanced
+three-phase equivalent. A phase can exceed 25 A below a 15 kW aggregate
+operating limit. Raising aggregate admission requires verified per-phase
 measurements and reservations for pending controllable loads.
 
 ## Regression evidence
 
-The retained overnight physical problem previously scheduled zero overnight EV energy and its first charge the following evening. Continuous readiness schedules the first charge at 23:45 Stockholm, immediately after the preserved accepted-command hour, and buys 13.8 kWh overnight: projected SOC rises from 48% to approximately 64.1%. That satisfies the existing readiness band; the 80% vehicle cap is not an unconditional completion target.
-
-Tests cover exact magnitude/time boundaries, interrupted crossings, clearing hysteresis, clock rollback, persisted restart state, multiple unavailable sources, a five-second pool blip, small recorded battery errors, sustained battery/pool errors, failed delivery and healthy equipment remaining available during scoped correction. Existing continuity tests remain unchanged.
+The synthetic planner continuity case raises one quarter's load forecast by
+17 W. The planner trims 4.25 Wh of battery charge in that quarter and keeps
+the other held commands. The app regressions cover short gap recovery,
+independent source clocks, the 15-minute admission boundary, and material live
+capacity shortfalls.
 
 
 ## Forced-replan audit

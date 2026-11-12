@@ -1,5 +1,10 @@
 # TEST live rules planner — 8 October 2026
 
+This is the October TEST rollout record. The current
+[accepted-command contract](authoritative-plan-contract.md#preserve-the-next-hour-for-unaffected-loads)
+defines owner-scoped release and small battery charge adjustments. The
+[automatic replan policy](replan-error-policy.md) defines admission.
+
 ## Outcome and scope
 
 The dev/TEST replanning path uses the same Rust/Wasm rules kernel as planner-bench. It no longer invokes the marginal-value auction, resumes auction batches, or reconstructs cost-value curves. Production main is unchanged. The removed cost-curve panels and Build a plan editor have no active endpoint.

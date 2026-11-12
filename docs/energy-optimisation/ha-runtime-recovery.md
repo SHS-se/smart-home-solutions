@@ -1,4 +1,10 @@
-# Current Home Assistant readiness and recovery
+# Home Assistant readiness and recovery — September 2026 record
+
+For current behavior, see the [authoritative plan contract](authoritative-plan-contract.md),
+the [automatic replan policy](replan-error-policy.md), and the
+[app control-continuity contract](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/control-continuity.md).
+The current app keeps its last settings through restart and transient source
+loss. The dated implementation notes below describe the September runtime.
 
 ## Scope-preserving recovery — 15 September 2026
 
@@ -15,7 +21,11 @@ Status checked against backend and HA source on 13 September 2026. This replaces
 
 HA restores its persisted accepted plan and validates it using the normal contract/expiry checks. Only accepted and currently valid supported requests can execute, subject to live equipment/source guards. The backend currently sets `valid_until` to the last returned slot end, normally up to the 72-hour horizon. `binding_until` marks published-price coverage, not the right to execute later slots. Local quarter transitions do not require a backend call.
 
-The coordinator has no hourly periodic update interval. The scheduled planning/status exchange is every 15 minutes; it uploads measurements and a fresh snapshot and reports runtime. The server solves a new plan only for a new published price release or an outstanding manual replan request; otherwise the accepted plan is kept and other triggers become replan recommendations. Failed attempts are retried through later exchanges, without the former minute recovery/backoff schedule. Exchanges/recovery are coalesced so concurrent triggers do not start overlapping work. Startup restores local configuration/plan and allows provider setup before the initial exchange. Disabled planning does not create automatic planning authority.
+In September, the coordinator exchanged measurements, a fresh snapshot and
+runtime status every 15 minutes. Price releases and manual requests started
+solves. Other triggers became recommendations. Failed attempts retried on later
+exchanges. Startup restored configuration and the accepted plan before the
+initial exchange.
 
 ## Portal evidence and timestamps
 
@@ -25,7 +35,9 @@ The **inbound observation validation** still rejects reports more than 150 secon
 
 ## Restart status and target
 
-Current scheduled-controller startup restores journalled device settings before resuming requests; orderly unload also hands control back. Thus restoring an accepted cached plan today does not prove devices continued without cycling.
+The September controller restored journalled device settings on startup before
+resuming requests. Orderly unload also handed control back. Restoring a cached
+plan in that version could cycle devices.
 
 The settled target is durable suspension and adoption across frequent routine restarts/reloads: retain the accepted plan, intent and mappings, measured-use ledger, reservations, physical requests, issued operations and absolute deadlines; reconcile live state and downtime uncertainty before continuing. No default initialisation or gratuitous baseline handover just because HA restarted. Persist operating modes, pending release and bounded retry state too; new slots, plans and restart neither renew authority nor reset retry pacing. External drift while Controlling is automatically reconciled/reasserted and does not create a hold. Follow [shared-entity reconciliation](control-reconciliation.md) before issuing or repeating a command. Expiry and genuinely unsupported physical state still restrict authority, and a restart cannot extend a lease. The full lifecycle and remote-command completion contract lives in [reactive controls](reactive-controls.md#expiry-and-baseline-handover), with [acceptance cases](verification-and-delivery.md#intent-and-reactive-execution-acceptance).
 

@@ -54,7 +54,13 @@ Keep these concepts distinct:
 | Execution validity/lease | The period for which an accepted plan may issue requests locally |
 | Replan cadence | When a fresh snapshot and plan are requested |
 
-Current cadence: HA exchanges measurements and a fresh snapshot every 15 minutes, but the server solves only when that snapshot carries a new published price release or answers an outstanding manual request. Elapsed quarters shorten the accepted plan; other triggers become shared replan recommendations. Verification/Controlling changes request nothing, and a plan or battery reference captured under either mode is accepted under the other ([authoritative plan contract](authoritative-plan-contract.md)).
+HA exchanges measurements and a fresh snapshot every 15 minutes. The server
+solves for a new published price release, an outstanding manual request, or
+[admitted execution evidence](replan-error-policy.md). An execution request can
+start its own capture and delivery. Ordinary telemetry and the passage of a
+quarter leave the accepted plan in use. Verification and Controlling can accept
+the same plan or battery reference. See the
+[authoritative plan contract](authoritative-plan-contract.md).
 
 Current generated `valid_until` is the end of the last returned slot, normally up to the 72-hour horizon. HA may execute accepted later slots until that explicit expiry, subject to live guards. `binding_until` marks published-price coverage; it does not curtail that authority. A missing backend, pending replacement or routine restart does not reset/extend validity. The replacement policy retains explicit absolute validity and additionally bounds its applicability to actual state and observations. See [current recovery](ha-runtime-recovery.md) and [target continuation](reactive-controls.md#expiry-and-baseline-handover).
 

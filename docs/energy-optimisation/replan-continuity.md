@@ -1,5 +1,9 @@
 # Current-quarter replan continuity
 
+This is the September auction continuity record. The current planner uses the
+[accepted next-hour hold](authoritative-plan-contract.md#preserve-the-next-hour-for-unaffected-loads)
+and the [automatic replan policy](replan-error-policy.md).
+
 ## Later design decision — 15 September 2026
 
 Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.

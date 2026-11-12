@@ -189,6 +189,15 @@ outstanding service, original deadlines, equipment limits and permissions. See
 for trigger, retry, accounting and acceptance requirements. This is normative
 design; implementation and deployment require separate verification.
 
+User requirement, 12 November 2026. A short loss of sensor or actuator readback
+holds the accepted settings. Resume from usable readings when the work still
+fits. A sustained gap may force a replan only when it meets the evidence and
+blocked-work criteria in the [replan admission policy](replan-error-policy.md).
+The planner resolves a small shared-grid forecast conflict by resizing only the
+affected held battery charge, subject to native proof and the configured import
+limit. The aggregate import target and per-phase electrical protection are
+distinct constraints.
+
 User requirement, 25 October 2026: an increase in physical pool power may release
 only affected pool-ON commitments. An empirical permission that reserved average
 draw must be compared with the corrected full demand, using the accepted plan's

@@ -98,15 +98,15 @@ itself evidence of execution failure.
 
 ### Mandatory automatic trigger
 
-When observed absence, equipment unavailability or an evidenced command/response
-failure makes a scheduled request unexecutable and requires moving that work or
-revising its shared resource allocation, the system MUST request a forced
-household replan automatically. It MUST NOT wait for a new price release, a manual
-click, four completed quarters of deviation, or a recommendation being accepted.
-An unplugged car with only a later conditional charging opportunity does not
-trigger merely because it is unplugged now. A car still unavailable when its
-scheduled charging becomes due does trigger; local recovery authority does not
-make this forced replan optional.
+When admitted execution evidence shows that scheduled work cannot run and needs
+to move, the system MUST request a forced household replan automatically. A
+confirmed disconnection while charging is due or a qualifying command failure
+can trigger immediately. A missing required reading holds the accepted settings
+and can enter the replan path only after the same source is still unavailable
+at 15 minutes and blocks due work. This includes actuator readback. On return,
+ordinary evaluation checks whether the accepted work can resume. Follow the
+[replan admission policy](replan-error-policy.md#admission-thresholds) for the
+battery, live capacity, and recovery criteria.
 
 The request MUST name the affected physical owner(s), affected absolute command
 intervals, observed cause, current availability/state and relevant outstanding
@@ -147,6 +147,14 @@ and permissions remain enforced, publish the best achievable affected service an
 its shortfall. Do not silently relax the other holds or cancel explicit user
 bookings; report any booking conflict. A cheaper schedule alone does not justify
 releasing a held command.
+
+On a new solve, a shared-grid forecast conflict can be resolved by reducing
+only the affected held battery grid-charge quarters. The native planner must
+verify the reduced commands under the configured grid and equipment limits.
+The forecast loss must be below 100 Wh AC per affected retained charging run.
+The plan reports the adjustment and keeps all other held commands and explicit
+bookings. Larger or otherwise infeasible requests use the existing commitment
+recovery rules.
 
 ### Accounting, continuity and explanation
 
@@ -200,7 +208,9 @@ turning the automatic trigger into a manual action.
 | --- | --- |
 | Unplugged EV with future charging need | Future charging remains planned, connection telemetry remains false, and execution requires connection. |
 | Car absent when charging is due | Forced replan without a price release or manual click; only evidenced affected commitments are released. |
-| Pool or battery cannot execute scheduled work | Same automatic path and selective release as the EV; unaffected household execution continues. |
+| Pool or battery cannot execute scheduled work | Apply the evidence thresholds and selectively release affected work while other loads continue. |
+| Brief loss and return of actuator readback | Hold settings and resume executable accepted work. The gap itself creates no replan request. |
+| A 17 W forecast increase clips a held battery charge | Resize that quarter within the configured import limit and preserve the other held commands. |
 | Affected load moves to a previously OFF slot within the held hour | Its required source and destination commitments can change; unrelated owners' commands remain exact. |
 | Other loads held ON or OFF in the next hour | Their exact commands survive the replacement; freed capacity does not unlock them. |
 | Mid-quarter capture and request retry | Original absolute held intervals and partial current-quarter coverage survive. |
