@@ -28,7 +28,7 @@ export default function PlanningNotesButton({ warnings, charted }: {
       {label} <span className={`font-semibold tabular-nums ${error ? 'text-red-700 dark:text-red-400' : 'text-yellow-700 dark:text-yellow-400'}`}>{notes.length}</span>
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md" aria-describedby={undefined}
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto" aria-describedby={undefined}
         onCloseAutoFocus={event => { event.preventDefault(); trigger.current?.focus(); }}>
         <DialogHeader><DialogTitle>{label}</DialogTitle></DialogHeader>
         <ul className="divide-y" data-testid="planning-warnings">

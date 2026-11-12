@@ -3,10 +3,10 @@ import { heatingWatts, isWeatherHeatingBinding, readWeatherHeating } from "./pla
 import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
-import type { ThermalQuarterRow } from "./thermal-training.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { passiveHeatRates } from "./planner/models/room/thermal.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "./room-passive-heat-evidence.ts";
+import { ROOM_HISTORY_QUARTER_MS as SLOT_MS, roomHistoryWarning } from "./room-history-warnings.ts";
 import { readThermalModel } from "./planner/models/room/read-model.ts";
 import { roomPlanningZones } from "./room-planning-zones.ts";
 import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
@@ -20,11 +20,18 @@ export interface RoomDeviceMapping {
   room: { key: string; name: string } | null;
 }
 type RoomEvidenceDatabase = Pick<SupabaseClient, "rpc" | "from">;
-const SLOT_MS = 900_000;
 /** A day of recorded heat supplies the existing delayed-heat initial condition. */
-const RECENT_HEAT_HOURS = 24;
-/** The newest completed quarters that may still be on their way. */
-const LATE_HEAT_QUARTERS = 2;
+const RECENT_HEAT_QUARTERS = 24 * 4;
+
+interface RoomPlanningHistory {
+  room_key: string;
+  temperature_starts: number[];
+  heater_quarters: [start: number, watts: number][];
+}
+
+const recentQuarterStarts = (end: number): number[] => Array.from(
+  { length: RECENT_HEAT_QUARTERS }, (_, index) => end - (RECENT_HEAT_QUARTERS - index) * SLOT_MS,
+);
 
 export interface PreparedThermalPlanning {
   snapshot: OptimisationSnapshot;
@@ -205,10 +212,12 @@ export async function captureRoomPlanningState(
   snapshot: OptimisationSnapshot, rooms: PreparedRoom[],
 ): Promise<OptimisationSnapshot> {
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
-  const now = Date.now();
+  const recentEnd = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
+  const quarters = recentQuarterStarts(recentEnd);
+  const delayedRooms = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0);
   const captured = Date.parse(snapshot.captured_at);
   const passiveEnd = Math.floor(captured / SLOT_MS) * SLOT_MS;
-  const passiveStart = passiveEnd - RECENT_HEAT_HOURS * 3_600_000;
+  const passiveQuarters = recentQuarterStarts(passiveEnd);
   const passiveRooms = rooms.filter(room => room.passive_heat);
   const [latestResult, scheduleResult, recentResult, passiveSources] = await Promise.all([
     // Available observations remain evidence independently of their report age.
@@ -220,15 +229,16 @@ export async function captureRoomPlanningState(
       .select("room_key, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c")
       .eq("home_id", homeId),
     // A delayed room starts with the heat its last hours already put on the way.
-    rooms.some(room => (room.model?.heat_lag_h ?? 0) > 0)
-      ? supabase.rpc("get_energy_thermal_training_quarters", {
+    delayedRooms.length
+      ? supabase.rpc("get_energy_room_planning_history", {
         p_customer_id: customerId, p_home_id: homeId,
-        p_from: new Date(now - RECENT_HEAT_HOURS * 3_600_000).toISOString(), p_to: new Date(now).toISOString(),
+        p_room_keys: delayedRooms.map(room => room.key),
+        p_from: new Date(quarters[0]).toISOString(), p_to: new Date(recentEnd).toISOString(),
       })
       : Promise.resolve({ data: [], error: null }),
     passiveRooms.length
       ? readRoomPassiveHeat(supabase, customerId, homeId, passiveRooms.map(room => room.key),
-        new Date(passiveStart).toISOString(), new Date(passiveEnd).toISOString()).catch(error => {
+        new Date(passiveQuarters[0]).toISOString(), new Date(passiveEnd).toISOString()).catch(error => {
           console.error("[ENERGY-OPTIMISATION] monitored room heat unavailable", error);
           return null;
         })
@@ -252,53 +262,39 @@ export async function captureRoomPlanningState(
     off_temperature_c: Number(row.off_temperature_c), low_temperature_c: Number(row.low_temperature_c),
     high_temperature_c: Number(row.high_temperature_c),
   }]));
-  const heatByStart = new Map<string, Map<number, number>>();
-  for (const row of (recentResult.data ?? []) as ThermalQuarterRow[]) {
-    const byStart = heatByStart.get(row.room_key) ?? new Map<number, number>();
-    byStart.set(Date.parse(row.start_ts), Number(row.heat_w ?? 0));
-    heatByStart.set(row.room_key, byStart);
+  const history = (recentResult.data ?? []) as RoomPlanningHistory[];
+  const historyByRoom = new Map(history.map(row => [row.room_key, row]));
+  const recent = new Map<string, number[]>();
+  const historyWarnings: ReturnType<typeof planningWarning>[] = [];
+  for (const room of delayedRooms) {
+    const readings = historyByRoom.get(room.key);
+    if (!readings) continue;
+    const temperatureStarts = new Set(readings.temperature_starts);
+    const heaterWatts = new Map(readings.heater_quarters);
+    // Missing pairs contribute the lower bound on heat still on its way into the room.
+    recent.set(room.key, quarters.map(start => temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0));
+    const warning = roomHistoryWarning(room, "room_heat_history_missing", quarters, [
+      { label: "Room temperature", observed: temperatureStarts },
+      { label: "Heater energy", observed: heaterWatts },
+    ], "The forecast estimates remaining warmth from quarters with both readings.", snapshot.timezone);
+    if (warning) historyWarnings.push(warning);
   }
-  const quarters = Array.from({ length: RECENT_HEAT_HOURS * 4 }, (_v, i) =>
-    Math.floor(now / SLOT_MS) * SLOT_MS - (RECENT_HEAT_HOURS * 4 - i) * SLOT_MS);
-  // Heat that has not been reported counts as none, the lower bound on what is
-  // still on its way into the room. Say so for rooms that carry delayed heat
-  // and do report: the newest quarters still arriving are routine, an older
-  // hole is shown. A room that never reports heat has no metering to wait for.
-  const reported = new Map<string, Set<number>>();
-  for (const row of (recentResult.data ?? []) as ThermalQuarterRow[]) {
-    if (row.heat_w === null || row.heat_w === undefined || !Number.isFinite(Number(row.heat_w))) continue;
-    const starts = reported.get(row.room_key) ?? new Set<number>();
-    starts.add(Date.parse(row.start_ts)); reported.set(row.room_key, starts);
-  }
-  const delayed = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0 && reported.get(room.key)?.size)
-    .map(room => ({ key: room.key, missing: quarters.filter(start => !reported.get(room.key)!.has(start)) }))
-    .filter(room => room.missing.length);
-  const holes = delayed.filter(room => room.missing.some(start => start < quarters.at(-LATE_HEAT_QUARTERS)!));
-  for (const [code, group, message] of [
-    ["room_heat_history_late", delayed.filter(room => !holes.includes(room)), "The latest room heating energy has not arrived yet."],
-    ["room_heat_history_missing", holes, "Some room heating energy is missing."],
-  ] as const) if (group.length) {
-    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(code, "rooms", message,
-      "Heat that has not been reported counts as none, so these rooms may be planned slightly colder than they are.",
-      { rooms: group.map(room => room.key).sort().join(","), quarters: Math.max(...group.map(room => room.missing.length)) })]);
-  }
-  const recent = new Map(rooms.map(room => [room.key, quarters.map(start => heatByStart.get(room.key)?.get(start) ?? 0)]));
   const passiveRates = new Map<string, number[]>();
   for (const room of passiveRooms) {
     const source = passiveSources?.get(room.key);
     const model = room.passive_heat!;
     if (passiveSources && source?.device_key !== model.device_key) continue;
-    const starts = quarters.map((_, i) => passiveStart + i * SLOT_MS);
-    const missing = starts.filter(start => !source?.watts.has(start));
-    if (missing.length) {
-      const late = missing[0] >= passiveEnd - LATE_HEAT_QUARTERS * SLOT_MS;
-      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
-        late ? "room_heat_history_late" : "room_passive_heat_history_missing", room.key,
-        late ? `${room.name}: the latest monitored appliance readings have not arrived yet.` :
-          `${room.name}: some monitored appliance readings are missing.`,
-        "The forecast only counts appliance heat supported by received readings.", { quarters: missing.length })]);
+    if (!source) {
+      historyWarnings.push(planningWarning("room_evidence_unavailable", room.key,
+        `Monitored appliance energy for ${room.name} could not be read.`,
+        "The forecast only counts appliance heat supported by received readings."));
+      continue;
     }
-    if (source) passiveRates.set(room.key, passiveHeatRates(model, starts.map(start => source.watts.get(start) ?? 0),
+    const warning = roomHistoryWarning(room, "room_passive_heat_history_missing", passiveQuarters, [
+      { label: "Monitored appliance energy", observed: source.watts },
+    ], "The forecast only counts appliance heat supported by received readings.", snapshot.timezone);
+    if (warning) historyWarnings.push(warning);
+    passiveRates.set(room.key, passiveHeatRates(model, passiveQuarters.map(start => source.watts.get(start) ?? 0),
       passiveEnd, captured, snapshot.slots.map(slot => slot.start)));
   }
   const { zones, warnings } = roomPlanningZones(snapshot, rooms, {
@@ -309,5 +305,5 @@ export async function captureRoomPlanningState(
     console.info(`[ENERGY-OPTIMISATION] ${warnings.length} of ${rooms.length} rooms not comfort-forecast: ` +
       warnings.map(warning => warning.message).join("; "));
   }
-  return { ...snapshot, thermal_zones: zones, planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, warnings) };
+  return { ...snapshot, thermal_zones: zones, planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, historyWarnings, warnings) };
 }

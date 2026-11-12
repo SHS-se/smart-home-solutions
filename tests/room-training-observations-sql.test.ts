@@ -39,8 +39,24 @@ Deno.test("room learning distinguishes complete metered zero, incomplete power a
     await db.exec(await Deno.readTextFile("supabase/migrations/20261026002000_preserve_unknown_room_heat_observations.sql"));
     const query = "SELECT heat_w FROM get_energy_thermal_training_quarters($1,$2,'2026-10-01','2026-10-02')";
     assertEquals((await db.query<{heat_w: number | null}>(query, [customer, home])).rows.map(r => r.heat_w), [null, 0, 600, null, null]);
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261112180000_read_room_planning_history.sql"));
+    // 00:30 has complete energy and no temperature. 00:00 and 00:45 have
+    // temperature and an incomplete meter set.
+    await db.exec(`DELETE FROM energy_optimisation_thermal_slots WHERE start_ts = '2026-10-01T00:30Z';
+      GRANT SELECT ON energy_optimisation_devices, energy_optimisation_device_slots, energy_optimisation_thermal_slots TO service_role;
+      SET ROLE service_role;`);
+    const history = "SELECT * FROM get_energy_room_planning_history($1,$2,$3,'2026-10-01','2026-10-01T01:00Z')";
+    const start = Date.parse("2026-10-01T00:00Z");
+    assertEquals((await db.query(history, [customer, home, ["synthetic_room"]])).rows, [{
+      room_key: "synthetic_room",
+      temperature_starts: [start, start + 900_000, start + 2_700_000],
+      heater_quarters: [[start + 900_000, 0], [start + 1_800_000, 600]],
+    }]);
+    assertEquals((await db.query(history, [customer, home, ["other_room"]])).rows, []);
+    await db.exec("RESET ROLE");
     await db.exec("SET ROLE anon");
     await assertRejects(() => db.query(query, [customer, home]), Error, "permission denied");
+    await assertRejects(() => db.query(history, [customer, home, ["synthetic_room"]]), Error, "permission denied");
     await db.exec("RESET ROLE");
   } finally { await db.close(); }
 });

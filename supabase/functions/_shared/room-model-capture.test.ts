@@ -4,6 +4,7 @@ import { cpuPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts
 import { prepareRoomModels, captureRoomPlanningState, type RoomDeviceMapping } from "./room-model-capture.ts";
 import { prepareRoomServices } from "./rules-room-services.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";
+import { actionablePlanningWarnings } from "./planner/planning-warnings.ts";
 
 function syntheticCapture() {
   const snapshot = cpuPlanningSource(true).snapshot;
@@ -51,44 +52,80 @@ Deno.test("capture reads current temperatures and routines without selecting mod
       if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
         prepared.rooms.map(room => ({ room_key: room.key, weekday_modes: Array(96).fill("high-temp"),
           weekend_modes: Array(96).fill("high-temp"), off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 }))));
-      if (endpoint === "get_energy_thermal_training_quarters") return Promise.resolve(Response.json([]));
+      if (endpoint === "get_energy_room_planning_history") return Promise.resolve(Response.json([]));
       throw new Error(`Unexpected capture dependency ${endpoint}`);
     } },
   });
   const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", prepared.snapshot, prepared.rooms);
-  assertEquals(calls.sort(), ["energy_optimisation_comfort_schedules", "get_energy_latest_room_temperatures", "get_energy_thermal_training_quarters"]);
+  assertEquals(calls.sort(), ["energy_optimisation_comfort_schedules", "get_energy_latest_room_temperatures", "get_energy_room_planning_history"]);
   assertEquals(result.thermal_zones!.map(room => room.key), prepared.rooms.map(room => room.key));
   assertEquals(result.thermal_zones!.every(room => room.start_temperature_c === 19), true);
   assertEquals(result.thermal_zones!.every(room => room.target_c.every(value => value === 21)), true);
   assertEquals(result.thermal_zones![0].model, prepared.rooms[0].model);
 });
 
-Deno.test("late or missing room heat is counted as none and said out loud, never dropped silently", async () => {
+Deno.test("room history warns by room and source only for substantial gaps", async () => {
   const { snapshot, mappings, bundle } = syntheticCapture();
   const prepared = prepareRoomModels(snapshot, mappings, bundle);
-  const room = prepared.rooms.find(r => r.model)!;
-  room.model = { ...room.model!, heat_lag_h: .5 };
-  const boundary = Math.floor(Date.now() / 900_000) * 900_000;
-  const quarters = Array.from({ length: 96 }, (_, i) => boundary - (96 - i) * 900_000);
-  const run = async (starts: number[]) => {
+  const [room, neighbour] = prepared.rooms.filter(r => r.model);
+  for (const candidate of [room, neighbour]) candidate.model = { ...candidate.model!, heat_lag_h: .5 };
+  const quarterMs = 900_000;
+  const run = async (missingTemperature: number[], missingHeat: number[], unavailable = false) => {
+    let quarters: number[] = [];
     const db = createClient("http://localhost:54321", "synthetic-service", {
-      auth: { persistSession: false }, global: { fetch: (url) => {
+      auth: { persistSession: false }, global: { fetch: (url, request) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
         if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
           prepared.rooms.map(r => ({ room_key: r.key, room_temperature_c: 19 }))));
-        if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json([]));
-        if (endpoint === "get_energy_thermal_training_quarters") return Promise.resolve(Response.json(
-          starts.map(start => ({ room_key: room.key, start_ts: new Date(start).toISOString(), heat_w: 800 }))));
+        if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
+          prepared.rooms.map(r => ({ room_key: r.key, weekday_modes: Array(96).fill("high-temp"),
+            weekend_modes: Array(96).fill("high-temp"), off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 }))));
+        if (endpoint === "get_energy_room_planning_history") {
+          if (unavailable) return Promise.resolve(Response.json({ message: "Unavailable" }, { status: 503 }));
+          const { p_from, p_to } = JSON.parse(String(request?.body));
+          const start = Date.parse(p_from);
+          quarters = Array.from({ length: 96 }, (_, i) => start + i * quarterMs);
+          assertEquals(start % quarterMs, 0);
+          assertEquals(quarters.at(-1)! + quarterMs, Date.parse(p_to));
+          return Promise.resolve(Response.json([
+            { room_key: room.key, temperature_starts: quarters.filter((_, i) => !missingTemperature.includes(i)),
+              heater_quarters: quarters.flatMap((at, i) => missingHeat.includes(i) ? [] : [[at, i === 40 ? 0 : 800]]) },
+            { room_key: neighbour.key, temperature_starts: quarters.filter((_, i) => i !== 40),
+              heater_quarters: quarters.map(at => [at, 0]) },
+          ]));
+        }
         throw new Error(`Unexpected capture dependency ${endpoint}`);
       } },
     });
-    const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), prepared.rooms);
-    return (result.planning_warnings ?? []).filter(w => w.scope === "rooms").map(w => w.code);
+    const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), [room, neighbour]);
+    return { quarters, warnings: result.planning_warnings ?? [], zone: result.thermal_zones!.find(zone => zone.key === room.key)! };
   };
-  assertEquals(await run(quarters), []);
-  assertEquals(await run(quarters.slice(0, -1)), ["room_heat_history_late"]);
-  assertEquals(await run(quarters.filter((_, i) => i !== 40)), ["room_heat_history_missing"]);
-  assertEquals(await run([]), [], "a room that never reports heat has no metering to wait for");
+  const complete = await run([], []);
+  const late = await run([], [95]);
+  assertEquals(late.warnings.map(warning => warning.code), ["room_heat_history_late"]);
+  assertEquals(actionablePlanningWarnings(late.warnings), []);
+  assert(late.zone.start_delivered_w! < complete.zone.start_delivered_w!);
+  const small = await run([40], [86, 87, 88, 89, 90, 91, 94, 95]);
+  assertEquals(actionablePlanningWarnings(small.warnings), []);
+  const large = await run([60, 61, 62, 63, 64, 65], [64, 65, 66, 67, 94, 95]);
+  const [warning] = actionablePlanningWarnings(large.warnings);
+  assertEquals(actionablePlanningWarnings(large.warnings).length, 1);
+  assertEquals(warning.scope, room.key);
+  assertEquals(warning.message, `${room.name} has 2 h of missing room history.`);
+  const { quarters } = large;
+  assertEquals(warning.evidence, { quarters: 8, intervals: JSON.stringify([
+    { from: quarters[60], until: quarters[64], sources: "Room temperature" },
+    { from: quarters[64], until: quarters[66], sources: "Room temperature and Heater energy" },
+    { from: quarters[66], until: quarters[68], sources: "Heater energy" },
+  ]) });
+  const missing = Array.from({ length: 96 }, (_, i) => i);
+  const unreported = await run([], missing);
+  assertEquals(unreported.zone.start_delivered_w, 0);
+  assertEquals(actionablePlanningWarnings(unreported.warnings)[0].evidence?.quarters, 94);
+  const failed = await run([], [], true);
+  assertEquals(actionablePlanningWarnings(failed.warnings).map(w => w.code), ["room_evidence_unavailable"]);
+  assertEquals(failed.zone.model, complete.zone.model);
+  assertEquals(actionablePlanningWarnings((await run([], [])).warnings), []);
 });
 
 Deno.test("monitored heat warms the native room projection without creating appliance commands", async () => {
@@ -119,7 +156,7 @@ Deno.test("monitored heat warms the native room projection without creating appl
         if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
           [{ room_key: key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
             off_temperature_c: 15, low_temperature_c: 16, high_temperature_c: 17 }]));
-        if (endpoint === "get_energy_thermal_training_quarters") return Promise.resolve(Response.json([]));
+        if (endpoint === "get_energy_room_planning_history") return Promise.resolve(Response.json([]));
         if (endpoint === "get_energy_room_passive_heat") return Promise.resolve(Response.json(
           [{ room_key: key, device_key: device, quarters: series }]));
         throw new Error(`Unexpected capture dependency ${endpoint}`);
@@ -130,6 +167,7 @@ Deno.test("monitored heat warms the native room projection without creating appl
   const complete = await capture(quarters);
   const late = await capture(quarters.slice(0, -1));
   const gap = await capture(quarters.filter((_, i) => i !== 92));
+  const substantial = await capture(quarters.filter((_, i) => i < 60 || i >= 68));
   const unavailable = await capture([]);
   const wrongOwner = await capture(quarters, "unrelated-meter");
   const zone = complete.thermal_zones![0];
@@ -139,7 +177,8 @@ Deno.test("monitored heat warms the native room projection without creating appl
   assert(late.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
   assertEquals(late.planning_warnings?.some(w => w.code === "room_heat_history_late"), true);
   assert(gap.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
-  assertEquals(gap.planning_warnings?.some(w => w.code === "room_passive_heat_history_missing"), true);
+  assertEquals(gap.planning_warnings?.some(w => w.code === "room_passive_heat_history_missing"), false);
+  assertEquals(substantial.planning_warnings?.find(w => w.code === "room_passive_heat_history_missing")?.evidence?.quarters, 8);
   assertEquals(unavailable.thermal_zones![0].passive_heat_c_per_h, Array(8).fill(0));
   assertEquals(unavailable.thermal_zones![0].model, zone.model);
   assertEquals(wrongOwner.thermal_zones![0].passive_heat_c_per_h, undefined);
