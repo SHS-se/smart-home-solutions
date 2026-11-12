@@ -1037,7 +1037,7 @@ test.describe('requesting a replan', () => {
         ...slot, load_w: 5990, device_loads_w: Object.fromEntries(models.map((device, i) => [device.key, i === 10 ? 2990 : 100])),
       })) } },
     };
-    await context.route('**/rest/v1/rpc/set_energy_device_planning', async route => {
+    await context.route('**/rest/v1/rpc/set_energy_device_participation', async route => {
       const body = route.request().postDataJSON();
       const device = replan.devices!.find(device => device.id === body.p_device_id)!;
       device.planning_role_override = body.p_planning_role;

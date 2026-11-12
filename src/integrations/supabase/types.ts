@@ -2410,6 +2410,7 @@ export type Database = {
       }
       energy_optimisation_devices: {
         Row: {
+          app_setup: Json | null
           active_power_w: number | null
           category: string
           colour: string
@@ -2439,6 +2440,7 @@ export type Database = {
           suggested_planning_role: string
         }
         Insert: {
+          app_setup?: Json | null
           active_power_w?: number | null
           category: string
           colour?: string
@@ -2468,6 +2470,7 @@ export type Database = {
           suggested_planning_role?: string
         }
         Update: {
+          app_setup?: Json | null
           active_power_w?: number | null
           category?: string
           colour?: string
@@ -5323,17 +5326,12 @@ export type Database = {
         }
         Returns: string
       }
-      set_energy_device_load_type: {
-        Args: { p_device_id: string; p_load_type: string }
-        Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
-      }
       set_energy_battery_planning: {
         Args: { p_home_id: string; p_included: boolean }
         Returns: Database["public"]["Tables"]["energy_optimisation_home_planning"]["Row"]
       }
-      set_energy_device_planning: {
+      set_energy_device_participation: {
         Args: {
-          p_control_type: string | null
           p_device_id: string
           p_planning_role: string
         }

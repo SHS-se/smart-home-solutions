@@ -419,7 +419,7 @@ test.describe('staff navigation shell', () => {
 
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
-    const labels = ['Välj metod', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
+    const labels = ['—', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
     const devices = methods.map((method, index) => ({
       id: `device-${index}`, device_key: `sensor.device_${index}`, statistic_id: `sensor.device_${index}`,
       name: `Device ${index}`, colour: TEST_DEVICE_COLOURS[index], retired_at: null, category: 'heating', load_type_override: 'duty_cycle',
@@ -446,17 +446,19 @@ test.describe('staff navigation shell', () => {
       const device = devices.find(d => d.id === body.p_device_id);
       if (device) {
         device.planning_role_override = body.p_planning_role;
-        device.control_type_override = body.p_control_type ?? device.control_type_override;
       } else battery.battery_included = body.p_included;
       await route.fulfill({ json: device ?? battery });
     });
     const toggle = (i: number) => page.getByRole('switch', { name: `Planera Device ${i}`, exact: true });
-    const method = (i: number) => page.getByRole('combobox', { name: `Styrmetod för Device ${i}`, exact: true });
+    const deviceRow = (i: number) => page.getByRole('row').filter({ has: toggle(i) });
+    const method = (i: number) => deviceRow(i).getByText(labels[i], { exact: true });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < methods.length; i++) {
-        await expect(method(i)).toHaveText(labels[i]);
+        await expect(method(i)).toBeVisible();
+        await expect(deviceRow(i).getByText('Termostat / driftcykel', { exact: true })).toBeVisible();
+        await expect(deviceRow(i).getByRole('combobox')).toHaveCount(0);
         await expect(toggle(i)).toBeChecked({ checked: i > 0 });
       }
       await expect(page.getByRole('switch', { name: 'Planera husbatteriet', exact: true })).not.toBeChecked();
@@ -468,22 +470,23 @@ test.describe('staff navigation shell', () => {
       await toggle(i).click();
       await expect(toggle(i)).not.toBeChecked();
       await page.reload();
-      await expect(method(i)).toHaveText(labels[i]);
+      await expect(method(i)).toBeVisible();
       await expect(toggle(i)).not.toBeChecked();
       await toggle(i).click();
       await expect(toggle(i)).toBeChecked();
       expect(writes.slice(-2)).toEqual([
-        { p_device_id: `device-${i}`, p_planning_role: 'base_load', p_control_type: methods[i] },
-        { p_device_id: `device-${i}`, p_planning_role: 'controllable', p_control_type: methods[i] },
+        { p_device_id: `device-${i}`, p_planning_role: 'base_load' },
+        { p_device_id: `device-${i}`, p_planning_role: 'controllable' },
       ]);
     }
-    // Choosing a method does not itself grant inclusion.
+    // The website waits for the app to provide a method.
     await expect(toggle(0)).toBeDisabled();
-    await method(0).click();
-    await page.getByRole('option', { name: 'Börvärde', exact: true }).click();
+    devices[0].control_type_override = 'setpoint';
+    labels[0] = 'Börvärde';
+    await page.reload();
+    await expect(method(0)).toBeVisible();
     await expect(toggle(0)).toBeEnabled();
     await expect(toggle(0)).not.toBeChecked();
-    expect(writes.at(-1)).toEqual({ p_device_id: 'device-0', p_planning_role: 'base_load', p_control_type: 'setpoint' });
     // Keyboard operation and failed-save state are both truthful.
     failNextSave = true;
     await toggle(0).focus();

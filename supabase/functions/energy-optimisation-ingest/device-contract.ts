@@ -6,6 +6,12 @@ import type {
 
 export type DeviceMappingStatus = "not_configured" | "ready" | "invalid";
 
+export interface AppDeviceSetup {
+  revision: number;
+  control_type: DeviceControlType | null;
+  load_type: DeviceLoadType;
+}
+
 export interface IncomingDevice {
   key: string;
   statistic_id: string;
@@ -14,6 +20,7 @@ export interface IncomingDevice {
   suggested_load_type: DeviceLoadType;
   suggested_planning_role: DevicePlanningRole;
   suggested_control_type: DeviceControlType | null;
+  app_setup?: AppDeviceSetup;
   active_power_w: number | null;
   profile_sample_count: number;
   inference: Record<string, unknown>;
@@ -138,6 +145,12 @@ export const deviceContractBreach = (
         device.suggested_control_type as DeviceControlType,
       )
   ) return "suggested_control_type";
+  const setup = device.app_setup;
+  if (setup !== undefined && (
+    !setup || !Number.isSafeInteger(setup.revision) || setup.revision < 1 ||
+    (setup.control_type !== null && !DEVICE_CONTROL_TYPES.has(setup.control_type)) ||
+    !DEVICE_LOAD_TYPES.has(setup.load_type)
+  )) return "app_setup";
   if (
     device.active_power_w !== null &&
     (typeof device.active_power_w !== "number" ||

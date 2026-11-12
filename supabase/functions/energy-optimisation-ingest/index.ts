@@ -5,7 +5,7 @@ import { prepareActualUpload } from "../_shared/actual-upload.ts";
 import { mergePlanningWarnings, planningWarning } from "../_shared/planner/planning-warnings.ts";
 import { hasNewPublishedPrices, deviationRecommendations, LATE_ACTUAL_QUARTERS, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
-import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
+import { deviceContractBreach, roomMapping, type AppDeviceSetup, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { captureRulesPlanningInput } from "../_shared/rules-planning-capture.ts";
 import { RULES_MODEL_VERSION } from "../_shared/rules-planner-identity.ts";
 import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, weatherHeatingOwners, type DeviceModelBundle } from "../_shared/device-model-store.ts";
@@ -331,7 +331,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
-  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  if (req.method !== "POST" && req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -342,6 +342,24 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   try {
     const auth = await authenticateDevice(supabase, req);
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
+    if (req.method === "GET") {
+      // A one-time import also includes retained choices for retired devices.
+      const deviceSetups: (AppDeviceSetup & { key: string })[] = [];
+      const pageSize = 500;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase.from("energy_optimisation_devices")
+          .select("device_key,control_type_override,load_type_override,app_setup")
+          .eq("home_id", auth.homeId).eq("customer_id", auth.customerId)
+          .order("device_key").range(offset, offset + pageSize - 1);
+        if (error) return json({ error: "storage_failed" }, 500);
+        for (const row of data) deviceSetups.push({
+          key: row.device_key, control_type: row.control_type_override,
+          load_type: row.load_type_override, revision: row.app_setup?.revision ?? 1,
+        });
+        if (data.length < pageSize) break;
+      }
+      return json({ device_setups: deviceSetups });
+    }
     if (!auth.subscriptionActive) {
       return json({ error: "subscription_inactive" }, 402);
     }
@@ -545,6 +563,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         suggested_load_type: device.suggested_load_type,
         suggested_planning_role: device.suggested_planning_role,
         suggested_control_type: device.suggested_control_type,
+        app_setup: device.app_setup ? {
+          revision: device.app_setup.revision, control_type: device.app_setup.control_type, load_type: device.app_setup.load_type,
+        } : null,
         active_power_w: device.active_power_w,
         profile_sample_count: device.profile_sample_count,
         inference: {

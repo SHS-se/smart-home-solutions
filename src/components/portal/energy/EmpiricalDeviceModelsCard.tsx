@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -17,20 +16,6 @@ import type {
 export type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import DeviceName from './DeviceName';
-
-const LOAD_TYPES: DeviceLoadType[] = [
-  'fixed_full_load',
-  'variable_full_load',
-  'duty_cycle',
-  'inverter',
-];
-
-const CONTROL_TYPES: DeviceControlType[] = [
-  'switch_schedule',
-  'variable_power',
-  'permit_inhibit',
-  'setpoint',
-];
 
 const PlanningToggle: React.FC<{
   name: string; included: boolean; disabled: boolean; onChange: (included: boolean) => void;
@@ -114,22 +99,12 @@ const EmpiricalDeviceModelsCard: React.FC<{
     setSavingId(null);
   };
 
-  const updateLoadType = (device: EmpiricalEnergyDevice, value: string) => persist(
-    device,
-    supabase.rpc('set_energy_device_load_type', {
-      p_device_id: device.id,
-      p_load_type: value as DeviceLoadType,
-    }),
-    t('Kunde inte spara lasttypen', 'Could not save load type'),
-  );
-
-  const updatePlanning = (device: EmpiricalEnergyDevice, included: boolean, control: DeviceControlType | null = device.control_type_override) => {
+  const updatePlanning = (device: EmpiricalEnergyDevice, included: boolean) => {
     return persist(
       device,
-      supabase.rpc('set_energy_device_planning', {
+      supabase.rpc('set_energy_device_participation', {
         p_device_id: device.id,
         p_planning_role: included ? 'controllable' : 'base_load',
-        p_control_type: control ?? null,
       }),
       t('Kunde inte spara planeringsrollen', 'Could not save planning role'),
     );
@@ -208,20 +183,11 @@ const EmpiricalDeviceModelsCard: React.FC<{
                         disabled={refreshing || savingId !== null || (!device.control_type_override && device.planning_role_override !== 'controllable')}
                         onChange={included => void updatePlanning(device, included)} />
                       {!device.control_type_override && <p className="mt-1 text-xs text-muted-foreground">
-                        {t('Välj en styrmetod först.', 'Choose a control method first.')}
+                        {t('Välj en styrmetod i SHS-appen.', 'Choose a control method in the SHS app.')}
                       </p>}
                     </TableCell>
                     <TableCell className="min-w-[200px]">
-                      <Select value={device.control_type_override ?? ''}
-                        onValueChange={value => void updatePlanning(device, device.planning_role_override === 'controllable', value as DeviceControlType)}
-                        disabled={refreshing || savingId !== null}>
-                        <SelectTrigger className="h-8" aria-label={t(`Styrmetod för ${device.name}`, `Control method for ${device.name}`)}>
-                          <SelectValue placeholder={t('Välj metod', 'Choose method')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CONTROL_TYPES.map(type => <SelectItem key={type} value={type}>{controlLabel[type]}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <span>{device.control_type_override ? controlLabel[device.control_type_override] : '—'}</span>
                       <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
                         {mappingState(device) === 'ready' ? (
                           <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{t('Klar i Home Assistant', 'Ready in Home Assistant')}</>
@@ -236,18 +202,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     </TableCell>
                     <TableCell className="min-w-[230px]">
                       <div className="flex items-center gap-2">
-                        <Select
-                          value={device.load_type_override}
-                          onValueChange={value => void updateLoadType(device, value)}
-                          disabled={refreshing || savingId !== null}
-                        >
-                          <SelectTrigger className="h-8">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {LOAD_TYPES.map(type => <SelectItem key={type} value={type}>{loadLabel[type]}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
+                        <span>{loadLabel[device.load_type_override]}</span>
                         {savingId === device.id && <Loader2 className="h-4 w-4 animate-spin" />}
                       </div>
                     </TableCell>
