@@ -159,31 +159,36 @@ Deno.test("CONTRACT BASIS-2: capture detaches models, policy and accepted comman
 
 Deno.test("CONTRACT EV-4: the charge cap limits charging without invalidating a higher measured SOC", () => {
   const s = syntheticHome(48);
-  // Exactly one quarter at 12 A below the cap: achievable with the native
-  // discrete-current control, without assuming a fractional final interval.
-  const initialKwh = .2 * 75 - 12 * 3 * 230 * .25 / 1000 * .92;
+  // A finishing charge needs 0.15 kWh. At the 5 A minimum this is only
+  // about three minutes. The full current must still fit while it runs.
+  const initialKwh = .2 * 75 - .15;
   s.ev_battery!.soc = initialKwh / 75; s.ev_battery!.charge_limit_soc = .2;
-  // Negative prices make additional energy useful even when another quarter
-  // cannot cross a comfort-rule threshold. The cap must still stop charging.
-  s.slots.forEach((q, i) => q.import_price_sek_per_kwh = i < 4 ? -1 : 1);
+  s.grid.import_limit_w = 500 + 5 * 690;
   const check = (result: OptimisationPlan) => {
     const slots = result.plans.priority.slots;
-    assert(slots.some(q => q.ev_target_current_a > 0));
-    assertEquals(slots.at(-1)!.ev_target_current_a, 0);
+    assertEquals(slots.filter(q => q.ev_target_current_a > 0).length, 1);
     let storedKwh = initialKwh;
     for (const q of slots) {
-      // Integrate commanded amps independently; published watts/SOC may be clipped.
-      storedKwh += q.ev_target_current_a * 690 * .25 / 1000 * .92;
-      assert(storedKwh <= .2 * 75 + 1e-8);
+      const nominalW = q.ev_target_current_a * 690;
+      assert(500 + nominalW <= s.grid.import_limit_w);
+      const stored = Math.min(nominalW * .25 / 1000 * .92, .2 * 75 - storedKwh);
+      assertAlmostEquals(q.ev_w * .25 / 1000 * .92, stored, 1e-8);
+      storedKwh += stored;
+      assertAlmostEquals(q.ev_soc!, storedKwh / 75, 1e-8);
     }
-    assert(.2 * 75 - storedKwh < 5 * 690 * .25 / 1000 * .92, "less than one minimum-current quarter remains");
+    assertAlmostEquals(storedKwh, .2 * 75, 1e-8);
   };
   const p = plan(s); check(p);
-  const overcharge = structuredClone(p); overcharge.plans.priority.slots[0].ev_target_current_a = 16;
-  assertThrows(() => check(overcharge));
+  const excessive = structuredClone(p);
+  excessive.plans.priority.slots.find(q => q.ev_target_current_a > 0)!.ev_target_current_a = 6;
+  assertThrows(() => check(excessive));
+  const short = structuredClone(p);
+  short.plans.priority.slots.forEach(q => q.ev_target_current_a = 0);
+  assertThrows(() => check(short));
   s.ev_battery!.soc = .3;
   const above = plan(s);
   assert(above.plans.priority.slots.every(q => q.ev_target_current_a === 0));
+  assert(above.plans.priority.slots.every(q => q.ev_soc === .3));
 });
 
 Deno.test("CONTRACT POOL-2: missing thermal evidence retains accepted instructions without inventing continuous heating", () => {

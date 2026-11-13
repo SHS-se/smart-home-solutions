@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": true
     },
-    "model_version": "rules-planner-v31:9e1460a0e5a00c912548cfbb9283ac9a29eb3dc06d46d242e5fe69577e72f3ad",
+    "model_version": "rules-planner-v31:6d2277410bb0a24903143a2c84d07abf1f0b039af1abbb6ce6c3aa363cf759a8",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -1999,16 +1999,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 0,
+            "ev_w": 2171.739130434618,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 0,
+            "ev_target_current_a": 5,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
-            "load_w": 700,
+            "load_w": 2871.739130434618,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -2016,23 +2016,23 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 4128.260869565382,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.10320652173913454,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 700,
+                "load_w": 2871.739130434618,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -6300,
+                "residual_w": -4128.260869565382,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 4128.260869565382,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -2062,7 +2062,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2118,7 +2118,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2174,7 +2174,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2230,7 +2230,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2286,7 +2286,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2342,7 +2342,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2398,7 +2398,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2454,7 +2454,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2510,7 +2510,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2566,7 +2566,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2622,7 +2622,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2678,7 +2678,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2734,7 +2734,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2790,7 +2790,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2846,7 +2846,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2902,7 +2902,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -2958,7 +2958,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3014,7 +3014,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3070,7 +3070,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3126,7 +3126,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3182,7 +3182,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3238,7 +3238,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3294,7 +3294,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3350,7 +3350,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3406,7 +3406,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3462,7 +3462,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3518,7 +3518,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3574,7 +3574,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3630,7 +3630,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3686,7 +3686,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3742,7 +3742,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3798,7 +3798,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -3833,22 +3833,22 @@
           }
         ],
         "summary": {
-          "load_kwh": 31.037500000000033,
-          "flexible_load_kwh": 19.83750000000001,
+          "load_kwh": 31.580434782608688,
+          "flexible_load_kwh": 20.380434782608663,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.962500000000006,
+          "grid_export_kwh": 17.41956521739135,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.962500000000006,
-          "net_cost_sek": 8.703750000000001,
-          "terminal_adjusted_cost_sek": 8.703750000000001,
+          "priced_export_kwh": 17.41956521739135,
+          "net_cost_sek": 8.758043478260866,
+          "terminal_adjusted_cost_sek": 8.758043478260866,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 19.83750000000001,
+          "service_delivered_kwh": 20.380434782608663,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
@@ -5714,16 +5714,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 0,
+            "ev_w": 2171.739130434618,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 0,
+            "ev_target_current_a": 5,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
-            "load_w": 700,
+            "load_w": 2871.739130434618,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -5731,31 +5731,29 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 4128.260869565382,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.10320652173913454,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 700,
+                "load_w": 2871.739130434618,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -6300,
+                "residual_w": -4128.260869565382,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 4128.260869565382,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -5780,7 +5778,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5812,9 +5810,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -5839,7 +5835,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5871,9 +5867,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -5898,7 +5892,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5930,9 +5924,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -5957,7 +5949,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -5989,9 +5981,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -6016,7 +6006,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6048,9 +6038,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -6075,7 +6063,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6107,9 +6095,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -6134,7 +6120,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6166,9 +6152,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -6193,7 +6177,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6225,9 +6209,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -6252,7 +6234,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6284,9 +6266,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -6311,7 +6291,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6343,9 +6323,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -6370,7 +6348,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6402,9 +6380,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -6429,7 +6405,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6461,9 +6437,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -6488,7 +6462,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6520,9 +6494,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -6547,7 +6519,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6579,9 +6551,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -6606,7 +6576,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6638,9 +6608,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -6665,7 +6633,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6697,9 +6665,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -6724,7 +6690,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6756,9 +6722,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -6783,7 +6747,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6815,9 +6779,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -6842,7 +6804,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6874,9 +6836,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -6901,7 +6861,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6933,9 +6893,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -6960,7 +6918,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -6992,9 +6950,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -7019,7 +6975,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7051,9 +7007,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -7078,7 +7032,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7110,9 +7064,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -7137,7 +7089,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7169,9 +7121,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -7196,7 +7146,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7228,9 +7178,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -7255,7 +7203,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7287,9 +7235,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -7314,7 +7260,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7346,9 +7292,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -7373,7 +7317,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7405,9 +7349,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -7432,7 +7374,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7464,9 +7406,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -7491,7 +7431,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7523,9 +7463,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -7550,7 +7488,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7582,9 +7520,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -7609,7 +7545,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -7641,28 +7577,26 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           }
         ],
         "summary": {
-          "load_kwh": 31.037500000000033,
-          "flexible_load_kwh": 19.83750000000001,
+          "load_kwh": 31.580434782608688,
+          "flexible_load_kwh": 20.380434782608663,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.962500000000006,
+          "grid_export_kwh": 17.41956521739135,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.962500000000006,
-          "net_cost_sek": 8.703750000000001,
-          "terminal_adjusted_cost_sek": 8.703750000000001,
+          "priced_export_kwh": 17.41956521739135,
+          "net_cost_sek": 8.758043478260866,
+          "terminal_adjusted_cost_sek": 8.758043478260866,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 19.83750000000001,
+          "service_delivered_kwh": 20.380434782608663,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
@@ -9528,16 +9462,16 @@
             "pool_command_w": 0,
             "boiler_expected_w": 0,
             "boiler_permitted": false,
-            "ev_w": 0,
+            "ev_w": 2171.739130434618,
             "room_heating_w": {},
             "device_loads_w": {},
             "device_commands": {},
-            "ev_target_current_a": 0,
+            "ev_target_current_a": 5,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
-            "load_w": 700,
+            "load_w": 2871.739130434618,
             "battery_idle_w": 0,
             "battery_charge_w": 0,
             "battery_discharge_w": 0,
@@ -9545,31 +9479,29 @@
             "battery_command": null,
             "battery_soc": 0,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 4128.260869565382,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.10320652173913454,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
               "battery": null,
               "grid_balance": {
-                "load_w": 700,
+                "load_w": 2871.739130434618,
                 "pv_w": 7000,
                 "battery_charge_w": 0,
                 "battery_discharge_w": 0,
-                "residual_w": -6300,
+                "residual_w": -4128.260869565382,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 4128.260869565382,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -9594,7 +9526,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9626,9 +9558,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -9653,7 +9583,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9685,9 +9615,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -9712,7 +9640,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9744,9 +9672,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -9771,7 +9697,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9803,9 +9729,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -9830,7 +9754,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9862,9 +9786,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -9889,7 +9811,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9921,9 +9843,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -9948,7 +9868,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -9980,9 +9900,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -10007,7 +9925,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10039,9 +9957,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -10066,7 +9982,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10098,9 +10014,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -10125,7 +10039,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10157,9 +10071,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -10184,7 +10096,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10216,9 +10128,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -10243,7 +10153,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10275,9 +10185,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -10302,7 +10210,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10334,9 +10242,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -10361,7 +10267,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10393,9 +10299,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -10420,7 +10324,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10452,9 +10356,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -10479,7 +10381,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10511,9 +10413,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -10538,7 +10438,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10570,9 +10470,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -10597,7 +10495,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10629,9 +10527,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -10656,7 +10552,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10688,9 +10584,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -10715,7 +10609,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10747,9 +10641,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -10774,7 +10666,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10806,9 +10698,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -10833,7 +10723,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10865,9 +10755,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -10892,7 +10780,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10924,9 +10812,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -10951,7 +10837,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -10983,9 +10869,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -11010,7 +10894,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11042,9 +10926,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -11069,7 +10951,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11101,9 +10983,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -11128,7 +11008,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11160,9 +11040,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -11187,7 +11065,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11219,9 +11097,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -11246,7 +11122,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11278,9 +11154,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -11305,7 +11179,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11337,9 +11211,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -11364,7 +11236,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11396,9 +11268,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -11423,7 +11293,7 @@
             "ev_target_current_a": 0,
             "ev_min_current_a": 0,
             "ev_max_current_a": 16,
-            "ev_soc": 0.7933400000000005,
+            "ev_soc": 0.8,
             "ev_connected": true,
             "load_w": 700,
             "battery_idle_w": 0,
@@ -11455,28 +11325,26 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "car_floor": -0.0027959185073811945
-            }
+            "rule_points": {}
           }
         ],
         "summary": {
-          "load_kwh": 31.037500000000033,
-          "flexible_load_kwh": 19.83750000000001,
+          "load_kwh": 31.580434782608688,
+          "flexible_load_kwh": 20.380434782608663,
           "pv_kwh": 42,
           "grid_import_kwh": 6.999999999999996,
-          "grid_export_kwh": 17.962500000000006,
+          "grid_export_kwh": 17.41956521739135,
           "curtailed_kwh": 0,
           "priced_import_kwh": 6.999999999999996,
-          "priced_export_kwh": 17.962500000000006,
-          "net_cost_sek": 8.703750000000001,
-          "terminal_adjusted_cost_sek": 8.703750000000001,
+          "priced_export_kwh": 17.41956521739135,
+          "net_cost_sek": 8.758043478260866,
+          "terminal_adjusted_cost_sek": 8.758043478260866,
           "battery_soc_start": 0,
           "battery_soc_end": 0,
           "battery_soc_low": 0,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
-          "service_delivered_kwh": 19.83750000000001,
+          "service_delivered_kwh": 20.380434782608663,
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {

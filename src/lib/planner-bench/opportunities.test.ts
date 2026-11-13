@@ -331,8 +331,15 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
   const within80 = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 2 ? 11_040 : i === 2 ? 10_350 : 0 }));
   assertEquals(within80.violations, []);
   assertAlmostEquals(within80.series.carSoc[END]!, 80, 0.15);
+  const finishes = plan({ ev: i => i < 3 ? 11_040 : 0 });
+  const full = referee(car, HOUSEHOLD, TARGETS, finishes);
+  assertEquals(full.violations, []);
+  assertEquals(full.series.carSoc[END], 80);
+  assert(full.series.carW[2]! < 11_040);
+  const tightGrid = referee(car, { ...HOUSEHOLD, site: { ...HOUSEHOLD.site, import_limit_w: 11_500 } }, TARGETS, finishes);
+  assert(tightGrid.violations.some(v => v.kind === 'grid_limit' && v.quarter === 2));
   const past = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 8 ? 11_040 : 0 }));
-  assert(past.violations.length > 0 && past.violations.every(v => v.kind === 'ev_full'));
+  assertEquals(past.violations.map(v => [v.quarter, v.kind]), [3, 4, 5, 6, 7].map(i => [i, 'ev_full']));
   assertAlmostEquals(Math.max(...past.series.carSoc as number[]), 80, 0.05);
   // What it can reach is bounded the same way: 80 % is 378 km.
   assertAlmostEquals(Math.max(...past.series.comfort!.carReachableKm), 378, 0.1);

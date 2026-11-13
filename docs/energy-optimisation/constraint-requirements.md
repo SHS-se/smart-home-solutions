@@ -1,5 +1,13 @@
 # Requirements for planner and controller constraints
 
+User requirement, 13 November 2026: once EV readiness calls for the configured
+charge limit, the planner can finish a charge that needs less than one quarter
+at the minimum supported current. Schedule the finishing charge when it fits,
+even when a switching preference would otherwise leave that last fraction
+unfinished. Account for the energy delivered up to the car's own stop, and
+reserve the full commanded current while it charges. This supersedes EV-4's
+assumption that a command must consume a full quarter of energy.
+
 User requirement, 11 November 2026: EV readiness uses the car's configured
 charge limit. Its soft target rises by one percentage point per elapsed hour
 from 60 percentage points below that limit, bounded at zero and the limit.

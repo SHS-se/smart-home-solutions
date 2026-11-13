@@ -48,7 +48,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 32;
+export const REFEREE_VERSION = 33;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -249,8 +249,9 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     out.compressorW[i] = projected.compressor_w;
     out.pumpW[i] = projected.auxiliary_w;
     out.poolStart.push(projected.start);
-    let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
-    evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
+    const evRequestW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
+    const evRoomW = Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000);
+    const evW = clip(i, 'ev_full', evRequestW, evRoomW, evRoomW === 0);
     // Binary allowance with completion of an active heating run.
     let fixedW = baseW[i];
     if (needW && out.water) {
@@ -297,10 +298,12 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     poolC = projected.water_c;
     poolPendingHeatKwh = projected.pending_heat_kwh;
     poolSourceDepletionKwh = projected.source_depletion_kwh ?? 0;
-    evKwh += evW * h.car.battery.charge_efficiency * HOURS / 1_000;
+    evKwh = evW > 0 && evW === evRoomW ? carLimitKwh : evKwh + evW * h.car.battery.charge_efficiency * HOURS / 1_000;
 
     const netW = grossW + chargeW - dischargeW + battery.battery_idle_w - solarW[i];
-    if (!measured && netW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(netW - h.site.import_limit_w) });
+    // A car finishing mid-quarter still needs its full current while active.
+    const peakNetW = netW + (evW > 0 ? evRequestW - evW : 0);
+    if (!measured && peakNetW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(peakNetW - h.site.import_limit_w) });
     if (!measured && -netW - h.site.export_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(-netW - h.site.export_limit_w) });
     const quarterCost = (netW > 0 ? netW * buy[i] : netW * sell[i]) * HOURS / 1_000;
     out.cost += quarterCost;

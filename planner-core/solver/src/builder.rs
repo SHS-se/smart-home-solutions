@@ -59,14 +59,12 @@ fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f
             / h
             / car.charge_efficiency;
         let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / car.charge_efficiency;
-        if s.ev_available && need > 0.0 {
+        if s.ev_available && need > 0.0 && room > 0.0 {
             // Offer the native current that shares this pool decision with the
             // house. Keep max as well: the battery may supply eligible loads.
             levels.push(charger.fitting_amps(room.min((p.limits.import_w - household_w).max(0.0))));
             let min = charger.min_current_a;
-            if charger.watts(min).unwrap() <= room {
-                levels.push(min);
-            }
+            levels.push(min);
             let target = charger.fitting_amps(need).max(min);
             let target = if charger.watts(target).unwrap() < need {
                 target
@@ -885,6 +883,65 @@ fn prefer_opening_current(
         && candidate.account.score_sek >= ordinary.account.score_sek - 1e-9)
         .then_some(candidate)
 }
+
+/// Once the readiness ramp calls for the full limit, finish an almost-complete
+/// charge at the first feasible opportunity. The car stops at the limit.
+fn finish_ev_charge(
+    scorer: &mut CandidateScorer,
+    candidate: &Candidate,
+    work: &mut Work,
+) -> Option<Candidate> {
+    let p = scorer.problem;
+    let (car, charger, policy) = (p.car.as_ref()?, p.charger.as_ref()?, p.car_policy.as_ref()?);
+    if !p
+        .rules
+        .iter()
+        .any(|r| r.key == RuleKey::CarFloor && r.points < 0.0)
+    {
+        return None;
+    }
+    let remaining = policy.limit_kwh - candidate.quarters.last()?.ev_kwh?;
+    let amps = charger.min_current_a;
+    let watts = charger.watts(amps)?;
+    if remaining <= 0.0 || remaining >= watts * 0.25 / 1000.0 * car.charge_efficiency {
+        return None;
+    }
+    let start = candidate
+        .commands
+        .iter()
+        .rposition(|c| c.ev_amps > 0)
+        .map_or(0, |i| i + 1);
+    let mut trials = 0;
+    let full_target_permille = (policy.limit_kwh / car.capacity_kwh * 1000.0).round();
+    for i in start..p.slots.len() {
+        let s = &p.slots[i];
+        if !s.ev_available
+            || commitments::hold(p, i).has(commitments::Owner::Ev)
+            || commitments::unavailable(p, i, commitments::Owner::Ev)
+            || s.ev_current_ceiling_a.is_some_and(|limit| amps > limit)
+            || !policy.breach_permille[i]
+                .is_some_and(|line| f64::from(line + 1) >= full_target_permille)
+            || remaining > watts * physics::projected_hours(s) / 1000.0 * car.charge_efficiency
+            || candidate.quarters[i].net_w + watts > p.limits.import_w + 1e-7
+        {
+            continue;
+        }
+        let mut commands = candidate.commands.clone();
+        commands[i].ev_amps = amps;
+        match scorer.score(commands, work, Some(candidate)) {
+            Ok(finished) => return Some(finished),
+            Err(EvaluationIssue::GrantUnavailable) => return None,
+            Err(EvaluationIssue::Infeasible) => {
+                trials += 1;
+                if trials == 4 {
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Complete block trials compete inside the native optimizer. Keep the ordinary
 /// incumbent independently so final permission refinement can reverse the rank.
 fn charging_blocks(
@@ -1172,6 +1229,23 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             leader = candidates.len();
             candidates.push((ChargingRole::Refinement, refined));
         }
+    }
+    let mut finished_any = false;
+    for (_, candidate) in &mut candidates {
+        if let Some(finished) = finish_ev_charge(&mut scorer, candidate, &mut work) {
+            *candidate = finished;
+            report = None;
+            finished_any = true;
+        }
+    }
+    if finished_any {
+        leader = (0..candidates.len()).fold(leader, |best, i| {
+            if candidates[i].1.better(&candidates[best].1) {
+                i
+            } else {
+                best
+            }
+        });
     }
     let (charging_role, best) = candidates.remove(leader);
     let charging_alternatives = candidates

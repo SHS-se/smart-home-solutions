@@ -165,34 +165,38 @@ fn transition(
     );
     let pool_demand = pool_demand(p, s, command.pool_on, state.pool, pool.as_ref());
     let pool_w = pool_demand.average_w;
-    let ev_w = if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-        let nominal = charger
-            .watts(command.ev_amps)
-            .ok_or("non_native_ev_command")?;
-        if !s.ev_available
-            && command.ev_amps != 0
-            && !commitments::hold(p, i).has(commitments::Owner::Ev)
-            && !external
-        {
-            return Err("ev_unavailable".into());
-        }
-        let room = (p.car_policy.as_ref().unwrap().limit_kwh - state.ev).max(0.0) * 1000.0
-            / hours
-            / car.charge_efficiency;
-        if nominal > room + 1e-7
-            && !commitments::hold(p, i).has(commitments::Owner::Ev)
-            && !external
-        {
-            return Err("ev_command_beyond_charge_limit".into());
-        }
-        if s.ev_available {
-            nominal.min(room)
+    let (ev_w, admission_ev_w) =
+        if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
+            let nominal = charger
+                .watts(command.ev_amps)
+                .ok_or("non_native_ev_command")?;
+            if !s.ev_available
+                && command.ev_amps != 0
+                && !commitments::hold(p, i).has(commitments::Owner::Ev)
+                && !external
+            {
+                return Err("ev_unavailable".into());
+            }
+            let room = (p.car_policy.as_ref().unwrap().limit_kwh - state.ev).max(0.0) * 1000.0
+                / hours
+                / car.charge_efficiency;
+            if nominal > 0.0
+                && room == 0.0
+                && !commitments::hold(p, i).has(commitments::Owner::Ev)
+                && !external
+            {
+                return Err("ev_command_beyond_charge_limit".into());
+            }
+            if s.ev_available {
+                // The car stops at its limit. Account for the energy delivered,
+                // while reserving the full current for the time it is charging.
+                (nominal.min(room), if room > 0.0 { nominal } else { 0.0 })
+            } else {
+                (0.0, 0.0)
+            }
         } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
+            (0.0, 0.0)
+        };
     let load = BatteryLoad {
         gross_w: s.base_w + pool_w + ev_w,
         solar_w: s.solar_w,
@@ -228,14 +232,6 @@ fn transition(
         return Err("shared_grid_limit".into());
     }
     let held_battery = commitments::hold(p, i).has(commitments::Owner::Battery);
-    let admission_ev_w = if s.ev_available && ev_w > 0.0 {
-        p.charger
-            .as_ref()
-            .and_then(|charger| charger.watts(command.ev_amps))
-            .unwrap_or(0.0)
-    } else {
-        0.0
-    };
     let fixed_charge = if command.battery == Operation::GridCharge && held_battery {
         if quantized_allocation(command.charge_limit_w, charge) {
             charge
@@ -328,7 +324,12 @@ fn transition(
         state.heater = h.next;
     }
     if let Some(car) = &p.car {
-        state.ev += ev_w * hours / 1000.0 * car.charge_efficiency;
+        let limit = p.car_policy.as_ref().unwrap().limit_kwh;
+        state.ev = if admission_ev_w > ev_w {
+            limit
+        } else {
+            (state.ev + ev_w * hours / 1000.0 * car.charge_efficiency).min(limit.max(state.ev))
+        };
     }
     state.battery = battery_flow.stored_end_kwh;
     Ok(Quarter {
@@ -907,6 +908,32 @@ pub(crate) fn project_external(p: &Problem, commands: &[Command]) -> Result<Vec<
 mod refinement_tests {
     use super::*;
     use shs_planner_models::{LossPoint, Response, StandingLoss, StartupPoint};
+
+    #[test]
+    fn ev_can_finish_mid_quarter_but_needs_full_current_while_charging() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.car_policy.as_mut().unwrap().limit_kwh = 48.0;
+        p.initial.ev_kwh = Some(47.9);
+        p.slots[0].base_w = 1000.0;
+        p.slots[0].solar_w = 0.0;
+        let command = Command {
+            pool_on: false,
+            ev_amps: 6,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        };
+        p.limits.import_w = 2380.0;
+        let q = step(&p, 0, &command, &mut initial(&p)).unwrap();
+        assert_eq!(q.ev_kwh, Some(48.0));
+        assert!((q.ev_w - 400.0).abs() < 1e-8);
+        assert!((q.net_w - 1400.0).abs() < 1e-8);
+        p.limits.import_w -= 1.0;
+        assert_eq!(
+            step(&p, 0, &command, &mut initial(&p)).unwrap_err(),
+            "shared_grid_limit"
+        );
+    }
 
     fn work() -> Work {
         Work {
