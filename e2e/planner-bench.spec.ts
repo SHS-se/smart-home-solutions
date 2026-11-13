@@ -524,6 +524,8 @@ test.describe('planner bench', () => {
         generation: { B14: 1900, B19: 600 + index, B12: 500 },
         measured: { SE2: 1200, SE4: -200, DK1: -100, NO1: null, FI: -80 },
         scheduled: { SE2: 1300, SE4: -300, DK1: -100, NO1: -50, FI: -90 },
+        forecast_d2: 700 + index, forecast_d3: 650 + index,
+        reconstructed_d2: false, reconstructed_d3: true,
       }));
       await route.fulfill({ json: day === '2026-10-25' ? quarters : [] });
     });
@@ -539,6 +541,9 @@ test.describe('planner bench', () => {
     await expect(view.getByTestId('se3-flow-chart')).toBeVisible();
     await view.locator('summary').click();
     await expect(view.locator('tbody tr').first().locator('td').nth(7)).toHaveText('—');
+    await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(5);
+    await expect(view.getByRole('columnheader', { name: /D−2 forecast|D−2-prognos/ })).toBeVisible();
+    await expect(view.getByRole('columnheader', { name: /D−3 \(reconstructed\)|D−3 \(återskapad\)/ })).toBeVisible();
     await view.locator('#se3-market-border').click();
     await page.getByRole('option', { name: 'SE2 ↔ SE3' }).click();
     await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(3);

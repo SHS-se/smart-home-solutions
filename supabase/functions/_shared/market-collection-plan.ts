@@ -11,12 +11,12 @@ export const NEIGHBOUR_ZONES = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 export type NeighbourZone = typeof NEIGHBOUR_ZONES[number];
 export type CollectionKind = 'day_ahead' | 'generation' | 'market_context' | 'weather_truth' | 'regional_context' | 'market_history';
 export type ArchiveDataset = typeof GENERATION_DATASETS[number] | 'load_actual' |
-  'spot_price' | 'svk_physical_imports' | 'svk_physical_exports' | 'jao_day_ahead_border_flows' | 'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges' | SmhiDataset | NucsArchiveDataset;
+  'spot_price' | 'svk_physical_imports' | 'svk_physical_exports' | 'jao_day_ahead_border_flows' | 'jao_day_ahead_net_position' | 'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges' | SmhiDataset | NucsArchiveDataset;
 export type MarketZone = 'SE3' | NeighbourZone | 'NORDIC_CCR';
 export interface MarketRequest { key: string; dataset: ArchiveDataset; zone: MarketZone; from: string; to: string; station_id?: string; neighbour?: NeighbourZone; direction?: 'import' | 'export' }
 export interface MarketBatch { id: string; kind: CollectionKind; requested_at: string; plan: MarketRequest[] }
 const DAY = 86_400_000;
-export function parseCollectionRequest(body: string): { kind: CollectionKind; day?: string } {
+export function parseCollectionRequest(body: string): { kind: CollectionKind; day?: string; netPositionOnly?: true } {
   const value: unknown = body.trim() ? JSON.parse(body) : {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid archive request');
   const keys = Object.keys(value);
@@ -25,11 +25,12 @@ export function parseCollectionRequest(body: string): { kind: CollectionKind; da
   if (keys.length === 1 && 'context' in value && value.context === true) return { kind: 'market_context' };
   if (keys.length === 1 && 'truth' in value && value.truth === true) return { kind: 'weather_truth' };
   if (keys.length === 1 && 'regional' in value && value.regional === true) return { kind: 'regional_context' };
-  if (keys.length === 1 && 'history' in value) {
-    if (value.history === true) return { kind: 'market_history' };
-    if (typeof value.history === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.history) &&
-      new Date(`${value.history}T00:00:00Z`).toISOString().slice(0, 10) === value.history) {
-      return { kind: 'market_history', day: value.history };
+  if (keys.length === 1 && ('history' in value || 'netPositionHistory' in value)) {
+    const day = 'history' in value ? value.history : value.netPositionHistory;
+    if ('history' in value && day === true) return { kind: 'market_history' };
+    if (typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+      new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day) {
+      return 'history' in value ? { kind: 'market_history', day } : { kind: 'market_history', day, netPositionOnly: true };
     }
   }
   throw new Error('Invalid archive request');
@@ -37,7 +38,7 @@ export function parseCollectionRequest(body: string): { kind: CollectionKind; da
 
 export function collectionKind(body: string): CollectionKind { return parseCollectionRequest(body).kind; }
 
-export function collectionPlan(kind: CollectionKind, now: Date, day?: string): MarketRequest[] {
+export function collectionPlan(kind: CollectionKind, now: Date, day?: string, netPositionOnly = false): MarketRequest[] {
   const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const minute = Math.floor(now.getTime() / 60_000) * 60_000;
   const requests: MarketRequest[] = [];
@@ -70,6 +71,8 @@ export function collectionPlan(kind: CollectionKind, now: Date, day?: string): M
     const shift = (offset: number) => new Date(Date.parse(currentDay) + offset * DAY).toISOString().slice(0, 10);
     for (const date of day ? [day] : [-2, -1, 0, 1].map(shift)) {
       const [from, to] = marketDaySpan(date);
+      add('jao_day_ahead_net_position', 'NORDIC_CCR', from, to);
+      if (netPositionOnly) continue;
       add('spot_price', 'SE3', from, to);
       add('jao_day_ahead_border_flows', 'NORDIC_CCR', from, to);
       if (date < currentDay) {
@@ -121,6 +124,7 @@ export function regionalCollectionPlan(from: string, to: string): MarketRequest[
 
 /** A regional request for a completed historical window does not refresh the forward-looking feed. */
 export function isCurrentCollection(batch: MarketBatch): boolean {
-  if (batch.kind === 'market_history') return !batch.plan.some(request => request.dataset === 'generation_actual');
+  if (batch.kind === 'market_history') return batch.plan.some(request => request.dataset === 'spot_price') &&
+    !batch.plan.some(request => request.dataset === 'generation_actual');
   return batch.kind !== 'regional_context' || batch.plan.some(request => Date.parse(request.to) > Date.parse(batch.requested_at));
 }

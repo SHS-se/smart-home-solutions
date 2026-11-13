@@ -145,9 +145,9 @@ export function createMarketArchiveHandler(
     } catch { return Response.json({ error: "archive_auth_failed" }, { status: 500 }); }
     let batch: MarketBatch;
     try {
-      const { kind, day } = parseCollectionRequest(await request.text());
+      const { kind, day, netPositionOnly } = parseCollectionRequest(await request.text());
       const now = clock();
-      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day) };
+      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day, netPositionOnly) };
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     try { await store.saveBatch(batch); }
     catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
@@ -168,7 +168,7 @@ export function createMarketArchiveHandler(
         ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : dataset === "svk_physical_imports" || dataset === "svk_physical_exports"
         ? { ...identity, dataset, result: await svkResult(dataset, from, to, fetchProvider), resolved_at: clock().toISOString() }
-        : dataset === "jao_max_net_positions" || dataset === "jao_max_exchanges" || dataset === "jao_day_ahead_border_flows"
+        : dataset === "jao_max_net_positions" || dataset === "jao_max_exchanges" || dataset === "jao_day_ahead_border_flows" || dataset === "jao_day_ahead_net_position"
         ? { ...identity, dataset, result: await jaoResult(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : { ...identity, dataset, result: await entsoeResult(dataset, from, to, config.entsoeToken, fetchProvider, zone), resolved_at: clock().toISOString() };
       await store.saveObservation(row, assessMarketObservation(row));

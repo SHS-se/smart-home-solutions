@@ -82,13 +82,14 @@ export function assessMarketObservation(row: AssessedObservation): MarketAssessm
     const records = doc.records as { start: string; end: string; values: Record<string, number | null> }[];
     const labels = [...new Set(records.flatMap(r => Object.keys(r.values)))].sort();
     const flow = doc.semantics === 'day_ahead_border_flow' || doc.semantics === 'measured_border_flow';
-    assessment.facts = { kind: flow ? 'border_flow' : 'network_bounds', semantics: doc.semantics, unit: doc.unit,
+    const netPosition = doc.semantics === 'day_ahead_net_position';
+    assessment.facts = { kind: netPosition ? 'net_position' : flow ? 'border_flow' : 'network_bounds', semantics: doc.semantics, unit: doc.unit,
       rejected: doc.rejected, messages: doc.messages,
       series: labels.map(label => ({ label, nulls: records.filter(r => r.values[label] === null || r.values[label] === undefined).length,
         ...intervalCoverage(records.flatMap(r => typeof r.values[label] === 'number'
           ? [{ startMs: Date.parse(r.start), endMs: Date.parse(r.end), value: r.values[label]! }] : []),
         Date.parse(row.requested_from), Date.parse(row.requested_to)) })),
-      missing_se3_labels: flow ? [] : (row.dataset === 'jao_max_net_positions' ? ['min_SE3', 'max_SE3'] :
+      missing_se3_labels: flow ? [] : (netPosition ? ['hub_SE3'] : row.dataset === 'jao_max_net_positions' ? ['min_SE3', 'max_SE3'] :
         ['border_SE2_SE3', 'border_SE3_SE2', 'border_SE4_SE3', 'border_SE3_SE4', 'border_NO1_SE3', 'border_SE3_NO1',
           'border_FI_SE3', 'border_SE3_FI', 'border_DK1_SE3', 'border_SE3_DK1']).filter(label => !labels.includes(label)) };
   } else {

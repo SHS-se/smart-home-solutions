@@ -16,8 +16,18 @@ const BORDERS = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 type Border = typeof BORDERS[number];
 type Flow = 'net' | 'gross' | Border;
 type Values = Record<string, number | null> | null;
-interface MarketQuarter { start: string; spot: number | null; generation: Values; measured: Values; scheduled: Values }
-interface Series { key: string; label: string; colour: string; dash?: string }
+interface MarketQuarter {
+  start: string;
+  spot: number | null;
+  generation: Values;
+  measured: Values;
+  scheduled: Values;
+  forecast_d2: number | null;
+  forecast_d3: number | null;
+  reconstructed_d2: boolean | null;
+  reconstructed_d3: boolean | null;
+}
+interface Series { key: string; label: string; colour: string; dash?: string; width?: number }
 const GENERATION = [
   { key: 'nuclear', types: ['B14'], sv: 'Kärnkraft', en: 'Nuclear', colour: '#8b75dc' },
   { key: 'hydro', types: ['B10', 'B11', 'B12'], sv: 'Vattenkraft', en: 'Hydro', colour: '#3d8bcb' },
@@ -53,7 +63,7 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
   const [chosen, setDay] = useState('');
   const [mode, setMode] = useState<Flow>('net');
   const day = chosen || changeDay(today, -1);
-  const latest = changeDay(today, 1);
+  const latest = changeDay(today, 3);
   const query = useQuery({
     queryKey: ['test-se3-market-day', day], retry: false, staleTime: 60_000,
     queryFn: async () => {
@@ -68,7 +78,8 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
       .filter(([type]) => group.key === 'other' ? !generationTypes.has(type) : group.types.includes(type)).map(([, value]) => value))]));
     const [actual, actualExport] = flowValues(quarter.measured, mode);
     const [dayAhead, dayAheadExport] = flowValues(quarter.scheduled, mode);
-    return { at: Date.parse(quarter.start), spot: quarter.spot, ...production, actual, actualExport, dayAhead, dayAheadExport };
+    return { at: Date.parse(quarter.start), spot: quarter.spot, ...production, actual, actualExport, dayAhead, dayAheadExport,
+      forecastD2: quarter.forecast_d2, forecastD3: quarter.forecast_d3 };
   }), [query.data, mode]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const times = new Intl.DateTimeFormat(locale, { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -76,6 +87,10 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
   const price: Series = { key: 'spot', label: t('Spotpris', 'Spot price'), colour: foreground, dash: '3 3' };
   const generation: Series[] = GENERATION.map(item => ({ ...item, label: t(item.sv, item.en) }));
+  const forecastLabel = (lead: 2 | 3, reconstructed: boolean | null | undefined) => {
+    if (reconstructed) return t(`D−${lead} (återskapad)`, `D−${lead} (reconstructed)`);
+    return t(`D−${lead}-prognos`, `D−${lead} forecast`);
+  };
   const flows: Series[] = mode === 'gross' ? [
     { key: 'actual', label: t('Uppmätt import', 'Measured imports'), colour: '#3d8bcb' },
     { key: 'actualExport', label: t('Uppmätt export', 'Measured exports'), colour: '#c5656a' },
@@ -84,6 +99,10 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
   ] : [
     { key: 'actual', label: t('Uppmätt flöde', 'Measured flow'), colour: '#3d8bcb' },
     { key: 'dayAhead', label: t('Flöde från dagen före-auktionen', 'Day-ahead flow'), colour: '#9c75d8', dash: '8 4' },
+    ...(mode === 'net' ? [
+      { key: 'forecastD2', label: forecastLabel(2, query.data?.[0]?.reconstructed_d2), colour: '#ba6b19', dash: '10 3', width: 3 },
+      { key: 'forecastD3', label: forecastLabel(3, query.data?.[0]?.reconstructed_d3), colour: '#087c6c', dash: '2 5' },
+    ] : []),
   ];
 
   const renderChart = (title: string, series: Series[], stacked: boolean) => {
@@ -102,10 +121,14 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
         </div>}
       </div>
       {!stacked && <p className="text-xs text-muted-foreground">{t('Plus är import till SE3. Minus är export. Summerade flöden kräver värden för alla fem gränser.', 'Positive is into SE3. Negative is out. Totals require readings from all five borders.')}</p>}
+      {!stacked && mode === 'net' && <p className="text-xs text-muted-foreground">{t(
+        'Prognoserna två och tre dagar före leverans använder genomsnittet för samma kvart under de föregående fyra veckorna. Linjerna kan överlappa.',
+        'The two- and three-day-ahead forecasts average the same quarter over the previous four weeks. The lines can overlap.',
+      )}</p>}
       {!data && <p role="status" className="text-sm text-muted-foreground">{stacked ? t('Ingen produktion har arkiverats för dagen.', 'No generation is archived for this day.') : t('Inga flöden har arkiverats för detta urval.', 'No flows are available for this selection.')}</p>}
       {(data || rows.some(row => row.spot !== null)) && <>
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t('Teckenförklaring', 'Legend')}>
-          {[...series, price].map(item => <li key={item.key} className="flex items-center gap-1.5"><svg width="22" height="10" aria-hidden="true"><line x1="0" x2="22" y1="5" y2="5" stroke={item.colour} strokeDasharray={item.dash} strokeWidth="3" /></svg>{item.label}</li>)}
+          {[...series, price].map(item => <li key={item.key} className="flex items-center gap-1.5"><svg width="22" height="10" aria-hidden="true"><line x1="0" x2="22" y1="5" y2="5" stroke={item.colour} strokeDasharray={item.dash} strokeWidth={item.width ?? 2} /></svg>{item.label}</li>)}
         </ul>
         <div className="h-64 min-w-0 overflow-hidden" data-testid={stacked ? 'se3-generation-chart' : 'se3-flow-chart'}>
           <ResponsiveContainer width="100%" height="100%">
@@ -118,7 +141,7 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
               {!stacked && <ReferenceLine yAxisId="mw" y={0} stroke={muted} />}
               {series.map(item => stacked
                 ? <Bar key={item.key} yAxisId="mw" dataKey={item.key} stackId="generation" name={item.label} fill={item.colour} isAnimationActive={false} />
-                : <Line key={item.key} yAxisId="mw" dataKey={item.key} name={item.label} stroke={item.colour} strokeDasharray={item.dash} type="stepAfter" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />)}
+                : <Line key={item.key} yAxisId="mw" dataKey={item.key} name={item.label} stroke={item.colour} strokeDasharray={item.dash} type="stepAfter" strokeWidth={item.width ?? 2} dot={false} connectNulls={false} isAnimationActive={false} />)}
               <Line yAxisId="price" dataKey={price.key} name={price.label} stroke={price.colour} strokeDasharray={price.dash} type="stepAfter" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
