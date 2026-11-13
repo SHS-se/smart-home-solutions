@@ -68,7 +68,7 @@ export function neighbourEntsoeParameters(query: {
 export interface EntsoeInterval {
   startMs: number; endMs: number; value: number; unit: string; psrType: string | null;
   /** Native provider resolution and series labels; daily min/max is not a mean. */
-  resolution: string; businessType: string | null; seriesId: string | null;
+  resolution: string; businessType: string | null; seriesId: string | null; currency?: string;
   flow: "production" | "consumption" | null;
 }
 export type EntsoeResponse =
@@ -139,6 +139,7 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
     const curve = text(s.curveType);
     if (curve !== "A01" && curve !== "A03") throw new Error(`Unsupported ENTSO-E curve ${curve}`);
     const unit = text(s["quantity_Measure_Unit.name"] ?? s["price_Measure_Unit.name"]);
+    const currency = optionalText(s["currency_Unit.name"]);
     const psr = s.MktPSRType === undefined ? null : text(element(s.MktPSRType).psrType);
     const businessType = optionalText(s.businessType), seriesId = optionalText(s.mRID);
     const inZone = optionalText(s["inBiddingZone_Domain.mRID"]);
@@ -172,7 +173,7 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
         const startMs = boundary(point.position);
         // A01 missing positions are gaps. A03 omits unchanged block positions.
         const endMs = curve === "A03" ? next ? boundary(next.position) : end : Math.min(boundary(point.position + 1), end);
-        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr, resolution, businessType, seriesId, flow });
+        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr, resolution, businessType, seriesId, flow, ...(currency === null ? {} : { currency }) });
       }
     }
   }

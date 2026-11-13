@@ -511,6 +511,46 @@ test.describe('planner bench', () => {
     await view.screenshot({ path: test.info().outputPath('weather-price-mobile.png') });
   });
 
+  test('TEST SE3 market history shares a delivery date across charts and shows each border', async ({ context, page }) => {
+    await mockBackend(context);
+    await context.route('**/rest/v1/rpc/get_test_weather_price_comparison', route => route.fulfill({ json: mixComparison() }));
+    const requested: string[] = [];
+    await context.route('**/rest/v1/rpc/get_test_se3_market_day', async route => {
+      const day = route.request().postDataJSON().p_day as string;
+      requested.push(day);
+      const start = Date.parse('2026-10-24T22:00Z');
+      const quarters = Array.from({ length: 100 }, (_, index) => ({
+        start: new Date(start + index * 900_000).toISOString(), spot: 30 + index / 2,
+        generation: { B14: 1900, B19: 600 + index, B12: 500 },
+        measured: { SE2: 1200, SE4: -200, DK1: -100, NO1: null, FI: -80 },
+        scheduled: { SE2: 1300, SE4: -300, DK1: -100, NO1: -50, FI: -90 },
+      }));
+      await route.fulfill({ json: day === '2026-10-25' ? quarters : [] });
+    });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    if (!await expectGenerationMixAvailability(page)) { expect(requested).toEqual([]); return; }
+    await page.locator('#bench-tab-generation-mix').click();
+    const view = page.getByTestId('se3-market-history');
+    const date = view.locator('#se3-market-day');
+    await expect(date).toHaveAttribute('min', '2026-10-22');
+    await date.fill('2026-10-25');
+    await expect(view.getByTestId('se3-generation-chart').locator('.recharts-bar-rectangle').first()).toBeVisible();
+    await expect(view.getByTestId('se3-flow-chart')).toBeVisible();
+    await view.locator('summary').click();
+    await expect(view.locator('tbody tr').first().locator('td').nth(7)).toHaveText('—');
+    await view.locator('#se3-market-border').click();
+    await page.getByRole('option', { name: 'SE2 ↔ SE3' }).click();
+    await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(3);
+    await expect(view.locator('tbody tr')).toHaveCount(100);
+    await expect(view.locator('tbody tr').first()).toContainText(/1[,.\s]200/);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect.poll(() => view.getByTestId('se3-flow-chart').evaluate(element => element.getBoundingClientRect().right <= innerWidth)).toBe(true);
+    await expect.poll(() => view.locator('[tabindex="0"]').last().evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+    await view.getByRole('button', { name: /Previous|Föregående/ }).click();
+    await expect.poll(() => requested.at(-1)).toBe('2026-10-24');
+  });
+
   test('TEST generation mix handles a study without pairs and a pair with missing inputs without showing zero error', async ({ context, page }) => {
     await mockBackend(context);
     let empty = true, studyRequests = 0;

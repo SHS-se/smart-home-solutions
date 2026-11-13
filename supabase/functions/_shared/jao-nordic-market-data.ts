@@ -1,16 +1,22 @@
 /** Native Nordic network bounds. Directional extrema are never summed into import capacity. */
-export type JaoDataset = 'jao_max_net_positions' | 'jao_max_exchanges';
+export type JaoDataset = 'jao_max_net_positions' | 'jao_max_exchanges' | 'jao_day_ahead_border_flows';
 export interface JaoDocument {
   provider: 'jao'; unit: 'MW'; resolution: 'PT15M';
-  semantics: 'net_position_bounds' | 'individual_directional_extrema_not_simultaneous';
+  semantics: 'net_position_bounds' | 'individual_directional_extrema_not_simultaneous' | 'day_ahead_border_flow';
   records: { start: string; end: string; provider_modified_at: string | null; values: Record<string, number | null> }[];
   rejected: boolean; messages: unknown;
 }
+const PRODUCTS = {
+  jao_max_net_positions: ['maxNetPos', 'net_position_bounds'],
+  jao_max_exchanges: ['maxExchanges', 'individual_directional_extrema_not_simultaneous'],
+  jao_day_ahead_border_flows: ['borderFlowSDAC', 'day_ahead_border_flow'],
+} as const;
+const SE3_BORDER = /^border_(SE3_(SE2|SE4|NO1|SE3FS|SE3KS|SE3SWL)|(SE2|SE4|NO1|SE3FS|SE3KS|SE3SWL)_SE3)$/;
 const STEP = 900_000;
 export function jaoRequest(dataset: JaoDataset, from: string, to: string): URL {
   const a = Date.parse(from), b = Date.parse(to);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a || b - a > 48 * 3_600_000) throw new Error('JAO requires a positive window of at most 48 hours');
-  const url = new URL(`https://publicationtool.jao.eu/nordic/api/data/${dataset === 'jao_max_net_positions' ? 'maxNetPos' : 'maxExchanges'}`);
+  const url = new URL(`https://publicationtool.jao.eu/nordic/api/data/${PRODUCTS[dataset][0]}`);
   url.search = new URLSearchParams({ FromUtc: from, ToUtc: to, Skip: '0', Take: '1000', Filter: '{}' }).toString();
   return url;
 }
@@ -28,15 +34,17 @@ export function parseJaoResponse(dataset: JaoDataset, value: unknown): JaoDocume
     const values: Record<string, number | null> = {};
     for (const [key, cell] of Object.entries(row)) {
       if (!(dataset === 'jao_max_net_positions' ? /^(min|max)_/.test(key) : key.startsWith('border_'))) continue;
+      if (dataset === 'jao_day_ahead_border_flows' && !SE3_BORDER.test(key)) continue;
       if (cell !== null && (typeof cell !== 'number' || !Number.isFinite(cell))) throw new Error('Invalid JAO MW value');
       values[key] = cell as number | null;
     }
     if (!Object.keys(values).length) throw new Error('JAO record has no native bounds');
-    if (!(row.lastModifiedOn === null || typeof row.lastModifiedOn === 'string')) throw new Error('Invalid JAO modification metadata');
+    if (!(row.lastModifiedOn === null || typeof row.lastModifiedOn === 'string' ||
+      (dataset === 'jao_day_ahead_border_flows' && row.lastModifiedOn === undefined))) throw new Error('Invalid JAO modification metadata');
     return { start: new Date(at).toISOString(), end: new Date(at + STEP).toISOString(),
-      provider_modified_at: row.lastModifiedOn as string | null, values };
+      provider_modified_at: (row.lastModifiedOn ?? null) as string | null, values };
   });
   return { provider: 'jao', unit: 'MW', resolution: 'PT15M',
-    semantics: dataset === 'jao_max_net_positions' ? 'net_position_bounds' : 'individual_directional_extrema_not_simultaneous',
+    semantics: PRODUCTS[dataset][1],
     records, rejected: body.rejected, messages: body.messages };
 }

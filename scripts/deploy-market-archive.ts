@@ -17,6 +17,7 @@ const MIGRATIONS = [
   { version: '20261101180000', name: 'retrospective_regional_backfill' },
   { version: '20261101181000', name: 'native_history_request_windows' },
   { version: '20261110100000', name: 'test_weather_price_experiment' },
+  { version: '20261113134000', name: 'se3_market_history' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
@@ -64,8 +65,8 @@ try {
   if (homes.length !== 1 || typeof homes[0].home_id !== 'string' || !/^[0-9a-f-]{36}$/.test(homes[0].home_id)) {
     throw new Error('TEST ledger requires one explicitly scoped home.');
   }
-  await query(`SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.enable_test_market_context(); SELECT private.enable_test_market_quality(); SELECT private.enable_test_regional_context(); SELECT private.enable_test_price_ledger('${homes[0].home_id}'::uuid); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT private.request_test_market_context(); SELECT private.request_test_weather_truth(); SELECT private.request_test_regional_context(); SELECT private.enable_test_weather_price(); SELECT private.replay_test_weather_price('2026-10-31T00:50:00Z','2026-11-08T18:50:00Z'); SELECT private.request_test_weather_price(); SELECT true AS enabled;`);
-  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-market-context','test-energy-weather-truth','test-energy-market-health','test-energy-regional-context','test-energy-weather-accuracy','test-energy-demand-accuracy','test-energy-price-experiment','test-energy-price-correction','test-energy-price-weather');");
+  await query(`SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.enable_test_market_context(); SELECT private.enable_test_market_quality(); SELECT private.enable_test_regional_context(); SELECT private.enable_test_market_history(); SELECT private.enable_test_price_ledger('${homes[0].home_id}'::uuid); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT private.request_test_market_context(); SELECT private.request_test_weather_truth(); SELECT private.request_test_regional_context(); SELECT private.request_test_market_history(); SELECT private.enable_test_weather_price(); SELECT private.replay_test_weather_price('2026-10-31T00:50:00Z','2026-11-08T18:50:00Z'); SELECT private.request_test_weather_price(); SELECT true AS enabled;`);
+  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-market-context','test-energy-market-history','test-energy-weather-truth','test-energy-market-health','test-energy-regional-context','test-energy-weather-accuracy','test-energy-demand-accuracy','test-energy-price-experiment','test-energy-price-correction','test-energy-price-weather');");
   console.log(JSON.stringify({ project: TEST, archive: 'enabled', first_collection: 'requested', schedule }));
 } finally {
   await Deno.remove(temporary, { recursive: true });

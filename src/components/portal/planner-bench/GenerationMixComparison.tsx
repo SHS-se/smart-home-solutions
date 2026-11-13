@@ -1,3 +1,4 @@
+import Se3MarketHistory from './Se3MarketHistory';
 import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
@@ -245,6 +246,7 @@ const GenerationMixComparison: React.FC = () => {
         </Card>}
       </>}
     </>}
+    <Se3MarketHistory forecastDay={days[0]?.day} />
   </section>;
 };
 export default GenerationMixComparison;

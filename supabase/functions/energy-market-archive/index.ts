@@ -1,6 +1,7 @@
+import { svkFlowRequest, parseSvkFlowResponse, type SvkFlowDataset } from "../_shared/svk-physical-flows.ts";
 import { readMarketProvider } from "../_shared/market-provider-response.ts";
 import { entsoeParameters, parseEntsoeResponse, neighbourEntsoeParameters, EntsoeProviderError, type EntsoeResponse } from "../_shared/entsoe-market-data.ts";
-import { GENERATION_DATASETS, collectionKind, collectionPlan, type MarketBatch, type MarketZone, type NeighbourZone, type ArchiveDataset } from "../_shared/market-collection-plan.ts";
+import { GENERATION_DATASETS, parseCollectionRequest, collectionPlan, type MarketBatch, type MarketZone, type NeighbourZone, type ArchiveDataset } from "../_shared/market-collection-plan.ts";
 import { jaoRequest, parseJaoResponse, type JaoDocument, type JaoDataset } from "../_shared/jao-nordic-market-data.ts";
 import { assessMarketObservation, type MarketAssessment } from "../_shared/market-evidence-assessment.ts";
 export type { ArchiveDataset } from "../_shared/market-collection-plan.ts";
@@ -13,7 +14,7 @@ import { acquireSwedishHydrology, type HydroAcquisition } from "../_shared/reser
 import { captureCapacityEvidence, type CapacityDataset, type CapacityDocuments, type CapacityEvidence } from "../_shared/entsoe-capacity-evidence.ts";
 
 const TEST = "https://vxqpgbzseckgceopitpm.supabase.co";
-type EntsoeArchiveDataset = "wind_day_ahead" | "load_day_ahead" | "load_week_ahead" | "generation_actual" | "load_actual" | "neighbour_load_day_ahead" | "neighbour_wind_day_ahead";
+type EntsoeArchiveDataset = "spot_price" | "wind_day_ahead" | "load_day_ahead" | "load_week_ahead" | "generation_actual" | "load_actual" | "neighbour_load_day_ahead" | "neighbour_wind_day_ahead";
 type DataDocument = Extract<EntsoeResponse, { status: "data" }>;
 interface ResultEvidence {
   http_status: number | null;
@@ -33,9 +34,11 @@ type WeatherArchiveResult = Omit<ResultEvidence, "raw_xml"> & {
   | { status: "provider_error" | "transport_error" | "parse_error" });
 type JaoArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | null } &
   ({ status: "data"; document: JaoDocument } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
+type SvkArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | null } &
+  ({ status: "data"; document: ReturnType<typeof parseSvkFlowResponse> } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
 type SmhiArchiveResult = Omit<ResultEvidence, 'raw_xml'> & { raw_body: string | null; request: { station_id: string; dataset: SmhiDataset } } &
   ({ status: 'data'; document: SmhiDocument } | { status: 'provider_error' | 'transport_error' | 'parse_error' });
-export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | EntsoeArchiveResult | WeatherArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
+export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | SvkArchiveResult | EntsoeArchiveResult | WeatherArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
 interface ObservationIdentity {
   id: string;
   batch_id: string;
@@ -54,6 +57,7 @@ export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: NucsArchiveDataset; result: Awaited<ReturnType<typeof captureNucsEvidence>> }
   | { dataset: SmhiDataset; result: SmhiArchiveResult }
   | { dataset: JaoDataset; result: JaoArchiveResult }
+  | { dataset: SvkFlowDataset; result: SvkArchiveResult }
   | CapacityObservation
 );
 export interface GenerationForecastRun {
@@ -85,7 +89,7 @@ async function entsoeResult(dataset: EntsoeArchiveDataset, from: string, to: str
   const url = new URL("https://web-api.tp.entsoe.eu/api");
   url.search = (dataset === "neighbour_load_day_ahead" || dataset === "neighbour_wind_day_ahead"
     ? neighbourEntsoeParameters({ dataset, zone: zone as NeighbourZone, from, to })
-    : entsoeParameters({ dataset, from, to })).toString();
+    : entsoeParameters({ dataset: dataset === "spot_price" ? "price" : dataset, from, to })).toString();
   url.searchParams.set("securityToken", token);
   const held = await providerResponse(url, token, fetchProvider);
   const evidence: ResultEvidence = { http_status: held.http_status, body_sha256: held.body_sha256,
@@ -94,6 +98,8 @@ async function entsoeResult(dataset: EntsoeArchiveDataset, from: string, to: str
   if (held.http_status! < 200 || held.http_status! >= 300) return { ...evidence, status: "provider_error", error_code: `http_${held.http_status}` };
   try {
     const document = parseEntsoeResponse(held.body);
+    if (dataset === "spot_price" && document.status === "data" &&
+      document.intervals.some(interval => interval.currency !== "EUR" || interval.unit !== "MWH")) throw new Error("Unexpected spot price unit");
     return document.status === "data" ? { ...evidence, status: "data", document }
       : { ...evidence, status: "no_data", error_code: "no_matching_data" };
   } catch (error) {
@@ -134,6 +140,17 @@ async function jaoResult(dataset: JaoDataset, from: string, to: string, token: s
   } catch { return { ...evidence, status: "parse_error", error_code: "unsupported_or_invalid_jao_document" }; }
 }
 
+async function svkResult(dataset: SvkFlowDataset, from: string, to: string, fetchProvider: typeof fetch): Promise<SvkArchiveResult> {
+  const held = await providerResponse(svkFlowRequest(dataset, from, to), "", fetchProvider);
+  const evidence = { http_status: held.http_status, body_sha256: held.body_sha256, raw_body: held.body, error_code: null };
+  if (held.body === null) return { ...evidence, status: "transport_error", error_code: "svk_transport_failed" };
+  if (held.http_status! < 200 || held.http_status! >= 300) return { ...evidence, status: "provider_error", error_code: `http_${held.http_status}` };
+  try {
+    const document = parseSvkFlowResponse(dataset, JSON.parse(held.body), from, to);
+    return { ...evidence, status: "data", document };
+  } catch { return { ...evidence, status: "parse_error", error_code: "unsupported_or_invalid_svk_document" }; }
+}
+
 async function smhiResult(dataset: SmhiDataset, station_id: string, from: string, to: string, token: string, fetchProvider: typeof fetch): Promise<SmhiArchiveResult> {
   const request = { dataset, station_id, from, to };
   const held = await providerResponse(smhiObservationRequest(request), token, fetchProvider);
@@ -161,10 +178,12 @@ export function createMarketArchiveHandler(
     try {
       if (!await store.verifyToken(token)) return Response.json({ error: "unauthorized" }, { status: 401 });
     } catch { return Response.json({ error: "archive_auth_failed" }, { status: 500 }); }
-    let kind: ReturnType<typeof collectionKind>;
-    try { kind = collectionKind(await request.text()); }
-    catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
-    const batch: MarketBatch = { id: crypto.randomUUID(), kind, requested_at: clock().toISOString(), plan: collectionPlan(kind, clock()) };
+    let batch: MarketBatch;
+    try {
+      const { kind, day } = parseCollectionRequest(await request.text());
+      const now = clock();
+      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day) };
+    } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     try { await store.saveBatch(batch); }
     catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
     const outcomes = await Promise.allSettled(batch.plan.map(async ({ dataset, zone, from, to, key, station_id, neighbour, direction }) => {
@@ -184,7 +203,9 @@ export function createMarketArchiveHandler(
         ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : dataset === "installed_generation_units"
         ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
-        : dataset === "jao_max_net_positions" || dataset === "jao_max_exchanges"
+        : dataset === "svk_physical_imports" || dataset === "svk_physical_exports"
+        ? { ...identity, dataset, result: await svkResult(dataset, from, to, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === "jao_max_net_positions" || dataset === "jao_max_exchanges" || dataset === "jao_day_ahead_border_flows"
         ? { ...identity, dataset, result: await jaoResult(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : { ...identity, dataset, result: await entsoeResult(dataset, from, to, config.entsoeToken, fetchProvider, zone), resolved_at: clock().toISOString() };
       await store.saveObservation(row, assessMarketObservation(row));
@@ -193,7 +214,7 @@ export function createMarketArchiveHandler(
     const rows = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
     const observations = rows.map(row => ({ id: row.id, dataset: row.dataset, status: row.result.status }));
     if (rows.length !== batch.plan.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
-    if (kind !== "generation") return Response.json({ batch_id: batch.id, observations });
+    if (batch.kind !== "generation") return Response.json({ batch_id: batch.id, observations });
     const actual = rows.find(row => row.dataset === "generation_actual");
     const weather = rows.find(row => row.dataset === "weather_medium_range");
     const published = rows.find(row => row.dataset === "wind_day_ahead");

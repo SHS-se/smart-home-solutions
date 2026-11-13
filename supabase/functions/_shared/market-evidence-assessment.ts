@@ -55,14 +55,15 @@ export function assessMarketObservation(row: AssessedObservation): MarketAssessm
       last: new Date(Math.max(...values.map(r => r.endMs))).toISOString(),
       ...intervalCoverage(values, Date.parse(row.requested_from), Date.parse(row.requested_to)) }));
     const issues: string[] = [];
-    if (rows.some(r => r.unit !== 'MAW')) issues.push('unexpected_native_unit');
+    const spot = row.dataset === 'spot_price';
+    if (rows.some(r => spot ? r.unit !== 'MWH' || r.currency !== 'EUR' : r.unit !== 'MAW')) issues.push('unexpected_native_unit');
     const expectedProcess = row.dataset.includes('actual') ? 'A16' : row.dataset === 'load_week_ahead' ? 'A31' : 'A01';
-    if (doc.processType !== expectedProcess) issues.push('unexpected_process_type');
+    if (!spot && doc.processType !== expectedProcess) issues.push('unexpected_process_type');
     if (row.dataset.includes('load') && row.dataset !== 'load_week_ahead' && rows.some(r => r.flow !== 'consumption' || r.psrType !== null)) issues.push('unexpected_load_series_semantics');
     if (row.dataset === 'load_week_ahead' && rows.some(r => !['A60', 'A61'].includes(r.businessType ?? '') || r.resolution !== 'P1D')) issues.push('unexpected_week_ahead_semantics');
     const area = row.zone === 'SE3' ? '10Y1001A1001A46L' : NEIGHBOUR_EIC[row.zone as keyof typeof NEIGHBOUR_EIC];
-    if (!Array.isArray(doc.biddingZones) || !doc.biddingZones.length) issues.push('provider_area_metadata_unavailable');
-    else if (doc.biddingZones.some(v => v !== area)) issues.push('unexpected_provider_area');
+    if (!spot && (!Array.isArray(doc.biddingZones) || !doc.biddingZones.length)) issues.push('provider_area_metadata_unavailable');
+    else if (Array.isArray(doc.biddingZones) && doc.biddingZones.some(v => v !== area)) issues.push('unexpected_provider_area');
     assessment.facts = { issues, provider_areas: doc.biddingZones ?? null, kind: row.dataset === 'load_week_ahead' ? 'daily_extrema' : 'native_intervals',
       unit: rows[0]?.unit ?? null, series, provider_created_at: doc.createdAt ?? null,
       provider_revision: doc.revisionNumber ?? null, provider_document_id: doc.documentId ?? null };
@@ -80,13 +81,14 @@ export function assessMarketObservation(row: AssessedObservation): MarketAssessm
   } else if (Array.isArray(doc.records)) {
     const records = doc.records as { start: string; end: string; values: Record<string, number | null> }[];
     const labels = [...new Set(records.flatMap(r => Object.keys(r.values)))].sort();
-    assessment.facts = { kind: 'network_bounds', semantics: doc.semantics, unit: doc.unit,
+    const flow = doc.semantics === 'day_ahead_border_flow' || doc.semantics === 'measured_border_flow';
+    assessment.facts = { kind: flow ? 'border_flow' : 'network_bounds', semantics: doc.semantics, unit: doc.unit,
       rejected: doc.rejected, messages: doc.messages,
       series: labels.map(label => ({ label, nulls: records.filter(r => r.values[label] === null || r.values[label] === undefined).length,
         ...intervalCoverage(records.flatMap(r => typeof r.values[label] === 'number'
           ? [{ startMs: Date.parse(r.start), endMs: Date.parse(r.end), value: r.values[label]! }] : []),
         Date.parse(row.requested_from), Date.parse(row.requested_to)) })),
-      missing_se3_labels: (row.dataset === 'jao_max_net_positions' ? ['min_SE3', 'max_SE3'] :
+      missing_se3_labels: flow ? [] : (row.dataset === 'jao_max_net_positions' ? ['min_SE3', 'max_SE3'] :
         ['border_SE2_SE3', 'border_SE3_SE2', 'border_SE4_SE3', 'border_SE3_SE4', 'border_NO1_SE3', 'border_SE3_NO1',
           'border_FI_SE3', 'border_SE3_FI', 'border_DK1_SE3', 'border_SE3_DK1']).filter(label => !labels.includes(label)) };
   } else {
