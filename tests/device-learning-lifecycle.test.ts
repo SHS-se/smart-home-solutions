@@ -40,6 +40,7 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261108120200_learn_variable_power_devices.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261109110000_learn_monitored_room_heat.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261112150000_learn_weather_heating_draw.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261113161000_learn_from_hourly_heating_history.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -292,5 +293,32 @@ Deno.test("passive room evidence is isolated by home and requires an active Moni
     assertEquals((await read()).rows, []);
     await db.exec("UPDATE energy_optimisation_devices SET planning_role_override='base_load', retired_at=now()");
     assertEquals((await read()).rows, []);
+  } finally { await db.close(); }
+});
+
+Deno.test("weather learner reads a full imported hour once and gives matching confirmed quarters precedence", async () => {
+  const db = await database();
+  const meter = "22222222-2222-4222-8222-222222222222";
+  const key = "synthetic-weather-heater";
+  const evidence = async (binding: string) => (await db.query<{ days: unknown }>(
+    "SELECT get_energy_weather_heating_days($1,$1,$2,$3,'2026-01-01T00:00:00Z','2026-01-01T03:30:00Z') days",
+    [home, key, binding])).rows[0].days;
+  try {
+    await db.query("INSERT INTO energy_optimisation_devices VALUES($1,$2,$2,$3,'controllable',NULL)", [meter, home, key]);
+    await db.query(`INSERT INTO private.energy_weather_heating_hourly_imports VALUES
+      ($1,$2,$2,'2026-01-01T00:00:00Z','original',-7,1200),
+      ($1,$2,$2,'2026-01-01T01:00:00Z','original',-4,900),
+      ($1,$2,$2,'2026-01-01T02:00:00Z','replacement',-2,800),
+      ($1,$2,$2,'2026-01-01T03:00:00Z','original',-1,700)`, [meter, home]);
+    await db.query(`INSERT INTO energy_optimisation_device_slots VALUES
+      ($1,$2,$2,'2026-01-01T01:15:00Z',.25,'{"weather_heating_binding":"original"}')`, [meter, home]);
+    await db.query("INSERT INTO energy_optimisation_outdoor_slots VALUES($1,$1,'2026-01-01T01:15:00Z',-4.5)", [home]);
+    assertEquals(await evidence("original"), [
+      { day: "2026-01-01", hours: 1, outdoor_c: -7, watts: 1200 },
+      { day: "2026-01-01", hours: .25, outdoor_c: -4.5, watts: 1000 },
+    ]);
+    assertEquals(await evidence("replacement"), [{ day: "2026-01-01", hours: 1, outdoor_c: -2, watts: 800 }]);
+    await db.query("UPDATE energy_optimisation_devices SET retired_at=now() WHERE id=$1", [meter]);
+    assertEquals(await evidence("original"), []);
   } finally { await db.close(); }
 });
