@@ -145,9 +145,9 @@ export function createMarketArchiveHandler(
     } catch { return Response.json({ error: "archive_auth_failed" }, { status: 500 }); }
     let batch: MarketBatch;
     try {
-      const { kind, day, netPositionOnly } = parseCollectionRequest(await request.text());
+      const { kind, day, flowHistoryDataset } = parseCollectionRequest(await request.text());
       const now = clock();
-      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day, netPositionOnly) };
+      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day, flowHistoryDataset) };
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     try { await store.saveBatch(batch); }
     catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }

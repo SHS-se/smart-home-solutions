@@ -526,6 +526,9 @@ test.describe('planner bench', () => {
         scheduled: { SE2: 1300, SE4: -300, DK1: -100, NO1: -50, FI: -90 },
         forecast_d2: 700 + index, forecast_d3: 650 + index,
         reconstructed_d2: false, reconstructed_d3: true,
+        gross_forecast_d2: { imports_mw: 1600 + index, exports_mw: -610 - index },
+        gross_forecast_d3: { imports_mw: 1550 + index, exports_mw: -590 - index },
+        gross_reconstructed_d2: false, gross_reconstructed_d3: true,
       }));
       await route.fulfill({ json: day === '2026-10-25' ? quarters : [] });
     });
@@ -544,6 +547,12 @@ test.describe('planner bench', () => {
     await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(5);
     await expect(view.getByRole('columnheader', { name: /D−2 forecast|D−2-prognos/ })).toBeVisible();
     await expect(view.getByRole('columnheader', { name: /D−3 \(reconstructed\)|D−3 \(återskapad\)/ })).toBeVisible();
+    await view.locator('#se3-market-border').click();
+    await page.getByRole('option', { name: /Gross imports and exports|Import och export/ }).click();
+    await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(9);
+    await expect(view.getByRole('columnheader', { name: /D−2 import forecast|Import D−2/ })).toBeVisible();
+    await expect(view.getByRole('columnheader', { name: /D−3 export forecast \(reconstructed\)|Export D−3 \(återskapad\)/ })).toBeVisible();
+    await expect(view.locator('tbody tr').first()).toContainText(/[-−]590/);
     await view.locator('#se3-market-border').click();
     await page.getByRole('option', { name: 'SE2 ↔ SE3' }).click();
     await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(3);

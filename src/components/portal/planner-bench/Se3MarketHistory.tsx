@@ -16,6 +16,7 @@ const BORDERS = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 type Border = typeof BORDERS[number];
 type Flow = 'net' | 'gross' | Border;
 type Values = Record<string, number | null> | null;
+type GrossFlows = { imports_mw: number; exports_mw: number } | null;
 interface MarketQuarter {
   start: string;
   spot: number | null;
@@ -26,6 +27,10 @@ interface MarketQuarter {
   forecast_d3: number | null;
   reconstructed_d2: boolean | null;
   reconstructed_d3: boolean | null;
+  gross_forecast_d2: GrossFlows;
+  gross_forecast_d3: GrossFlows;
+  gross_reconstructed_d2: boolean | null;
+  gross_reconstructed_d3: boolean | null;
 }
 interface Series { key: string; label: string; colour: string; dash?: string; width?: number }
 const GENERATION = [
@@ -56,6 +61,8 @@ const axis = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' };
 const foreground = 'hsl(var(--foreground))';
 const muted = 'hsl(var(--muted-foreground))';
 const grid = 'hsl(var(--border))';
+const importColour = '#3d8bcb';
+const exportColour = '#c5656a';
 
 export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string }) {
   const { t, language } = useLanguage();
@@ -79,7 +86,9 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
     const [actual, actualExport] = flowValues(quarter.measured, mode);
     const [dayAhead, dayAheadExport] = flowValues(quarter.scheduled, mode);
     return { at: Date.parse(quarter.start), spot: quarter.spot, ...production, actual, actualExport, dayAhead, dayAheadExport,
-      forecastD2: quarter.forecast_d2, forecastD3: quarter.forecast_d3 };
+      forecastD2: quarter.forecast_d2, forecastD3: quarter.forecast_d3,
+      grossImportD2: quarter.gross_forecast_d2?.imports_mw ?? null, grossExportD2: quarter.gross_forecast_d2?.exports_mw ?? null,
+      grossImportD3: quarter.gross_forecast_d3?.imports_mw ?? null, grossExportD3: quarter.gross_forecast_d3?.exports_mw ?? null };
   }), [query.data, mode]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const times = new Intl.DateTimeFormat(locale, { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -91,13 +100,23 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
     if (reconstructed) return t(`D−${lead} (återskapad)`, `D−${lead} (reconstructed)`);
     return t(`D−${lead}-prognos`, `D−${lead} forecast`);
   };
+  const grossForecastSeries = ([2, 3] as const).flatMap(lead => {
+    const reconstructed = query.data?.[0]?.[`gross_reconstructed_d${lead}`];
+    const suffix = reconstructed ? t(' (återskapad)', ' (reconstructed)') : '';
+    const style = lead === 2 ? { dash: '12 4', width: 3 } : { dash: '2 5', width: 2 };
+    return [
+      { key: `grossImportD${lead}`, label: t(`Import D−${lead}`, `D−${lead} import forecast`) + suffix, colour: '#1671ad', ...style },
+      { key: `grossExportD${lead}`, label: t(`Export D−${lead}`, `D−${lead} export forecast`) + suffix, colour: '#ae475a', ...style },
+    ];
+  });
   const flows: Series[] = mode === 'gross' ? [
-    { key: 'actual', label: t('Uppmätt import', 'Measured imports'), colour: '#3d8bcb' },
-    { key: 'actualExport', label: t('Uppmätt export', 'Measured exports'), colour: '#c5656a' },
-    { key: 'dayAhead', label: t('Planerad import', 'Day-ahead imports'), colour: '#3d8bcb', dash: '8 4' },
-    { key: 'dayAheadExport', label: t('Planerad export', 'Day-ahead exports'), colour: '#c5656a', dash: '8 4' },
+    { key: 'actual', label: t('Uppmätt import', 'Measured imports'), colour: importColour },
+    { key: 'actualExport', label: t('Uppmätt export', 'Measured exports'), colour: exportColour },
+    { key: 'dayAhead', label: t('Planerad import', 'Day-ahead imports'), colour: importColour, dash: '6 3' },
+    { key: 'dayAheadExport', label: t('Planerad export', 'Day-ahead exports'), colour: exportColour, dash: '6 3' },
+    ...grossForecastSeries,
   ] : [
-    { key: 'actual', label: t('Uppmätt flöde', 'Measured flow'), colour: '#3d8bcb' },
+    { key: 'actual', label: t('Uppmätt flöde', 'Measured flow'), colour: importColour },
     { key: 'dayAhead', label: t('Flöde från dagen före-auktionen', 'Day-ahead flow'), colour: '#9c75d8', dash: '8 4' },
     ...(mode === 'net' ? [
       { key: 'forecastD2', label: forecastLabel(2, query.data?.[0]?.reconstructed_d2), colour: '#ba6b19', dash: '10 3', width: 3 },
@@ -121,7 +140,7 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
         </div>}
       </div>
       {!stacked && <p className="text-xs text-muted-foreground">{t('Plus är import till SE3. Minus är export. Summerade flöden kräver värden för alla fem gränser.', 'Positive is into SE3. Negative is out. Totals require readings from all five borders.')}</p>}
-      {!stacked && mode === 'net' && <p className="text-xs text-muted-foreground">{t(
+      {!stacked && (mode === 'net' || mode === 'gross') && <p className="text-xs text-muted-foreground">{t(
         'Prognoserna två och tre dagar före leverans använder genomsnittet för samma kvart under de föregående fyra veckorna. Linjerna kan överlappa.',
         'The two- and three-day-ahead forecasts average the same quarter over the previous four weeks. The lines can overlap.',
       )}</p>}

@@ -16,7 +16,13 @@ export type MarketZone = 'SE3' | NeighbourZone | 'NORDIC_CCR';
 export interface MarketRequest { key: string; dataset: ArchiveDataset; zone: MarketZone; from: string; to: string; station_id?: string; neighbour?: NeighbourZone; direction?: 'import' | 'export' }
 export interface MarketBatch { id: string; kind: CollectionKind; requested_at: string; plan: MarketRequest[] }
 const DAY = 86_400_000;
-export function parseCollectionRequest(body: string): { kind: CollectionKind; day?: string; netPositionOnly?: true } {
+const FLOW_HISTORY_DATASETS = {
+  netPositionHistory: 'jao_day_ahead_net_position',
+  borderFlowHistory: 'jao_day_ahead_border_flows',
+} as const;
+type FlowHistoryDataset = typeof FLOW_HISTORY_DATASETS[keyof typeof FLOW_HISTORY_DATASETS];
+
+export function parseCollectionRequest(body: string): { kind: CollectionKind; day?: string; flowHistoryDataset?: FlowHistoryDataset } {
   const value: unknown = body.trim() ? JSON.parse(body) : {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid archive request');
   const keys = Object.keys(value);
@@ -25,12 +31,14 @@ export function parseCollectionRequest(body: string): { kind: CollectionKind; da
   if (keys.length === 1 && 'context' in value && value.context === true) return { kind: 'market_context' };
   if (keys.length === 1 && 'truth' in value && value.truth === true) return { kind: 'weather_truth' };
   if (keys.length === 1 && 'regional' in value && value.regional === true) return { kind: 'regional_context' };
-  if (keys.length === 1 && ('history' in value || 'netPositionHistory' in value)) {
-    const day = 'history' in value ? value.history : value.netPositionHistory;
-    if ('history' in value && day === true) return { kind: 'market_history' };
+  const [key] = keys;
+  if (keys.length === 1 && (key === 'history' || Object.hasOwn(FLOW_HISTORY_DATASETS, key))) {
+    const day = (value as Record<string, unknown>)[key];
+    if (key === 'history' && day === true) return { kind: 'market_history' };
     if (typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
       new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day) {
-      return 'history' in value ? { kind: 'market_history', day } : { kind: 'market_history', day, netPositionOnly: true };
+      return key === 'history' ? { kind: 'market_history', day }
+        : { kind: 'market_history', day, flowHistoryDataset: FLOW_HISTORY_DATASETS[key as keyof typeof FLOW_HISTORY_DATASETS] };
     }
   }
   throw new Error('Invalid archive request');
@@ -38,7 +46,7 @@ export function parseCollectionRequest(body: string): { kind: CollectionKind; da
 
 export function collectionKind(body: string): CollectionKind { return parseCollectionRequest(body).kind; }
 
-export function collectionPlan(kind: CollectionKind, now: Date, day?: string, netPositionOnly = false): MarketRequest[] {
+export function collectionPlan(kind: CollectionKind, now: Date, day?: string, flowHistoryDataset?: FlowHistoryDataset): MarketRequest[] {
   const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const minute = Math.floor(now.getTime() / 60_000) * 60_000;
   const requests: MarketRequest[] = [];
@@ -71,8 +79,11 @@ export function collectionPlan(kind: CollectionKind, now: Date, day?: string, ne
     const shift = (offset: number) => new Date(Date.parse(currentDay) + offset * DAY).toISOString().slice(0, 10);
     for (const date of day ? [day] : [-2, -1, 0, 1].map(shift)) {
       const [from, to] = marketDaySpan(date);
+      if (flowHistoryDataset) {
+        add(flowHistoryDataset, 'NORDIC_CCR', from, to);
+        continue;
+      }
       add('jao_day_ahead_net_position', 'NORDIC_CCR', from, to);
-      if (netPositionOnly) continue;
       add('spot_price', 'SE3', from, to);
       add('jao_day_ahead_border_flows', 'NORDIC_CCR', from, to);
       if (date < currentDay) {

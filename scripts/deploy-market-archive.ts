@@ -20,6 +20,7 @@ const MIGRATIONS = [
   { version: '20261113134000', name: 'se3_market_history' },
   { version: '20261113152000', name: 'retire_open_meteo' },
   { version: '20261113205000', name: 'test_se3_net_import_forecast' },
+  { version: '20261113220000', name: 'test_se3_gross_flow_forecasts' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
@@ -66,8 +67,8 @@ try {
     throw new Error('TEST ledger requires one explicitly scoped home.');
   }
   await query(`SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.enable_test_market_context(); SELECT private.enable_test_market_quality(); SELECT private.enable_test_regional_context(); SELECT private.enable_test_market_history(); SELECT private.enable_test_price_ledger('${homes[0].home_id}'::uuid); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT private.request_test_market_context(); SELECT private.request_test_weather_truth(); SELECT private.request_test_regional_context(); SELECT private.request_test_market_history(); SELECT true AS enabled;`);
-  await query('SELECT private.enable_test_se3_net_import_forecasts(); SELECT private.record_test_se3_net_import_forecasts(); SELECT true AS enabled;');
-  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-market-context','test-energy-market-history','test-energy-weather-truth','test-energy-market-health','test-energy-regional-context','test-energy-weather-accuracy','test-energy-demand-accuracy','test-energy-price-experiment','test-energy-price-correction','test-energy-price-weather','test-energy-se3-net-import-forecast');");
+  await query('SELECT private.enable_test_se3_net_import_forecasts(); SELECT private.record_test_se3_net_import_forecasts(); SELECT private.enable_test_se3_gross_flow_forecasts(); SELECT private.record_test_se3_gross_flow_forecasts(); SELECT true AS enabled;');
+  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-market-context','test-energy-market-history','test-energy-weather-truth','test-energy-market-health','test-energy-regional-context','test-energy-weather-accuracy','test-energy-demand-accuracy','test-energy-price-experiment','test-energy-price-correction','test-energy-price-weather','test-energy-se3-net-import-forecast','test-energy-se3-gross-flow-forecast');");
   console.log(JSON.stringify({ project: TEST, archive: 'enabled', first_collection: 'requested', schedule }));
 } finally {
   await Deno.remove(temporary, { recursive: true });
