@@ -63,5 +63,17 @@
         "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
       }
     ]
+  },
+  {
+    "requirement": "User requested part-quarter EV charge completion on 13 November 2026. EV-4 now integrates only the energy needed to reach the cap and independently checks that the full commanded current fits the grid. Measured SOC above the cap remains valid and receives no charging command.",
+    "before": "dac6ff5630ad6cd7d4301b365d87e4bd2fa9f358",
+    "after": "e85cb4153d69b8f60c984ec21432f8259dbeeaf3",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT EV-4: the charge cap limits charging without invalidating a higher measured SOC",
+        "new_name": "CONTRACT EV-4: the charge cap limits charging without invalidating a higher measured SOC"
+      }
+    ]
   }
 ]
