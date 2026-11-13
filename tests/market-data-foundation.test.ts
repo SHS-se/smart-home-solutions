@@ -8,18 +8,18 @@ import { assessMarketObservation } from '../supabase/functions/_shared/market-ev
 import { marketDaySpan, scoreDemandForecasts, type DemandEvidence } from '../supabase/functions/_shared/demand-forecast-quality.ts';
 import type { EntsoeInterval } from '../supabase/functions/_shared/entsoe-market-data.ts';
 const UUID = (n: number) => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
-Deno.test('acquisition plans preserve six-hour weather and exact generation sources, with DST-complete network windows', () => {
+Deno.test('acquisition plans preserve six-hour weather and generation evidence sources, with DST-complete network windows', () => {
   for (const day of ['2026-03-28', '2026-10-24', '2026-11-01']) {
     const at = new Date(`${day}T12:00:00Z`), plan = collectionPlan('day_ahead', at);
     assertEquals(plan.filter(r => r.dataset.includes('load') || r.dataset.includes('wind')).length, 2);
-    assert(!plan.some(r => r.dataset === 'weather_medium_range' || r.dataset === 'load_week_ahead'));
+    assert(!plan.some(r => r.dataset === 'load_week_ahead'));
     const jao = plan.filter(r => r.dataset === 'jao_max_net_positions');
     assert(jao.every(r => Date.parse(r.to) - Date.parse(r.from) <= 48 * 3_600_000));
     assertEquals(jao.reduce((s, r) => s + Date.parse(r.to) - Date.parse(r.from), 0) / 3_600_000,
       day === '2026-03-28' ? 47 : day === '2026-10-24' ? 49 : 48);
     const generation = collectionPlan('generation', at);
-    assertEquals(generation.length, 9);
-    assertEquals(new Set(generation.map(r => r.key)).size, 9);
+    assertEquals(generation.length, 8);
+    assertEquals(new Set(generation.map(r => r.key)).size, 8);
     const context = collectionPlan('market_context', at);
     assertEquals(context.length, 11);
     assertEquals(context.filter(r => r.dataset === 'load_actual').length, 1);

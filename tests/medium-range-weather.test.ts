@@ -1,23 +1,9 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { MEDIUM_RANGE_VARIABLES, mediumRangeWeatherRequest, parseMediumRangeWeather } from "../supabase/functions/_shared/medium-range-weather.ts";
+import { MEDIUM_RANGE_VARIABLES, parseMediumRangeWeather } from "../supabase/functions/_shared/medium-range-weather.ts";
 
 import { mediumRangeWeatherFixture as fixture } from "./medium-range-weather.fixture.ts";
 
 const acquired = "2026-10-22T22:30:00Z"; // October 23 in Stockholm: D+2 is the DST date October 25.
-
-Deno.test("medium-range request fixes model, seven days, native variables and existing ten SE3 sites", () => {
-  const { url, record } = mediumRangeWeatherRequest();
-  assertEquals(url.origin, "https://api.open-meteo.com");
-  assertEquals(url.searchParams.get("models"), "ecmwf_ifs025");
-  assertEquals(url.searchParams.get("forecast_days"), "7");
-  assertEquals(url.searchParams.get("timezone"), "UTC");
-  assertEquals(url.searchParams.get("wind_speed_unit"), "ms");
-  assertEquals(url.searchParams.get("hourly"), MEDIUM_RANGE_VARIABLES.join(","));
-  assertEquals(record.sites.length, 10);
-  assertEquals(record.sites[0], { station_id: "83190", latitude: 58.3218, longitude: 13.0379 });
-  assertEquals(record.sites[9].station_id, "96040");
-  assertEquals(url.searchParams.get("latitude"), record.sites.map(site => site.latitude).join(","));
-});
 
 Deno.test("weather parsing retains native nulls, zeros, request order and independently returned grid positions", () => {
   const raw = fixture();
@@ -86,13 +72,4 @@ Deno.test("weather rejects malformed batches, calendars, units, offsets and non-
     mutate(raw);
     assertThrows(() => parseMediumRangeWeather(raw, acquired));
   }
-});
-
-Deno.test("generation research weather explicitly requests and records 28 past days", () => {
-  assertEquals(mediumRangeWeatherRequest().url.searchParams.get("past_days"), null);
-  assertEquals(mediumRangeWeatherRequest().record.past_days, 0);
-  const research = mediumRangeWeatherRequest(28);
-  assertEquals(research.url.searchParams.get("past_days"), "28");
-  assertEquals(research.record.past_days, 28);
-  assertEquals(research.url.searchParams.get("forecast_days"), "7");
 });

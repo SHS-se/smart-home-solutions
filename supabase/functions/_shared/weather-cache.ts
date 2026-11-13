@@ -20,7 +20,7 @@
  *
  * `t` is epoch milliseconds, not an ISO string, and that is a cost decision
  * rather than a style one. An edge function gets 50 ms of CPU per request, and
- * a cached irradiance series is ~2200 points: re-parsing every stamp on every
+ * a cached irradiance series contains hundreds of points: re-parsing every stamp on every
  * read burned most of that budget before the plan was even built. Numbers go
  * into the cache already parsed and come back ready to compare.
  */
@@ -168,7 +168,7 @@ export function interpolateOntoSlots(
  * Resample a series of interval means onto slot starts.
  *
  * Some quantities are published as the mean over the hour *ending* at their
- * stamp — Open-Meteo's `shortwave_radiation` is one — and interpolating those
+ * stamp, and interpolating those
  * linearly would both smear the number and shift it half an hour late. A mean
  * is a step: every slot inside an hour carries that hour's figure, which is
  * the point stamped at the first instant strictly after the slot begins.

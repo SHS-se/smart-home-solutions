@@ -5,7 +5,7 @@ import type { SmhiDataset } from './smhi-observations.ts';
 import { marketDate, marketDaySpan } from './demand-forecast-quality.ts';
 import { ARCHIVED_MARKET_DATASETS } from './price-estimate-evidence.ts';
 
-export const GENERATION_DATASETS = [...ARCHIVED_MARKET_DATASETS, 'generation_actual', 'sweden_hydrology',
+export const GENERATION_DATASETS = [...ARCHIVED_MARKET_DATASETS.filter(dataset => dataset !== 'weather_medium_range'), 'generation_actual', 'sweden_hydrology',
   'production_outages', 'generation_outages', 'installed_generation_units'] as const;
 export const NEIGHBOUR_ZONES = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 export type NeighbourZone = typeof NEIGHBOUR_ZONES[number];
@@ -89,12 +89,11 @@ export function collectionPlan(kind: CollectionKind, now: Date, day?: string): M
         : dataset === 'installed_generation_units' ? Date.UTC(now.getUTCFullYear(), 0, 1)
         : dataset === 'production_outages' || dataset === 'generation_outages' ? today - 180 * DAY
         : dataset === 'sweden_hydrology' ? today - 49 * DAY
-        : dataset === 'weather_medium_range' ? today - 28 * DAY : today;
+        : today;
       const to = dataset === 'generation_actual' ? minute
         : dataset === 'installed_generation_units' ? Date.UTC(now.getUTCFullYear() + 1, 0, 1)
         : dataset === 'sweden_hydrology' ? today + DAY
-        : today + (dataset === 'load_week_ahead' ? 9 : dataset === 'weather_medium_range' ||
-          dataset === 'production_outages' || dataset === 'generation_outages' ? 7 : 3) * DAY;
+        : today + (dataset === 'load_week_ahead' ? 9 : dataset === 'production_outages' || dataset === 'generation_outages' ? 7 : 3) * DAY;
       add(dataset, 'SE3', from, to);
     }
   }

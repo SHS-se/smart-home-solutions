@@ -29,7 +29,7 @@ if [ "$operation" = 'db query' ]; then
   *) exit 10 ;;
  esac
 elif [ "$operation" = 'functions list' ]; then
- printf '[{"slug":"energy-price-experiment"},{"slug":"energy-price-correction-experiment"}]'
+ printf '[{"slug":"energy-price-experiment"},{"slug":"energy-price-correction-experiment"},{"slug":"energy-price-weather-experiment"}]'
 fi
 `, { mode: 0o700 });
     const run = (args: string[] = []) => new Deno.Command(Deno.execPath(), {
@@ -42,7 +42,7 @@ fi
     assertStringIncludes(new TextDecoder().decode(success.stdout), 'Deployed the TEST collector.');
     const invocations = await Deno.readTextFile(calls);
     assertStringIncludes(invocations, '--agent no --output json --yes');
-    assertStringIncludes(invocations, 'functions deploy energy-price-weather-experiment --project-ref vxqpgbzseckgceopitpm --use-api --no-verify-jwt --yes');
+    assertStringIncludes(invocations, 'functions delete energy-price-weather-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertEquals(invocations.includes('oosxndduqzhvrorgogaw'), false);

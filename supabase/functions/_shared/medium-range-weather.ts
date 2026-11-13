@@ -34,26 +34,6 @@ export interface MediumRangeWeatherDocument {
   }[];
 }
 
-/** Fixed model, sites and native units make successive vintages comparable. */
-export function mediumRangeWeatherRequest(pastDays: 0 | 28 = 0) {
-  const sites = ZONE_STATIONS.SE3.map(({ id, latitude, longitude }) => ({ station_id: id, latitude, longitude }));
-  const record = {
-    provider: "open_meteo" as const, model: MODEL as typeof MODEL, forecast_days: 7 as const, past_days: pastDays,
-    timezone: "UTC" as const, wind_speed_unit: "ms" as const,
-    variables: [...MEDIUM_RANGE_VARIABLES], sites,
-  };
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.search = new URLSearchParams({
-    latitude: sites.map(site => site.latitude).join(","),
-    longitude: sites.map(site => site.longitude).join(","),
-    models: record.model, forecast_days: String(record.forecast_days),
-    timezone: record.timezone, wind_speed_unit: record.wind_speed_unit,
-    hourly: record.variables.join(","),
-  }).toString();
-  if (pastDays !== 0) url.searchParams.set("past_days", String(pastDays));
-  return { url, record };
-}
-
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid weather object");
   return value as Record<string, unknown>;
@@ -87,7 +67,7 @@ function variableValues<T>(create: (variable: Variable) => T): VariableValues<T>
 export function parseMediumRangeWeather(body: unknown, requestedAt: string): MediumRangeWeatherDocument {
   const requestedMs = Date.parse(requestedAt);
   if (!Number.isFinite(requestedMs)) throw new Error("Invalid weather acquisition time");
-  const requestedSites = mediumRangeWeatherRequest().record.sites;
+  const requestedSites = ZONE_STATIONS.SE3.map(({ id, latitude, longitude }) => ({ station_id: id, latitude, longitude }));
   if (!Array.isArray(body) || body.length !== requestedSites.length) throw new Error("Weather batch does not match requested sites");
   const sites: MediumRangeWeatherDocument["sites"] = body.map((value, index) => {
     const entry = object(value), hourly = object(entry.hourly), units = object(entry.hourly_units);

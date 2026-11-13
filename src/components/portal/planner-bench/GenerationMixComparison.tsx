@@ -139,7 +139,7 @@ const GenerationMixComparison: React.FC = () => {
             const next = new URLSearchParams(params); next.set('study', value); next.delete('pair'); next.delete('cohort'); setParams(next, { replace: true });
           }}>
             <SelectTrigger id="price-study-select" className="min-h-11 w-64"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="weather">{t('Vädermodell · pågår', 'Weather model · running')}</SelectItem><SelectItem value="correction-v2">{t('Korrigering v2 · avslutad', 'Correction v2 · retired')}</SelectItem><SelectItem value="correction">{t('Korrigering v1 · avslutad', 'Correction v1 · retired')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell · avslutad', 'Generation mix model · retired')}</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="weather">{t('Vädermodell · avslutad', 'Weather model · retired')}</SelectItem><SelectItem value="correction-v2">{t('Korrigering v2 · avslutad', 'Correction v2 · retired')}</SelectItem><SelectItem value="correction">{t('Korrigering v1 · avslutad', 'Correction v1 · retired')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell · avslutad', 'Generation mix model · retired')}</SelectItem></SelectContent>
           </Select>
         </div>
       <Button variant="outline" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -177,9 +177,9 @@ const GenerationMixComparison: React.FC = () => {
               </table>
             </div>}
           </section>
-          <h3 className="text-lg font-semibold">{t('Löpande prognoser, sparade innan priserna var kända', 'Live forecasts, saved before the prices were known')}</h3>
+          <h3 className="text-lg font-semibold">{t('Prognoser sparade innan priserna var kända', 'Forecasts saved before prices were known')}</h3>
           <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={live?.report.scores.find(row => row.lead_day === lead)} />)}</div>
-          <p className="max-w-3xl text-sm text-muted-foreground">{t('En ny prognos sparas var sjätte timme bredvid hushållets prognos från samma tidpunkt. Den bedöms när priserna publiceras, två till tre dagar senare.', 'A new forecast is saved every six hours beside the household forecast from the same time. It is scored when the prices are published, two to three days later.')}</p>
+          <p className="max-w-3xl text-sm text-muted-foreground">{t('Studien är avslutad. Här visas de prognoser som sparades medan den pågick.', 'The study has ended. These forecasts were saved while it was running.')}</p>
         </>}
         {!weather && <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={data.report.scores.find(row => row.lead_day === lead)} />)}</div>}
         {!weather && <p className="max-w-3xl text-sm text-muted-foreground">{t('Resultaten ovan gäller alla sparade prognospar. Tidiga resultat visar bara felet hittills. Kvartar från samma dag och överlappande prognoser är beroende av varandra; många unika dagar behövs för en säker slutsats. D+3 kan täcka en del av dagen.',
@@ -192,7 +192,7 @@ const GenerationMixComparison: React.FC = () => {
             setParams(next, { replace: true });
           }}>
             <SelectTrigger id="weather-cohort-select" className="min-h-11"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="prospective">{t('Löpande', 'Live')}</SelectItem><SelectItem value="replay">{t('Valideringen', 'The validation')}</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="prospective">{t('Sparade', 'Saved forecasts')}</SelectItem><SelectItem value="replay">{t('Valideringen', 'The validation')}</SelectItem></SelectContent>
           </Select>
         </div>}
         {!selected ? <p role="status" className="rounded-md border p-4 text-sm">{weather ? t('Inga prognoser har sparats här ännu.', 'No forecasts have been saved here yet.') : t('Inga prognospar sparades i denna studie.', 'No forecast pairs were saved in this study.')}</p> : <Card>

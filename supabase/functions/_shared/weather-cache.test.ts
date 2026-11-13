@@ -76,7 +76,7 @@ Deno.test("never extrapolates past the last point", () => {
 });
 
 Deno.test("an interval mean covers the hour it ends, not the hour it starts", () => {
-  // Open-Meteo stamps the mean of 04:00-05:00 at 05:00.
+  // The mean for 04:00–05:00 is stamped at 05:00.
   const points: WeatherPoint[] = [
     { t: Date.parse("2026-08-30T05:00:00Z"), v: 100 },
     { t: Date.parse("2026-08-30T06:00:00Z"), v: 200 },

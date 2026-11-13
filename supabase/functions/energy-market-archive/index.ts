@@ -1,15 +1,13 @@
 import { svkFlowRequest, parseSvkFlowResponse, type SvkFlowDataset } from "../_shared/svk-physical-flows.ts";
 import { readMarketProvider } from "../_shared/market-provider-response.ts";
 import { entsoeParameters, parseEntsoeResponse, neighbourEntsoeParameters, EntsoeProviderError, type EntsoeResponse } from "../_shared/entsoe-market-data.ts";
-import { GENERATION_DATASETS, parseCollectionRequest, collectionPlan, type MarketBatch, type MarketZone, type NeighbourZone, type ArchiveDataset } from "../_shared/market-collection-plan.ts";
+import { parseCollectionRequest, collectionPlan, type MarketBatch, type MarketZone, type NeighbourZone, type ArchiveDataset } from "../_shared/market-collection-plan.ts";
 import { jaoRequest, parseJaoResponse, type JaoDocument, type JaoDataset } from "../_shared/jao-nordic-market-data.ts";
 import { assessMarketObservation, type MarketAssessment } from "../_shared/market-evidence-assessment.ts";
 export type { ArchiveDataset } from "../_shared/market-collection-plan.ts";
 import { captureNucsEvidence, type NucsArchiveDataset } from '../_shared/nucs-market-data.ts';
 import { smhiObservationRequest, parseSmhiObservations, type SmhiDocument, type SmhiDataset } from '../_shared/smhi-observations.ts';
-import { mediumRangeWeatherRequest, parseMediumRangeWeather, type MediumRangeWeatherDocument } from "../_shared/medium-range-weather.ts";
 
-import { forecastGenerationMixV2 } from "../_shared/generation-mix-v2.ts";
 import { acquireSwedishHydrology, type HydroAcquisition } from "../_shared/reservoir-hydrology.ts";
 import { captureCapacityEvidence, type CapacityDataset, type CapacityDocuments, type CapacityEvidence } from "../_shared/entsoe-capacity-evidence.ts";
 
@@ -27,18 +25,13 @@ type EntsoeArchiveResult = ResultEvidence & (
   | { status: "data"; document: DataDocument }
   | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" }
 );
-type WeatherArchiveResult = Omit<ResultEvidence, "raw_xml"> & {
-  raw_body: string | null;
-  request: ReturnType<typeof mediumRangeWeatherRequest>["record"];
-} & ({ status: "data"; document: MediumRangeWeatherDocument }
-  | { status: "provider_error" | "transport_error" | "parse_error" });
 type JaoArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | null } &
   ({ status: "data"; document: JaoDocument } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
 type SvkArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | null } &
   ({ status: "data"; document: ReturnType<typeof parseSvkFlowResponse> } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
 type SmhiArchiveResult = Omit<ResultEvidence, 'raw_xml'> & { raw_body: string | null; request: { station_id: string; dataset: SmhiDataset } } &
   ({ status: 'data'; document: SmhiDocument } | { status: 'provider_error' | 'transport_error' | 'parse_error' });
-export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | SvkArchiveResult | EntsoeArchiveResult | WeatherArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
+export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | SvkArchiveResult | EntsoeArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
 interface ObservationIdentity {
   id: string;
   batch_id: string;
@@ -52,7 +45,6 @@ interface ObservationIdentity {
 type CapacityObservation = { [K in CapacityDataset]: { dataset: K; result: CapacityEvidence<CapacityDocuments[K]> } }[CapacityDataset];
 export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: EntsoeArchiveDataset; result: EntsoeArchiveResult }
-  | { dataset: "weather_medium_range"; result: WeatherArchiveResult }
   | { dataset: "sweden_hydrology"; result: HydroAcquisition }
   | { dataset: NucsArchiveDataset; result: Awaited<ReturnType<typeof captureNucsEvidence>> }
   | { dataset: SmhiDataset; result: SmhiArchiveResult }
@@ -60,19 +52,10 @@ export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: SvkFlowDataset; result: SvkArchiveResult }
   | CapacityObservation
 );
-export interface GenerationForecastRun {
-  id: string;
-  zone: "SE3";
-  origin: string;
-  algorithm: string;
-  source_refs: Partial<Record<ArchiveDataset, string>>;
-  forecast: ReturnType<typeof forecastGenerationMixV2>;
-}
 export interface MarketArchiveStore {
   verifyToken(token: string): Promise<boolean>;
   saveBatch(batch: MarketBatch): Promise<void>;
   saveObservation(row: MarketArchiveObservation, assessment: MarketAssessment): Promise<void>;
-  saveGenerationRun(row: GenerationForecastRun): Promise<void>;
 }
 
 /** Capture a bounded provider body; the shared reader owns redaction, size and transport policy. */
@@ -106,24 +89,6 @@ async function entsoeResult(dataset: EntsoeArchiveDataset, from: string, to: str
     return error instanceof EntsoeProviderError
       ? { ...evidence, status: "provider_error", error_code: "provider_acknowledgement" }
       : { ...evidence, status: "parse_error", error_code: "unsupported_or_invalid_entsoe_document" };
-  }
-}
-
-async function weatherResult(requestedAt: string, token: string, fetchProvider: typeof fetch, pastDays: 0 | 28): Promise<WeatherArchiveResult> {
-  const request = mediumRangeWeatherRequest(pastDays);
-  const held = await providerResponse(request.url, token, fetchProvider);
-  const evidence = { http_status: held.http_status, body_sha256: held.body_sha256,
-    raw_body: held.body, error_code: null, request: request.record };
-  if (held.body === null) return { ...evidence, status: "transport_error", error_code: "weather_transport_failed" };
-  if (held.http_status! < 200 || held.http_status! >= 300) return { ...evidence, status: "provider_error", error_code: `http_${held.http_status}` };
-  try {
-    const body: unknown = JSON.parse(held.body);
-    if (body && typeof body === "object" && "error" in body && body.error === true) {
-      return { ...evidence, status: "provider_error", error_code: "weather_provider_error" };
-    }
-    return { ...evidence, status: "data", document: parseMediumRangeWeather(body, requestedAt) };
-  } catch {
-    return { ...evidence, status: "parse_error", error_code: "unsupported_or_invalid_weather_document" };
   }
 }
 
@@ -193,8 +158,6 @@ export function createMarketArchiveHandler(
         ? { ...identity, dataset, result: await captureNucsEvidence({ dataset, neighbour: neighbour!, direction: direction!, from, to }, config.nucsToken, fetchProvider), resolved_at: clock().toISOString() }
         : dataset === 'smhi_wind_10m_observed' || dataset === 'smhi_temperature_2m_observed'
         ? { ...identity, dataset, result: await smhiResult(dataset, station_id!, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
-        : dataset === "weather_medium_range"
-        ? { ...identity, dataset, result: await weatherResult(identity.requested_at, config.entsoeToken, fetchProvider, 28), resolved_at: clock().toISOString() }
         : dataset === "sweden_hydrology"
         ? { ...identity, dataset, result: await acquireHydro(fetchProvider), resolved_at: clock().toISOString() }
         : dataset === "production_outages"
@@ -214,35 +177,7 @@ export function createMarketArchiveHandler(
     const rows = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
     const observations = rows.map(row => ({ id: row.id, dataset: row.dataset, status: row.result.status }));
     if (rows.length !== batch.plan.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
-    if (batch.kind !== "generation") return Response.json({ batch_id: batch.id, observations });
-    const actual = rows.find(row => row.dataset === "generation_actual");
-    const weather = rows.find(row => row.dataset === "weather_medium_range");
-    const published = rows.find(row => row.dataset === "wind_day_ahead");
-    const hydro = rows.find(row => row.dataset === "sweden_hydrology");
-    const roster = rows.find(row => row.dataset === "installed_generation_units");
-    const production = rows.find(row => row.dataset === "production_outages");
-    const generators = rows.find(row => row.dataset === "generation_outages");
-    const forecast = forecastGenerationMixV2({ origin: clock().toISOString(),
-      actuals: actual?.dataset === "generation_actual" && actual.result.status === "data" ? actual.result.document.intervals : [],
-      weather: weather?.dataset === "weather_medium_range" && weather.result.status === "data" ? weather.result.document : null,
-      published: published?.dataset === "wind_day_ahead" && published.result.status === "data" ? published.result.document.intervals : [],
-      hydro: hydro?.dataset === "sweden_hydrology" && hydro.result.status === "data" ? hydro.result.document : null,
-      nuclear: {
-        roster: roster?.dataset === "installed_generation_units" && roster.result.status === "data" ? roster.result.document : null,
-        productionOutages: production?.dataset === "production_outages" && production.result.status === "data" ? production.result.document : null,
-        generationOutages: generators?.dataset === "generation_outages" && generators.result.status === "data" ? generators.result.document : null,
-      },
-    });
-    const run: GenerationForecastRun = { id: crypto.randomUUID(), zone: forecast.zone,
-      origin: forecast.origin, algorithm: forecast.algorithm,
-      source_refs: Object.fromEntries(rows.filter(row => GENERATION_DATASETS.includes(row.dataset as typeof GENERATION_DATASETS[number])).map(row => [row.dataset, row.id])), forecast };
-    try { await store.saveGenerationRun(run); }
-    catch { return Response.json({ error: "generation_run_storage_failed", observations }, { status: 500 }); }
-    const predicted: Record<string, number> = {};
-    for (const hour of forecast.hours) for (const candidates of Object.values(hour.byPsr)) {
-      for (const [model, prediction] of Object.entries(candidates)) if (prediction.status === "predicted") predicted[model] = (predicted[model] ?? 0) + 1;
-    }
-    return Response.json({ batch_id: batch.id, observations, generation: { id: run.id, origin: run.origin, predicted } });
+    return Response.json({ batch_id: batch.id, observations });
   };
 }
 
@@ -264,9 +199,6 @@ if (import.meta.main) {
       const { error } = await client.rpc("record_test_market_observation", { p_observation: row, p_assessment: assessment });
       if (error) throw new Error("Archive observation storage failed");
     },
-    async saveGenerationRun(row) {
-      const { error } = await client.from("energy_generation_forecast_runs").insert(row);
-      if (error) throw new Error("Generation run storage failed");
-    },
+
   }));
 }

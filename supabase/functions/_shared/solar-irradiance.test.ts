@@ -1,157 +1,45 @@
-import {
-  assert,
-  assertEquals,
-} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {
-  irradianceForQuarters,
-  parseOpenMeteoIrradiance,
-} from "./solar-irradiance.ts";
+import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { hourlyGfsIrradiance, irradianceForQuarters } from "./solar-irradiance.ts";
 
-Deno.test("reads the hourly irradiance series, stamping bare times as UTC", () => {
-  const body = {
-    hourly: {
-      time: ["2026-08-30T04:00", "2026-08-30T05:00"],
-      shortwave_radiation: [0, 63],
-    },
-  };
-  assertEquals(parseOpenMeteoIrradiance(body), [
-    { t: Date.parse("2026-08-30T04:00:00.000Z"), v: 0 },
-    { t: Date.parse("2026-08-30T05:00:00.000Z"), v: 63 },
-  ]);
-});
-
-Deno.test("an hour with no reanalysis behind it is skipped, not zeroed", () => {
-  // Nulls appear at the oldest end of the history window. Reading one as zero
-  // would teach a zone that the sun was down on a day nobody measured.
-  const body = {
-    hourly: {
-      time: ["2026-06-01T12:00", "2026-08-30T12:00"],
-      shortwave_radiation: [null, 457],
-    },
-  };
-  assertEquals(parseOpenMeteoIrradiance(body), [
-    { t: Date.parse("2026-08-30T12:00:00.000Z"), v: 457 },
-  ]);
-});
-
-Deno.test("a malformed response is empty rather than fatal", () => {
-  assertEquals(parseOpenMeteoIrradiance({}), []);
-  assertEquals(parseOpenMeteoIrradiance(null), []);
-  assertEquals(
-    parseOpenMeteoIrradiance({ hourly: { time: ["2026-08-30T04:00"] } }),
-    [],
-  );
-});
-
-const fakeSupabase = (points: unknown) => ({
+const at = (hour: string) => Date.parse(`2026-11-13T${hour}:00:00Z`);
+const times = ["01", "02", "03", "04", "05", "06", "07"].map(h => new Date(at(h)).toISOString());
+const field = "downward_short_wave_radiation_flux_surface";
+const cache = (points: unknown = null) => ({
   from() {
     const builder = {
       select: () => builder,
       eq: () => builder,
-      maybeSingle: () =>
-        Promise.resolve({
-          data: { points, expires_at: "2099-01-01T00:00:00Z" },
-        }),
+      maybeSingle: () => Promise.resolve({ data: points ? { points, expires_at: "2099-01-01T00:00:00Z" } : null }),
       upsert: () => Promise.resolve({ error: null }),
     };
     return builder;
   },
 });
 
-Deno.test("each quarter carries the mean of the hour it falls in", async () => {
-  const result = await irradianceForQuarters({
-    supabase: fakeSupabase([
-      { t: Date.parse("2026-08-30T05:00:00.000Z"), v: 100 },
-      { t: Date.parse("2026-08-30T06:00:00.000Z"), v: 200 },
-    ]),
-    latitude: 59.46,
-    longitude: 18.04,
-    starts: [
-      "2026-08-30T04:00:00.000Z",
-      "2026-08-30T04:45:00.000Z",
-      "2026-08-30T05:00:00.000Z",
-      "2026-08-30T05:45:00.000Z",
-    ],
-    now: new Date("2026-08-30T04:10:00Z"),
-  });
-  assertEquals(result, [100, 100, 200, 200]);
+Deno.test("GFS hourly irradiance differences cumulative averages and keeps gaps", () => {
+  assertEquals(hourlyGfsIrradiance({ times, values: [100, 150, null, 150, 160, 170, 50] }), [
+    { t: at("01"), v: 100 }, { t: at("02"), v: 200 }, { t: at("05"), v: 200 }, { t: at("06"), v: 220 }, { t: at("07"), v: 50 },
+  ]);
 });
 
-Deno.test("recording keeps what it knows and leaves the rest null", async () => {
-  // Unlike a forecast, a partial record is worth having: the covered quarters
-  // are still quarters a zone can learn sunshine from.
-  const result = await irradianceForQuarters({
-    supabase: fakeSupabase([{
-      t: Date.parse("2026-08-30T05:00:00.000Z"),
-      v: 100,
-    }]),
-    latitude: 59.46,
-    longitude: 18.04,
-    starts: ["2026-08-30T04:30:00.000Z", "2026-08-30T09:00:00.000Z"],
-    now: new Date("2026-08-30T04:10:00Z"),
-  });
-  assertEquals(result, [100, null]);
+Deno.test("the analysis owns completed overlapping hours and quarters use the preceding-hour mean", async () => {
+  const requests: string[] = [];
+  const values = await irradianceForQuarters({ supabase: cache(), latitude: 59, longitude: 18, now: new Date(at("08")),
+    starts: [at("00"), at("00") + 2_700_000, at("01"), at("06"), at("07")], fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      assertEquals(url.hostname, "api.dynamical.org");
+      const query = JSON.parse(String(init?.body)).queries[0];
+      requests.push(query.dataProductId);
+      const result = url.pathname.endsWith("analyses")
+        ? { analysisTimes: times.slice(0, 2), data: { [field]: [100, 150] } }
+        : { forecasts: [{ validTimes: times, data: { [field]: [10, 20, 30, 40, 50, 60, 70] } }] };
+      return await Promise.resolve(Response.json({ results: [{ queryId: "irradiance", ...result }] }));
+    } });
+  assertEquals(requests.sort(), ["noaa-gfs-analysis", "noaa-gfs-forecast"]);
+  assertEquals(values, [100, 100, 200, 70, null]);
 });
 
-Deno.test("an unreachable provider records nothing rather than guessing", async () => {
-  const result = await irradianceForQuarters({
-    supabase: {
-      from() {
-        const builder = {
-          select: () => builder,
-          eq: () => builder,
-          maybeSingle: () => Promise.resolve({ data: null }),
-          upsert: () => Promise.resolve({ error: null }),
-        };
-        return builder;
-      },
-    },
-    latitude: 59.46,
-    longitude: 18.04,
-    starts: ["2026-08-30T04:30:00.000Z"],
-    now: new Date("2026-08-30T04:10:00Z"),
-    fetchImpl: () => Promise.reject(new Error("network down")),
-  });
-  assertEquals(result, null);
-});
-
-Deno.test("the request asks Open-Meteo for history as well as forecast", async () => {
-  let url = "";
-  await irradianceForQuarters({
-    supabase: {
-      from() {
-        const builder = {
-          select: () => builder,
-          eq: () => builder,
-          maybeSingle: () => Promise.resolve({ data: null }),
-          upsert: () => Promise.resolve({ error: null }),
-        };
-        return builder;
-      },
-    },
-    latitude: 59.46,
-    longitude: 18.04,
-    starts: ["2026-08-30T04:30:00.000Z"],
-    now: new Date("2026-08-30T04:10:00Z"),
-    fetchImpl: (input) => {
-      url = String(input);
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            hourly: {
-              time: ["2026-08-30T05:00"],
-              shortwave_radiation: [100],
-            },
-          }),
-        ),
-      );
-    },
-  });
-  assert(url.includes("past_days=92"), `history not requested: ${url}`);
-  assert(url.includes("shortwave_radiation"), url);
-  assert(url.includes("timezone=UTC"), url);
-  assert(
-    url.includes("latitude=59.46") && url.includes("longitude=18.04"),
-    `coordinates not on the cache grid: ${url}`,
-  );
+Deno.test("irradiance stays optional when the provider is unreachable", async () => {
+  assertEquals(await irradianceForQuarters({ supabase: cache(), latitude: 59, longitude: 18, starts: [at("00")],
+    fetchImpl: () => Promise.reject(new Error("synthetic network failure")) }), null);
 });

@@ -21,7 +21,14 @@ dynamical.org, used under CC BY 4.0. Forecast preparation records the source per
 quarter. The original TEST experiment below keeps the SMHI-based estimator as
 its baseline.
 
-## Usage (caller's view)
+## Retired TEST study
+
+The Open-Meteo collector and new TEST comparisons stopped on 13 November 2026.
+The saved comparisons remain visible on the TEST bench. The regional price
+blend described above uses its independent ECMWF and GFS feeds. Household
+irradiance uses NOAA GFS data processed by dynamical.org (CC BY 4.0).
+
+## Historical usage
 
 ```ts
 const context = await store.context(tick);            // frozen at the deployed forecast's generation time
@@ -29,7 +36,7 @@ if (context.status === 'ready') await store.record(context.baselineId, buildWeat
 ```
 
 ```sh
-deno task deploy:market-archive   # applies the schema, deploys the worker, enables it, requests the replay
+deno task deploy:market-archive   # applies the schema and deploys the active market collectors
 ```
 
 The TEST staff bench shows the study at `/portal/planner-bench?tab=generation-mix`

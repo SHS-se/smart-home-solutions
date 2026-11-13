@@ -10,7 +10,7 @@ const index = (await client.index(snapshot.observation_ids)).map(row => assessed
 const currentBatches = new Set(snapshot.batches.filter(isCurrentCollection).map(b => b.id));
 const sources = new Map<string, typeof index>();
 for (const row of index.sort((a, b) => a.sequence - b.sequence)) {
-  if (row.batch_id && !currentBatches.has(row.batch_id)) continue;
+  if (row.dataset === 'weather_medium_range' || (row.batch_id && !currentBatches.has(row.batch_id))) continue;
   const scope = row.facts?.scope_key ?? row.facts?.station_id;
   const key = `${row.dataset}/${row.zone}${typeof scope === 'string' && scope ? `/${scope}` : ''}`;
   if (!sources.has(key)) sources.set(key, []);

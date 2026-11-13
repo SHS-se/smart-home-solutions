@@ -241,29 +241,10 @@ month, models continue to use recorded production, including genuine zeros.
 Owner-stated months are stored in `energy_roi_installations` and shown beneath
 the month period in the comparison table. They do not disable hypothetical equipment before installation.
 
-Preparation is explicit and service-owned:
-
-1. Install the pinned provider model with Python 3.11 or later:
-   `python -m pip install -r scripts/roi-solar-requirements.txt`.
-2. Provide a private JSON configuration with `pv` containing `latitude`,
-   `longitude`, `peak_kw`, `inverter_kw`, `tilt_degrees`,
-   `compass_azimuth_degrees`, `efficiency`, `morning_damping`, and
-   `evening_damping`; plus `time_zone`, `solar_installed_month`,
-   `reconstruction_months` (inclusive first/last month), `training_months`, and
-   independent `validation_months`. Supply recovered actual hourly readings in
-   the same `{start_ts, actual: {solar_production_kwh}}` shape as ROI history.
-3. Run `scripts/reconstruct-roi-solar.py --config CONFIG --actual-hours ACTUAL
-   --cache-dir CACHE --output PREPARED`. This sends location and array geometry to
-   Open-Meteo's Historical Forecast API. Obtain authorization for that data use.
-   Missing provider hours or incomplete measured calibration months fail clearly.
-4. Review the independent validation months. The output retains raw energy,
-   calibrated energy, configuration, provider/library identities and source
-   hashes. The energy-weighted correction uses complete measured training months;
-   corrected generation respects inverter capacity. Solar weather reconstruction
-   is distinct from comparing archived HA forecasts issued before their targets.
-5. Publish using `scripts/publish-roi-solar.ts PREPARED HOME_UUID CUSTOMER_UUID`
-   with the intended `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Use Deno
-   permissions for the input file, those environment variables and target host.
+Preparation is explicit and service-owned. Supply a complete hourly solar
+profile prepared from an approved source with its provenance and calibration
+evidence. Publish it using `scripts/publish-roi-solar.ts PREPARED HOME_UUID
+CUSTOMER_UUID` with the intended `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 
 Publication atomically replaces the profile and its complete hourly coverage.
 It invalidates saved months overlapping the changed solar coverage and updates
