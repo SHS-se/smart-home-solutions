@@ -900,7 +900,8 @@ fn finish_ev_charge(
     {
         return None;
     }
-    let remaining = policy.limit_kwh - candidate.quarters.last()?.ev_kwh?;
+    let remaining = policy.limit_kwh - candidate.quarters.last()?.ev_kwh?
+        - physics::ev_usage(p.slots.last()?);
     let amps = charger.min_current_a;
     let watts = charger.watts(amps)?;
     if remaining <= 0.0 || remaining >= watts * 0.25 / 1000.0 * car.charge_efficiency {
@@ -915,13 +916,16 @@ fn finish_ev_charge(
     let full_target_permille = (policy.limit_kwh / car.capacity_kwh * 1000.0).round();
     for i in start..p.slots.len() {
         let s = &p.slots[i];
+        let stored = if i == 0 { p.initial.ev_kwh? } else { candidate.quarters[i - 1].ev_kwh? };
+        let room = policy.limit_kwh - stored;
         if !s.ev_available
             || commitments::hold(p, i).has(commitments::Owner::Ev)
             || commitments::unavailable(p, i, commitments::Owner::Ev)
             || s.ev_current_ceiling_a.is_some_and(|limit| amps > limit)
             || !policy.breach_permille[i]
                 .is_some_and(|line| f64::from(line + 1) >= full_target_permille)
-            || remaining > watts * physics::projected_hours(s) / 1000.0 * car.charge_efficiency
+            || room <= 0.0
+            || room > watts * physics::projected_hours(s) / 1000.0 * car.charge_efficiency
             || candidate.quarters[i].net_w + watts > p.limits.import_w + 1e-7
         {
             continue;

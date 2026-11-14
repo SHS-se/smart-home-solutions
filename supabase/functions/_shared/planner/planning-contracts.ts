@@ -278,6 +278,8 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  /** Server-derived weekday usage estimate frozen at planning admission. */
+  ev_weekday_usage?: import("./ev-usage.ts").EvWeekdayUsage | null;
   /** Unresolved execution evidence, independent of snapshot capture and plan IDs. */
   execution_availability?: ExecutionChange[];
   planning_warnings?: PlanningWarning[];
@@ -587,6 +589,10 @@ export interface PlannedSlot {
   ev_min_current_a: number;
   ev_max_current_a: number;
   ev_soc: number | null;
+  /** Charging-only SOC for the measured deviation check. Charts use ev_soc. */
+  ev_soc_from_charging?: number;
+  ev_usage_estimate_kwh?: number;
+  ev_usage_unserved_kwh?: number;
   ev_connected: boolean;
   load_w: number;
   battery_charge_w: number;

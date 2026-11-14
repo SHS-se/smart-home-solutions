@@ -10,6 +10,7 @@ import { prepareRoomServices, type RoomServices, type RoomPlanningInputs } from 
 import { roomProjectionControl } from "./planner/models/room/control.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
+import { weekdayEvUsageKw } from "./planner/ev-usage.ts";
 /** One prepared household, one native selection, one authoritative publication.
  * This boundary has no database, history, source fetching or model fitting API.
  */
@@ -337,6 +338,8 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
     const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
     const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
+    const usageKw = car && snapshot.ev_weekday_usage
+      ? weekdayEvUsageKw(snapshot.ev_weekday_usage, snapshot.slots.map(s => s.start), at => localDay(at, snapshot.timezone)) : null;
     const previousIntent = (source: PublishedCommandReference | null) => source?.slots.find(slot =>
       Date.parse(slot.start) <= effective && Date.parse(slot.start) + QUARTER_MS > effective);
     const previousHousehold = previousIntent(reference);
@@ -366,6 +369,7 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
           }) ? {fixed_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].fixed_w)),
             on_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].on_w))} : null,
           ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)),
+          ...(usageKw ? { ev_usage_kw: usageKw[i] } : {}),
         };
       }),
       battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
@@ -466,6 +470,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
   const p = input.problem, snapshot = input.snapshot;
   const rows: BatteryProjectionRow[] = [];
   let binding = true;
+  let evChargeOnlyKwh = p.initial.ev_kwh ?? 0;
   const slots: PlannedSlot[] = quarters.map((q, i) => {
     const f = p.slots[i], source = snapshot.slots[i], command = commands[i];
     const poolUnavailable = unavailableOwner(snapshot, "$pool", source.start);
@@ -473,6 +478,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     // to hold its last setting for that interval.
     const poolPermitted = poolUnavailable ? null : input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on;
     const hours = f.hours + Math.min(0, f.start_seconds) / 3600;
+    if (p.car) evChargeOnlyKwh = Math.min(Math.max(evChargeOnlyKwh, p.car_policy!.limit_kwh),
+      evChargeOnlyKwh + q.ev_w * hours / 1000 * p.car.charge_efficiency);
     const loads = Object.fromEntries(Object.entries(input.passive_w).map(([k, values]) => [k, values[i]]));
     if (!poolUnavailable) {
       allocate(input.members.heater, q.pool_compressor_w, loads);
@@ -517,6 +524,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       ev_w: q.ev_w, room_heating_w: Object.fromEntries(Object.entries(input.rooms.room_power).map(([key, values]) => [key, values[i]])), device_loads_w: loads, device_commands: commandMap(input, command, i),
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: !!snapshot.ev_battery?.connected,
+      ...(p.car && f.ev_usage_kw !== undefined ? { ev_usage_estimate_kwh: f.ev_usage_kw * hours,
+        ev_usage_unserved_kwh: q.ev_usage_unserved_kwh, ev_soc_from_charging: evChargeOnlyKwh / p.car.capacity_kwh } : {}),
       ...(p.car && !snapshot.ev_battery?.connected && command.ev_amps > 0 ? { ev_charging_conditional: true } : {}),
       load_w: load + q.battery_idle_w, battery_idle_w: q.battery_idle_w,
       battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,

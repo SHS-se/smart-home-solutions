@@ -288,9 +288,13 @@ fn contribution(p: &Problem, r: &Rule, i: usize, v: &Quarter, before_c: f64) -> 
             }
         }
         RuleKey::CarFloor => {
-            let cost = car_readiness_cost(p, i, v.ev_kwh.unwrap());
-            if cost > 0.0 {
-                r.points / 2.0 * cost * projected_hours(&p.slots[i])
+            // A modeled kWh the car could not supply would need replacing at
+            // this quarter's tariff. It cannot disappear through the zero clamp.
+            let replacement = v.ev_usage_unserved_kwh * p.slots[i].import_price.max(0.0)
+                / p.car.as_ref().unwrap().charge_efficiency;
+            let cost = car_readiness_cost(p, i, v.ev_kwh.unwrap()) * projected_hours(&p.slots[i]);
+            if cost > 0.0 || replacement > 0.0 {
+                r.points / 2.0 * (cost + replacement)
             } else {
                 0.0
             }

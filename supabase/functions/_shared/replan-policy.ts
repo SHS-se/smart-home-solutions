@@ -4,7 +4,7 @@ import type { IsolatedDevice } from './planner/measurement-isolation.ts';
 export interface ReplanRecommendation { key: string; reason: string; occurred_at: string }
 type PriceSnapshot = { slots: Array<Pick<OptimisationSnapshot['slots'][number], 'start' | 'import_price_sek_per_kwh' | 'export_price_sek_per_kwh'>> };
 type MonitoredPlan = Pick<OptimisationPlan, 'issued_at' | 'valid_until' | 'battery' | 'ev_battery'> & {
-  plans: { priority: { slots: Array<Pick<OptimisationPlan['plans']['priority']['slots'][number], 'start' | 'load_w' | 'battery_soc' | 'ev_soc'>> } };
+  plans: { priority: { slots: Array<Pick<OptimisationPlan['plans']['priority']['slots'][number], 'start' | 'load_w' | 'battery_soc' | 'ev_soc' | 'ev_soc_from_charging'>> } };
 };
 const QUARTER = 900_000;
 /** How many of the newest completed quarters may still be on their way. */
@@ -68,8 +68,8 @@ export function deviationRecommendations(plan: MonitoredPlan, actuals: Deviation
       for (const key of ['battery', 'ev_battery'] as const) {
         const measuredBattery = snapshot[key], original = plan[key];
         if (!measuredBattery || !original) continue;
-        const field = key === 'battery' ? 'battery_soc' : 'ev_soc';
-        const endSoc = slots[index][field], startSoc = index ? slots[index - 1][field] : original.soc;
+        const chargeSoc = (slot: typeof slots[number]) => key === 'battery' ? slot.battery_soc : slot.ev_soc_from_charging ?? slot.ev_soc;
+        const endSoc = chargeSoc(slots[index]), startSoc = index ? chargeSoc(slots[index - 1]) : original.soc;
         if (typeof endSoc !== 'number' || typeof startSoc !== 'number') continue;
         const expected = startSoc + (endSoc - startSoc) * fraction;
         if (Math.abs(measuredBattery.soc - expected) * measuredBattery.capacity_kwh > 4) {

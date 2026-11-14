@@ -52,6 +52,10 @@ pub(crate) fn projected_hours(s: &Slot) -> f64 {
     s.hours + s.start_seconds.min(0.0) / 3600.0
 }
 
+pub(crate) fn ev_usage(s: &Slot) -> f64 {
+    s.ev_usage_kw.unwrap_or(0.0) * projected_hours(s)
+}
+
 fn pool_conditions(p: &Problem, i: usize, state: &State) -> PoolConditions {
     PoolConditions {
         source_depletion_kwh: state.pool_source_depletion_kwh,
@@ -165,6 +169,7 @@ fn transition(
     );
     let pool_demand = pool_demand(p, s, command.pool_on, state.pool, pool.as_ref());
     let pool_w = pool_demand.average_w;
+    let withdrawal = p.car.as_ref().map_or(0.0, |_| ev_usage(s));
     let (ev_w, admission_ev_w) =
         if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
             let nominal = charger
@@ -323,13 +328,16 @@ fn transition(
         state.pool_source_depletion_kwh = h.source_depletion_kwh;
         state.heater = h.next;
     }
+    let mut ev_usage_unserved_kwh = 0.0;
     if let Some(car) = &p.car {
         let limit = p.car_policy.as_ref().unwrap().limit_kwh;
-        state.ev = if admission_ev_w > ev_w {
+        let charged = if admission_ev_w > ev_w {
             limit
         } else {
             (state.ev + ev_w * hours / 1000.0 * car.charge_efficiency).min(limit.max(state.ev))
         };
+        ev_usage_unserved_kwh = (withdrawal - charged).max(0.0);
+        state.ev = (charged - withdrawal).max(0.0);
     }
     state.battery = battery_flow.stored_end_kwh;
     Ok(Quarter {
@@ -354,6 +362,7 @@ fn transition(
         curtailed_w,
         battery_kwh: p.battery.as_ref().map(|_| state.battery),
         ev_kwh: p.car.as_ref().map(|_| state.ev),
+        ev_usage_unserved_kwh,
         pool_c: p.heater.as_ref().map(|_| state.pool),
         pool_pending_heat_kwh: p.heater.as_ref().map(|_| state.pool_pending_heat_kwh),
         pool_source_depletion_kwh: p
@@ -933,6 +942,32 @@ mod refinement_tests {
             step(&p, 0, &command, &mut initial(&p)).unwrap_err(),
             "shared_grid_limit"
         );
+    }
+
+    #[test]
+    fn ev_usage_reduces_charge_without_drawing_from_the_grid() {
+        let mut p = crate::witnesses::tests::problem(2);
+        p.initial.ev_kwh = Some(3.0);
+        p.slots[0].start_seconds = -450.0;
+        p.slots[0].ev_usage_kw = Some(8.0);
+        p.slots[1].ev_usage_kw = Some(12.0);
+        p.slots[1].ev_available = false;
+        let command = Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        };
+        let mut state = initial(&p);
+        let first = step(&p, 0, &command, &mut state).unwrap();
+        let second = step(&p, 1, &command, &mut state).unwrap();
+        assert_eq!(first.ev_kwh, Some(2.0));
+        assert_eq!(first.ev_usage_unserved_kwh, 0.0);
+        assert_eq!(second.ev_kwh, Some(0.0));
+        assert_eq!(second.ev_usage_unserved_kwh, 1.0);
+        assert_eq!(first.net_w, 0.0);
+        assert_eq!(second.net_w, 0.0);
     }
 
     fn work() -> Work {

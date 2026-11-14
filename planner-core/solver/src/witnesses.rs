@@ -895,6 +895,7 @@ pub(crate) mod tests {
                     export_price: 0.0,
                     published: true,
                     ev_available: true,
+                    ev_usage_kw: None,
                     ev_current_ceiling_a: None,
                     pool_auxiliary_dispatch: None,
                 })

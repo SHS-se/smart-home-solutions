@@ -45,6 +45,8 @@ export interface ReadySlot {
   export_price: number;
   published: boolean;
   ev_available: boolean;
+  /** Estimated driving and parked battery use, in battery kWh per elapsed hour. */
+  ev_usage_kw?: number;
   ev_current_ceiling_a: number | null;
   pool_auxiliary_dispatch: { fixed_w: number; on_w: number } | null;
 }

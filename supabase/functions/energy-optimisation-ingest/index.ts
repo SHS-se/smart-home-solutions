@@ -17,6 +17,7 @@ import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_s
 import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { readPlanningSellPrices } from "../_shared/planning-sell-prices.ts";
 import { evReplacementPrice } from "../_shared/planner-wasm/ev-price-history.ts";
+import { captureEvUsage } from "../_shared/ev-usage-capture.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { OptimisationPlan, FixedEnergyPlan } from "../_shared/planner/planning-contracts.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1123,7 +1124,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // they travel together: one round trip's wait instead of five. Each
       // result is judged below in the order it used to be read. The optional
       // model read settles to a value, so its failure stays a warning.
-      const [targetResult, settingsResult, importLimitW, modelCapture, { data: fixedState, error: fixedReadError }] = await Promise.all([
+      const [targetResult, settingsResult, importLimitW, modelCapture, { data: fixedState, error: fixedReadError }, evUsage] = await Promise.all([
         supabase.from("energy_optimisation_comfort_targets")
           .select("pool_target_c, ev_floor_soc").eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
@@ -1136,6 +1137,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           (bundle): { bundle: DeviceModelBundle | null; error: unknown } => ({ bundle, error: null }),
           (error: unknown): { bundle: DeviceModelBundle | null; error: unknown } => ({ bundle: null, error })),
         supabase.rpc("get_energy_replan_state", { p_home_id: auth.homeId }),
+        captureEvUsage(supabase, auth.homeId, snapshot),
       ]);
       if (targetResult.error) throw new Error(targetResult.error.message);
       if (importLimitW === null) {
@@ -1258,7 +1260,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           supabase.from("energy_planner_rule_policy").select("criteria").eq("id", true).single(),
           sellPriceLookup,
         ]);
-        snapshot = planningSnapshot;
+        snapshot = { ...planningSnapshot, ev_weekday_usage: evUsage.usage,
+          planning_warnings: mergePlanningWarnings(planningSnapshot.planning_warnings, evUsage.warnings) };
         const priceOutlook = { ...prepared.price_outlook, ...(sellPrices ? { shadow_export_sek_per_kwh: sellPrices } : {}) };
         if (rulesError) throw new PlanningError(rulesError.message,
           rulesError.code === "PGRST116" ? "planner_not_configured" : "planning_input_read_failed", 503,

@@ -50,6 +50,7 @@ export const readyProblemSchema = z.object({
     export_price: number,
     published: z.boolean(),
     ev_available: z.boolean(),
+    ev_usage_kw: number.nonnegative().optional(),
     ev_current_ceiling_a: number.int().nonnegative().nullable(),
     pool_auxiliary_dispatch: z.object({ fixed_w: number.nonnegative(), on_w: number.nonnegative() }).strict().nullable(),
   }).array().nonempty(),

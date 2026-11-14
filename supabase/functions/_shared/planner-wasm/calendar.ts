@@ -10,7 +10,7 @@ export function localMonths(starts: readonly string[], timeZone: string): number
 }
 
 /** Local date at immutable capture, for matured-day forecast evidence. */
-export function localDay(start: string, timeZone: string): string {
+export function localDay(start: string | number, timeZone: string): string {
   const parts = dayFormatter(timeZone).formatToParts(new Date(start));
   const value = (type: string) => parts.find(part => part.type === type)!.value;
   return `${value("year")}-${value("month")}-${value("day")}`;

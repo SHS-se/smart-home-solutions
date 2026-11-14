@@ -48,6 +48,7 @@ const quarter = z.object({
   net_w: z.number().finite(),
   battery_kwh: z.number().finite().nullable(),
   ev_kwh: z.number().finite().nullable(),
+  ev_usage_unserved_kwh: z.number().finite().nonnegative(),
   pool_c: z.number().finite().nullable(),
   pool_pending_heat_kwh: z.number().finite().nonnegative().nullable(),
   pool_source_depletion_kwh: z.number().finite().nonnegative().nullable(),

@@ -37,6 +37,8 @@ pub struct Slot {
     pub export_price: f64,
     pub published: bool,
     pub ev_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ev_usage_kw: Option<f64>,
     /// Observed house capacity for this absolute opportunity, not a charger rating.
     #[serde(deserialize_with = "Option::deserialize")]
     pub ev_current_ceiling_a: Option<u32>,
@@ -213,6 +215,7 @@ pub struct Quarter {
     pub curtailed_w: f64,
     pub battery_kwh: Option<f64>,
     pub ev_kwh: Option<f64>,
+    pub ev_usage_unserved_kwh: f64,
     pub pool_c: Option<f64>,
     pub pool_pending_heat_kwh: Option<f64>,
     pub heater_state: Option<HeaterState>,
@@ -327,6 +330,11 @@ fn validate(p: &Problem) -> Result<(), String> {
             || c.breach_permille.len() < p.slots.len()
     }) {
         return bad("invalid_car_policy");
+    }
+    if p.slots.iter().any(|s| {
+        s.ev_usage_kw.is_some_and(|kw| !kw.is_finite() || kw < 0.0)
+    }) {
+        return bad("invalid_ev_usage");
     }
     if p.slots.iter().any(|s| {
         s.pool_auxiliary_dispatch.as_ref().is_some_and(|d| {
