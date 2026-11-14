@@ -4,6 +4,8 @@ import { carReadinessLoss } from '../../../supabase/functions/_shared/planner-wa
 import { chargeAcPower, chargeDcPower, dischargeDcPower, outputPower, refinedBatteryFlow, gridKwhPerStoredKwh } from '../../../supabase/functions/_shared/planner/battery-conversion';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
 import { projectBoilerTank } from '../../../supabase/functions/_shared/boiler-consumption';
+import { demandLevel } from '../../../supabase/functions/_shared/planner/demand-outlook';
+import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
 // A planner hands back decisions: how much power the pool, the car and the
@@ -48,7 +50,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 34;
+export const REFEREE_VERSION = 35;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -193,6 +195,10 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   // the measured heater draw is the water used, heat only replaces it, and a
   // block leaves it owed. Recorded future demand belongs only in this evaluation.
   const needW = hotWaterNeed(c, h, world);
+  // The native adapter levels the non-boiler forecast before adding its scheduled
+  // boiler draw. An older plan without that projection uses the original load.
+  const forecastLevel = world === 'told' && d.hot_water_expected_w
+    ? demandLevel(c.recorded.history.demand_days, localDay(c.start, c.timezone))?.factor ?? 1 : 1;
   const waterW = new Float64Array(QUARTERS), waterRemaining = new Float64Array(QUARTERS);
   if (needW) {
     const need = Array.from({ length: QUARTERS }, (_, i) => Math.min(needW[i], Math.max(0, baseW[i])));
@@ -259,14 +265,16 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     const evRoomW = Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000);
     const evW = clip(i, 'ev_full', evRequestW, evRoomW, evRoomW === 0 && (!measured || !evUsage));
     // Binary allowance with completion of an active heating run.
-    let fixedW = baseW[i];
+    let fixedW = baseW[i] * forecastLevel;
     if (needW && out.water) {
       // A heater meter reading more than the house drew in all is a mismatch between meters: the house's own reading holds.
       const need = Math.min(needW[i], Math.max(0, baseW[i]));
       const otherW = baseW[i] - need;
-      fixedW = otherW + waterW[i];
+      fixedW = otherW * forecastLevel + waterW[i];
       out.water.w[i] = waterW[i]; out.water.owedKwh[i] = waterRemaining[i];
       out.water.permitted[i] = d.hot_water?.[i]?.kind !== 'inhibit' || waterW[i] > 0 ? 1 : 0;
+    } else if (world === 'told' && d.hot_water_expected_w) {
+      fixedW += d.hot_water_expected_w[i];
     }
     const grossW = fixedW + poolW + evW;
     const chargeMaxAc = chargeAcPower(h.battery.conversion, h.battery.charge_max_w, solarW[i], grossW);

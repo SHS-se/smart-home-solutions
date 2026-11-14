@@ -79,6 +79,25 @@ Deno.test('in the world the planner was told the heater runs as the plan expecte
   assertEquals(Array.from(told.water!.w), quarters(() => NEED_W));
 });
 
+Deno.test('battery supply is assessed against the adjusted forecast the planner received', () => {
+  const c = measured();
+  c.recorded.history.demand_days = Array.from({ length: 7 }, (_, i) => ({
+    day: `2026-09-${17 + i}`, forecast_kwh: 20, actual_kwh: 28,
+  }));
+  const input = hotWaterInput(c, HOUSEHOLD)!;
+  const watts = input.other_house_w[0];
+  assert(watts > 600);
+  const decisions = { ...commanding(() => ({ kind: 'inhibit' })),
+    hot_water_expected_w: quarters(() => 0), ev_w: quarters(i => i === 0 ? 3450 : 0),
+    battery_discharge_w: quarters(i => i === 0 ? watts : 0) };
+  assertAlmostEquals(simulate(c, HOUSEHOLD, decisions, 'told').baseW[0], watts);
+  assertEquals(simulate(c, HOUSEHOLD, decisions, 'told').violations, []);
+  assertAlmostEquals(simulate(c, HOUSEHOLD, decisions).baseW[0], 600);
+  decisions.battery_discharge_w[0] += 100;
+  assertEquals(simulate(c, HOUSEHOLD, decisions, 'told').violations,
+    [{ quarter: 0, kind: 'battery_supply', clipped_w: 100 }]);
+});
+
 Deno.test('boiler permission never shifts heat-pump preheating or mixed hot-water totals', () => {
   const c = measured();
   c.base_load_forecast_w = quarters(() => 2274);

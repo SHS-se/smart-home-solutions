@@ -42,9 +42,10 @@ Deno.test("the current native artifact has a stable planner identity",async()=>{
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
 const BATTERY_CONVERSION = `${PLANNER_DIR}/battery-conversion.ts`;
 const EV_USAGE = `${PLANNER_DIR}/ev-usage.ts`;
+const DEMAND_OUTLOOK = `${PLANNER_DIR}/demand-outlook.ts`;
 const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
 /** The referee version and every shared physical consumption model. */
-const DEVICE_MODELS_PIN = "34:1aa8c1fcf24617f1";
+const DEVICE_MODELS_PIN = "35:1aa8c1fcf24617f1";
 
 Deno.test("the bench judges every planner with the shared pure physical models", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), ["./battery-conversion.ts"]);
@@ -59,7 +60,7 @@ Deno.test("the bench judges every planner with the shared pure physical models",
   }
   // Every planner version is judged in one physical world, including the shared
   // converter rather than a second battery law embedded in the referee.
-  assertEquals([...fromPlanner].sort(), [BATTERY_CONVERSION, DEVICE_MODELS, EV_USAGE]);
+  assertEquals([...fromPlanner].sort(), [BATTERY_CONVERSION, DEMAND_OUTLOOK, DEVICE_MODELS, EV_USAGE]);
 });
 
 Deno.test("a change to the device models is a change to how every plan is judged", async () => {
