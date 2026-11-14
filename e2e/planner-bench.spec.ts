@@ -744,8 +744,11 @@ test.describe('planner bench', () => {
 
     // Hovering the chart reads one quarter-hour: real, estimate and the gap between them.
     await view.locator('#price-estimate-previous').click();
-    const box = (await view.locator('#price-estimate-chart').boundingBox())!;
-    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5);
+    await expect(view.locator('#price-estimate-title')).toContainText(/2 (Oct|okt)/);
+    const chart = view.locator('#price-estimate-chart');
+    await chart.scrollIntoViewIfNeeded();
+    const point = await chart.locator('[data-day="2026-10-04"] > rect').first().boundingBox();
+    await page.mouse.move(point!.x + point!.width / 2, point!.y + point!.height / 2);
     await expect(view.locator('#price-estimate-tooltip')).toContainText(/(Error|Fel): [+-]\d\.\d\d/);
 
     // The link opens the same tab and estimate.
