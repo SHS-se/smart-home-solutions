@@ -1,8 +1,11 @@
 import React from 'react';
 import type { EnergySeriesId } from './series-interaction';
+import { hatchBackground } from './palette';
 
 export interface SeriesControlProps {
   id: EnergySeriesId; name: string; value?: string; colour: string;
+  /** Keyed by a hatched swatch, for an estimate drawn as a hatched area. */
+  hatched?: boolean;
   right: number; width: number; y: number; anchorY?: number;
   hidden: boolean; active: boolean;
   onPoint: (id: EnergySeriesId | null) => void;
@@ -11,7 +14,7 @@ export interface SeriesControlProps {
 }
 
 /** Every panel uses the same compact, keyboard-operable key. */
-export default function SeriesControl({ id, name, value, colour, right, width, y, anchorY,
+export default function SeriesControl({ id, name, value, colour, hatched = false, right, width, y, anchorY,
   hidden, active, onPoint, onFocusSeries, onToggle }: SeriesControlProps) {
   return <g data-series-control={id} data-room-label={id.startsWith('room:') ? id.slice(5) : undefined}
     onPointerEnter={() => onPoint(id)} onPointerLeave={() => onPoint(null)}>
@@ -26,7 +29,9 @@ export default function SeriesControl({ id, name, value, colour, right, width, y
         onFocus={() => onFocusSeries(id)} onBlur={() => onFocusSeries(null)}
         onClick={() => onToggle(id)}
         className={`flex h-[18px] w-full cursor-pointer items-center gap-1.5 rounded-sm text-left text-[12px] leading-[18px] text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${active ? 'font-semibold' : ''} ${hidden ? 'opacity-60' : ''}`}>
-        <span aria-hidden="true" className="h-0.5 w-2 shrink-0" style={{ backgroundColor: colour }} />
+        {hatched
+          ? <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-[1px]" style={{ background: hatchBackground(colour) }} />
+          : <span aria-hidden="true" className="h-0.5 w-2 shrink-0" style={{ backgroundColor: colour }} />}
         <span className={`min-w-0 flex-1 truncate ${hidden ? 'line-through' : ''}`}>{name}</span>
         {value && <span className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground">{value}</span>}
       </button>

@@ -54,6 +54,12 @@ export interface BenchSeries {
   /** Home-battery SOC at the case start, percent; null when the series has no initial reading. */
   homeStartSoc: number | null;
   carSoc: (number | null)[];
+  /**
+   * Percentages: the car with the same charging and none of the inferred use
+   * the referee subtracted. Absent on a case without a driving outcome, and on
+   * results judged before referee version 36.
+   */
+  carSocFromCharging?: number[];
   /** Range in the car, km. */
   carKm?: number[];
   /** Default graded readiness loss per quarter, in SEK, before rule overrides. */

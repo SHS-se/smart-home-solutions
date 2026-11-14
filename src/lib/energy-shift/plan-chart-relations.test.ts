@@ -17,7 +17,9 @@ Deno.test('linked spotlight follows explicit pool, car and room ownership, not c
   });
   const lit = (id: EnergySeriesId) => [...spotlightSeries(id, [...BUILTIN_RELATIONS, ...relations])!].sort();
   equal(lit('temperature:pool'), ['load:pool-pump', 'temperature:pool']);
-  equal(lit('soc:car'), ['load:car', 'soc:car']);
+  equal(lit('soc:car'), ['load:car', 'soc:car', 'soc:car-usage']);
+  // Estimated driving belongs to the car battery, not to its charger.
+  equal(lit('soc:car-usage'), ['soc:car', 'soc:car-usage']);
   equal(lit('room:bath'), ['load:shared-heater', 'room:bath']);
   equal(lit('load:shared-heater'), ['load:shared-heater', 'room:bath', 'room:hall']);
   equal(lit('soc:home'), ['flow:battery-in', 'flow:battery-out', 'soc:home']);

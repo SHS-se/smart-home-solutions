@@ -59,6 +59,11 @@ export interface TimelineRow {
   /** Fractions, measured on the past side and planned on the future side. */
   batterySoc: number | null;
   evSoc: number | null;
+  /**
+   * Plan side, where the planner estimated driving: the car's level with the
+   * same charging and no use. The gap down to `evSoc` is that estimate.
+   */
+  evSocFromCharging?: number;
   deviceW: Record<string, number>;
   costSek: number | null;
   /**
@@ -248,6 +253,8 @@ export const buildEnergyTimeline = ({
       ...(slot.battery_instruction ? { batteryInstruction: slot.battery_instruction } : {}),
       batterySoc: slot.battery_soc,
       evSoc: slot.ev_soc,
+      ...(slot.ev_soc !== null && slot.ev_soc_from_charging !== undefined
+        ? { evSocFromCharging: slot.ev_soc_from_charging } : {}),
       deviceW: { ...slot.device_loads_w },
       costSek: slot.binding
         ? (slot.import_cost_sek ?? 0) - (slot.export_revenue_sek ?? 0)

@@ -1,6 +1,7 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1';
 import {
   linearScale,
+  midpointBandPath,
   midpointLinePath,
   niceTicks,
   placeBandLabels,
@@ -82,6 +83,14 @@ Deno.test('state of charge is drawn through quarter midpoints', () => {
   // than a rate held across it, so it is the one series not drawn stepped.
   const path = midpointLinePath([10], x, y);
   assertEquals(path, `M${x(0.5)},0`);
+});
+
+Deno.test('a band between two levels follows both midpoint lines and skips unknown quarters', () => {
+  // Quarter 1 has no lower level, so the band is two runs, never bridged.
+  const path = midpointBandPath([4, null, 2, 1], [5, 5, 4, 4], x, y);
+  assertEquals(path, `M${x(0.5)},50L${x(0.5)},60Z`
+    + `M${x(2.5)},60L${x(3.5)},60L${x(3.5)},90L${x(2.5)},80Z`);
+  assertEquals(midpointBandPath([4, 3], [null, null], x, y), '');
 });
 
 Deno.test('ticks are numbers a person recognises', () => {

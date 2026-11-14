@@ -31,6 +31,8 @@ export interface PlanPanelRow {
   /** Percentages, not fractions. */
   homeSoc: number | null;
   evSoc: number | null;
+  /** Planned quarters with estimated driving: the car's level without it, per cent. */
+  evSocFromCharging?: number;
   importPriceSekPerKwh: number | null;
   exportPriceSekPerKwh: number | null;
   /**
@@ -89,6 +91,7 @@ export function projectPlanChart(input: {
       ...(row.batteryInstruction ? { batteryInstruction: row.batteryInstruction } : {}),
       homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
       evSoc: row.evSoc === null ? null : row.evSoc * 100,
+      ...(row.evSocFromCharging !== undefined ? { evSocFromCharging: row.evSocFromCharging * 100 } : {}),
       importPriceSekPerKwh: prices.kind !== 'live' ? row.importPriceSekPerKwh : priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
       exportPriceSekPerKwh: prices.kind !== 'live' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
       importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),

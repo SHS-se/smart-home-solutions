@@ -11,6 +11,33 @@ Documentation only; replacement implementation and coordinated rollout remain pe
 
 Status: current presentation and evidence requirements, reconciled 2026-09-06. Dated screen layouts and component names are retained in history, not treated as competing navigation requirements.
 
+## Estimated car use in the storage panel — 14 November 2026
+
+Since the weekday EV usage forecast (`supabase/functions/_shared/planner/ev-usage.ts`),
+a planned car SOC (`ev_soc`) includes the estimated driving and parked use spread
+over each local day. That fall is a guess about the owner, not a measurement and
+not something SHS will do, so a plain car line read as if the battery would really
+drain while parked at home.
+
+Decision: the planned car line stays as it is, solid, because it is still the plan's
+projection. Above it, a band hatched in the car colour reaches up to the
+charge-only SOC (`ev_soc_from_charging`): where the car would be with the same
+charging and no use. The band's height is the estimated use that charging has not
+yet replaced, so it shrinks to nothing when a later charge restores the level.
+Measured quarters never have a band; their fall is real.
+
+- Hatched rather than dashed: dashed already means "the compared planner" in the
+  bench storage panel and "modelled, not a market price" in the price panel. The
+  hatch has one meaning everywhere it is drawn.
+- Labelled once, by the band's own series key, "Uppskattad körning / Estimated
+  driving", showing the band height at the end of the period. The quarter
+  details list it beside the car battery as percentage points. The storage heading
+  and the car line are not relabelled.
+- The same drawing is used by the live plan, the planner bench and the app. The
+  bench's band uses the referee's charge-only SOC beside the use it inferred from
+  the recorded SOC and charger history (`carSocFromCharging`, referee version 36).
+  The app passes `ev_soc_from_charging` through its schedule projection.
+
 ## One plan, multiple views
 
 Power, thermal state, prices/economics, storage, and control evidence are projections of the same plan. Share selected home, scenario, time range, and quarter where relevant. Show published versus modelled prices on the plan's time axis. A curve editor is configuration, not a second source of decision evidence.

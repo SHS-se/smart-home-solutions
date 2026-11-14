@@ -45,7 +45,7 @@ const EV_USAGE = `${PLANNER_DIR}/ev-usage.ts`;
 const DEMAND_OUTLOOK = `${PLANNER_DIR}/demand-outlook.ts`;
 const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
 /** The referee version and every shared physical consumption model. */
-const DEVICE_MODELS_PIN = "35:1aa8c1fcf24617f1";
+const DEVICE_MODELS_PIN = "36:1aa8c1fcf24617f1";
 
 Deno.test("the bench judges every planner with the shared pure physical models", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), ["./battery-conversion.ts"]);

@@ -1110,6 +1110,48 @@ test.describe('requesting a replan', () => {
     await chart.screenshot({ path: testInfo.outputPath('consumption-stack-order.png') });
   });
 
+  test('estimated driving is a hatched band above the planned car, never on measured quarters', async ({ page }, testInfo) => {
+    const start = Date.parse(CAPTURED_AT);
+    const evBattery = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-6-dispatched-ev-plan.json', import.meta.url), 'utf8')).plan.ev_battery;
+    // Synthetic: no charging, and a steady estimated use of 1 percentage point per quarter.
+    replan.publishedPlan = { ...PLAN, capabilities: { ...PLAN.capabilities, ev: true }, ev_battery: evBattery,
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot,
+        ev_soc: Math.max(0.2, 0.8 - (i + 1) / 100), ev_soc_from_charging: 0.8, ev_usage_estimate_kwh: 0.6, ev_usage_unserved_kwh: 0,
+      })) } },
+    } as typeof PLAN;
+    replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(),
+      total_load_kwh: 0.65, ev_soc: 0.82 }));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    const storage = page.locator('#plan-storage');
+    const band = storage.locator('[data-series="soc:car-usage"]');
+    await expect(band.locator('path').first()).toHaveAttribute('fill', /^url\(#energy-car-usage-/);
+    // The band starts on the plan side: measured quarters carry their real fall.
+    const bandStart = await band.locator('path').first().evaluate(path => Number(/^M([\d.]+)/.exec(path.getAttribute('d')!)![1]));
+    const divider = await storage.evaluate(element => {
+      const svg = element.closest('svg')!;
+      return Number(svg.getAttribute('data-divider-index'));
+    });
+    expect(divider).toBeGreaterThan(0);
+    const carLine = await storage.locator('[data-series="soc:car"] path').last().getAttribute('d');
+    expect(Number(/^M([\d.]+)/.exec(carLine!)![1])).toBeLessThan(bandStart);
+    const control = storage.locator('[data-series-control="soc:car-usage"]');
+    await expect(control).toContainText(/Uppskattad körning|Estimated driving/);
+    await expect(control).toContainText(/−\d+%/);
+    await storage.locator('[data-series-control="soc:car"] button').hover();
+    await expect(band).toHaveAttribute('opacity', '1');
+    await page.mouse.move(0, 0);
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    await chart.focus();
+    await chart.press('ArrowRight');
+    await expect(page.getByRole('tooltip')).toContainText(/(Uppskattad körning|Estimated driving)−\d+ %/);
+    await chart.press('ArrowLeft');
+    await chart.press('ArrowLeft');
+    await expect(page.getByRole('tooltip')).not.toContainText(/Uppskattad körning|Estimated driving/);
+    await page.keyboard.press('Escape');
+    await storage.screenshot({ path: testInfo.outputPath('estimated-driving.png'), animations: 'disabled' });
+  });
+
   test('missing device readings contribute zero and preserve base load in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{

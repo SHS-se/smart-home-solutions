@@ -50,7 +50,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 35;
+export const REFEREE_VERSION = 36;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -142,6 +142,8 @@ export interface Simulation {
   costSek: Float64Array;
   cost: number;
   evUsageUnservedKwh: number;
+  /** Where the car would be with the same charging and none of the use subtracted; null without use. */
+  evKwhFromCharging: Float64Array | null;
   violations: Violation[];
   start: { batteryKwh: number; poolC: number; poolPendingHeatKwh: number; poolSourceDepletionKwh: number; evKwh: number };
 }
@@ -239,6 +241,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   const heater = publishHeater(h.pool.heater);
   let heaterState = c.start_state.pool_heater;
   let evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
+  let evKwhFromCharging = evKwh;
   const buy = c.recorded.prices.import_sek_per_kwh, sell = c.recorded.prices.export_sek_per_kwh;
   const air = c.recorded.outdoor_temperature_c;
 
@@ -249,7 +252,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), poolPendingHeatKwh: new Float64Array(QUARTERS), poolSourceDepletionKwh: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
     baseW: new Float64Array(QUARTERS),
     water: needW && { w: new Float64Array(QUARTERS), owedKwh: new Float64Array(QUARTERS), permitted: new Uint8Array(QUARTERS) },
-    costSek: new Float64Array(QUARTERS), cost: 0, evUsageUnservedKwh: 0, violations, start: { batteryKwh, poolC, poolPendingHeatKwh, poolSourceDepletionKwh, evKwh },
+    costSek: new Float64Array(QUARTERS), cost: 0, evUsageUnservedKwh: 0, evKwhFromCharging: evUsage ? new Float64Array(QUARTERS) : null, violations, start: { batteryKwh, poolC, poolPendingHeatKwh, poolSourceDepletionKwh, evKwh },
   };
 
   for (let i = 0; i < QUARTERS; i++) {
@@ -313,6 +316,12 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     poolPendingHeatKwh = projected.pending_heat_kwh;
     poolSourceDepletionKwh = projected.source_depletion_kwh ?? 0;
     evKwh = evW > 0 && evW === evRoomW ? carLimitKwh : evKwh + evW * h.car.battery.charge_efficiency * HOURS / 1_000;
+    if (out.evKwhFromCharging) {
+      // Display only: the same charging into a car nobody drives, capped as the planner caps it.
+      evKwhFromCharging = Math.min(Math.max(evKwhFromCharging, carLimitKwh),
+        evKwhFromCharging + evW * h.car.battery.charge_efficiency * HOURS / 1_000);
+      out.evKwhFromCharging[i] = evKwhFromCharging;
+    }
     if (evUsage) {
       out.evUsageUnservedKwh += Math.max(0, evUsage[i] - evKwh);
       evKwh = Math.max(0, evKwh - evUsage[i]);
@@ -488,6 +497,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.batteryIdleW!.push(r1(sim.batteryIdleW[i]));
     series.homeSoc.push(r1(sim.batteryKwh[i] / h.battery.capacity_kwh * 100));
     series.carSoc.push(r1(sim.evKwh[i] / h.car.battery.capacity_kwh * 100));
+    if (sim.evKwhFromCharging) (series.carSocFromCharging ??= []).push(r1(sim.evKwhFromCharging[i] / h.car.battery.capacity_kwh * 100));
     series.carKm!.push(r1(sim.evKwh[i] / h.car.battery.kwh_per_km));
     // The car is planned whether plugged in or not; the bench lets it charge whenever the plan says.
     series.carConnected.push(1);

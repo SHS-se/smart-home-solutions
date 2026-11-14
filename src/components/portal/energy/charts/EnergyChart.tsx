@@ -23,7 +23,7 @@
 import React, { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
-  linearScale, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
+  linearScale, midpointBandPath, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
   stepAreaPath, stepBandPath, stepLinePath, type BandLabelPlacement, type Scale,
 } from '@/lib/energy-shift/plan-chart-geometry';
 import {
@@ -32,7 +32,7 @@ import {
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
-import { PLAN_COLOURS } from './palette';
+import { PLAN_COLOURS, hatchBackground } from './palette';
 import { scoreColour, signedPoints } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
@@ -112,6 +112,9 @@ export interface EnergyQuarterAudit {
     }[];
   }[];
 }
+
+/** Percentage points of estimated car use below which nothing is drawn or listed. */
+const CAR_USAGE_SHOWN = 0.5;
 
 /** How the planner a plan is compared with is drawn, in every panel that draws it. */
 const COMPARED_DASH = '5 3';
@@ -495,8 +498,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     if (!next.delete(id)) next.add(id);
     return next;
   });
-  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number) => (
-    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY}
+  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, hatched = false) => (
+    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} hatched={hatched}
       right={right} width={viewWidth} hidden={hidden.has(id)} active={spotlight?.has(id) ?? false}
       onPoint={point} onFocusSeries={focus} onToggle={toggle} />
   );
@@ -504,6 +507,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
   const hovered = hover === null ? null : rows[hover];
   const comparedNote = storeLines ? ` · ${t('streckat', 'dashed')} = ${storeLines.name}` : '';
+  // The car without the driving the planner estimated; only planned quarters have it.
+  const carUsageHatchId = `energy-car-usage-${chartId}`;
+  const carWithoutUse = rows.map(row => row.evSoc === null ? null : row.evSocFromCharging ?? null);
+  const showCarUsage = hasEvBattery && rows.some(row => row.evSoc !== null && row.evSocFromCharging !== undefined
+    && row.evSocFromCharging - row.evSoc >= CAR_USAGE_SHOWN);
+  const lastRow = rows[n - 1];
+  const carUsageEnd = lastRow && lastRow.evSoc !== null && lastRow.evSocFromCharging !== undefined
+    ? Math.max(0, lastRow.evSocFromCharging - lastRow.evSoc) : null;
   const planWidth = dividerIndex >= n ? 0 : x(n) - x(dividerIndex);
 
   return (
@@ -538,8 +549,15 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             if (index !== null) onQuarterClick?.(index);
           }}
         >
-          {bands && (
-            <defs>
+          <defs>
+            {/* Estimated car use: a hatch, because dashes already mean the
+                compared planner and modelled prices. */}
+            <pattern id={carUsageHatchId} patternUnits="userSpaceOnUse" width={5} height={5}
+              patternTransform="rotate(45)">
+              <rect width={5} height={5} fill={colours.ev} fillOpacity={0.08} />
+              <line x1={0} y1={0} x2={0} y2={5} stroke={colours.ev} strokeWidth={2} strokeOpacity={0.55} />
+            </pattern>
+            {bands && (
               <linearGradient
                 id={gradientId} gradientUnits="userSpaceOnUse"
                 x1={x(0)} y1={0} x2={x(n)} y2={0}
@@ -552,8 +570,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   />
                 ))}
               </linearGradient>
-            </defs>
-          )}
+            )}
+          </defs>
 
           {/* Everything right of now is forecast. Said once, across every
               panel, rather than as a faint tint inside one of them. */}
@@ -753,6 +771,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               <path d={stepLinePath(rows.map(row => row.homeSoc), x, socY)} fill="none"
                 stroke={PLAN_COLOURS.battery} strokeWidth={spotlight?.has('soc:home') ? 3 : 2} />
             </g>}
+            {showCarUsage && <g {...presentation('soc:car-usage')}>
+              <title>{t('Uppskattad körning: bilbatteriet utan körning överst, planen nederst',
+                'Estimated driving: the car battery without driving above, the plan below')}</title>
+              <path d={midpointBandPath(rows.map(row => row.evSoc), carWithoutUse, x, socY)}
+                fill={`url(#${carUsageHatchId})`} />
+              <path d={midpointLinePath(carWithoutUse, x, socY)} fill="none"
+                stroke={colours.ev} strokeWidth={1} strokeOpacity={0.45} />
+            </g>}
             {hasEvBattery && <g {...presentation('soc:car')}>
               {storeLines && <path d={midpointLinePath(storeLines.evSoc.slice(0, n), x, socY)} fill="none"
                 stroke={colours.ev} strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH} />}
@@ -763,11 +789,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               const stores = [
                 ...(hasBattery ? [{ id: 'soc:home' as const, name: t('Hembatteri', 'Home battery'), colour: PLAN_COLOURS.battery, value: rows[n - 1]?.homeSoc }] : []),
                 ...(hasEvBattery ? [{ id: 'soc:car' as const, name: t('Bilbatteri', 'Car battery'), colour: colours.ev, value: rows[n - 1]?.evSoc }] : []),
+                ...(showCarUsage ? [{ id: 'soc:car-usage' as const, name: t('Uppskattad körning', 'Estimated driving'), colour: colours.ev,
+                  value: carUsageEnd === null ? undefined : (rows[n - 1].evSoc! + carUsageEnd) / 2, label: carUsageEnd === null ? '—' : Math.round(carUsageEnd) === 0 ? '0%' : `−${Math.round(carUsageEnd)}%`, hatched: true }] : []),
               ].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
               const anchors = stores.map(store => store.value == null ? soc.top + 12 : socY(store.value));
               const positions = placeSeriesLabels(anchors, soc.top, soc.height);
               return stores.map((store, index) => control(store.id, store.name, store.colour, positions[index],
-                store.value == null ? '—' : `${Math.round(store.value)}%`, store.value == null ? undefined : anchors[index]));
+                'label' in store ? store.label : store.value == null ? '—' : `${Math.round(store.value)}%`,
+                store.value == null ? undefined : anchors[index], 'hatched' in store));
             })()}
           </g>}
 
@@ -1105,7 +1134,10 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 174 + (row.estimatedEnergy ? 40 : 0) + (running.length + (storeLines ? 3 : 0) + rooms.length) * 16;
+  const carUsage = hasEvBattery && row.evSoc !== null && row.evSocFromCharging !== undefined
+    && row.evSocFromCharging - row.evSoc >= CAR_USAGE_SHOWN ? row.evSocFromCharging - row.evSoc : null;
+  const estimated = 174 + (row.estimatedEnergy ? 40 : 0)
+    + (running.length + (storeLines ? 3 : 0) + (carUsage === null ? 0 : 1) + rooms.length) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1187,6 +1219,12 @@ const PlanTooltip: React.FC<{
             value={`${Math.round(row.evSoc)} %`}
           />
         )}
+        {carUsage !== null && (
+          <Reading
+            name={t('Uppskattad körning', 'Estimated driving')} swatch={hatchBackground(colours.ev)}
+            value={`−${Math.round(carUsage)} %`}
+          />
+        )}
         {hasEvBattery && compared(
           t('Bilbatteri', 'Car battery'), colours.ev, storeLines?.evSoc, value => `${Math.round(value)} %`,
         )}
@@ -1220,14 +1258,14 @@ const PlanTooltip: React.FC<{
  * Colouring the label itself would put a 2:1 yellow on a light popover, which
  * is the one place the chart's palette cannot survive being text.
  */
-const Reading: React.FC<{ name: string; value: string; colour?: string }> = ({
-  name, value, colour,
+const Reading: React.FC<{ name: string; value: string; colour?: string; swatch?: string }> = ({
+  name, value, colour, swatch,
 }) => (
   <div className="flex items-baseline justify-between gap-3">
     <span className="flex min-w-0 items-baseline gap-1.5">
       <span
         className="mt-px h-2 w-2 shrink-0 rounded-sm"
-        style={{ backgroundColor: colour ?? 'transparent' }}
+        style={swatch ? { background: swatch } : { backgroundColor: colour ?? 'transparent' }}
         aria-hidden="true"
       />
       <span className="truncate">{name}</span>

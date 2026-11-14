@@ -3,7 +3,7 @@ export type EnergySeriesId =
   | 'price:buy' | 'price:sell'
   | 'flow:solar' | 'flow:battery-in' | 'flow:battery-out' | 'flow:grid-in' | 'flow:grid-out'
   | 'base' | 'solar:outline' | `load:${string}`
-  | 'soc:home' | 'soc:car' | 'temperature:pool' | `room:${string}` | `cost:${string}`;
+  | 'soc:home' | 'soc:car' | 'soc:car-usage' | 'temperature:pool' | `room:${string}` | `cost:${string}`;
 
 export type EnergySeriesRelation = readonly EnergySeriesId[];
 
@@ -11,6 +11,7 @@ export const BUILTIN_RELATIONS: readonly EnergySeriesRelation[] = [
   ['flow:battery-in', 'flow:battery-out', 'soc:home'],
   ['flow:grid-in', 'flow:grid-out'],
   ['flow:solar', 'solar:outline'],
+  ['soc:car', 'soc:car-usage'],
 ];
 
 /** Direct relationships only: a shared heater must not link unrelated room meters transitively. */

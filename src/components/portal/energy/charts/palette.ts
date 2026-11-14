@@ -17,3 +17,6 @@ export const PLAN_COLOURS = {
   waterLine: 'var(--plan-water-line)',
 } as const;
 
+/** The HTML counterpart of the chart's hatch pattern, for keys and quarter details. */
+export const hatchBackground = (colour: string) =>
+  `repeating-linear-gradient(135deg, ${colour} 0 1.5px, transparent 1.5px 3.5px)`;

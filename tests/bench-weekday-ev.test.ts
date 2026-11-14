@@ -51,3 +51,20 @@ Deno.test("recorded use beyond stored charge stays visible as unserved kWh", () 
   assertEquals(result.evUsageUnservedKwh, 2);
   assertEquals(result.netW[0], 500);
 });
+
+Deno.test("the bench chart can show recorded use as the gap below the charge-only car", () => {
+  const c = world({ start: { ev: { soc: 0.5 } } });
+  const usage = quarters(i => i < 8 ? 0.5 : 0);
+  c.recorded.actual = { base_load_w: quarters(() => 500), solar_w: quarters(() => 0), ev_usage_kwh: usage };
+  const d = plan();
+  const result = simulate(c, HOUSEHOLD, d);
+  const fromCharging = result.evKwhFromCharging!;
+  // The gap is the use the schedule's own charging has not yet replaced.
+  assertAlmostEquals(fromCharging[7] - result.evKwh[7], 4, 1e-9);
+  for (let i = 0; i < fromCharging.length; i++) {
+    assertEquals(fromCharging[i] >= result.evKwh[i] - 1e-9, true);
+  }
+  // Without a driving outcome there is nothing to draw.
+  const told = world({ start: { ev: { soc: 0.5 } } });
+  assertEquals(simulate(told, HOUSEHOLD, d).evKwhFromCharging, null);
+});
