@@ -48,7 +48,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 33;
+export const REFEREE_VERSION = 34;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -57,6 +57,8 @@ const STEP_TOLERANCE_W = 1;
 
 /** What the planner chose to do, quarter by quarter, W on the AC side. */
 export interface Decisions {
+  /** Case-derived forecast actually applied by this planner, for its told-world checks. */
+  ev_usage_forecast_kwh?: Series;
   pool_w: Series;
   ev_w: Series;
   battery_charge_w: Series;
@@ -113,6 +115,8 @@ export interface Outcome {
   cost_sek: number;
   /** The part of it in quarters whose price was published at the start. */
   published_cost_sek: number;
+  /** Estimated battery demand the schedule could not cover. Absent without observed outcome evidence. */
+  ev_usage_unserved_kwh?: number;
   /** Energy left in the stores at the end, beyond what they started with. */
   terminal: {
     battery_kwh: number; pool_c: number; ev_kwh: number;
@@ -135,6 +139,7 @@ export interface Simulation {
   batteryKwh: Float64Array; poolC: Float64Array; poolPendingHeatKwh: Float64Array; poolSourceDepletionKwh: Float64Array; evKwh: Float64Array;
   costSek: Float64Array;
   cost: number;
+  evUsageUnservedKwh: number;
   violations: Violation[];
   start: { batteryKwh: number; poolC: number; poolPendingHeatKwh: number; poolSourceDepletionKwh: number; evKwh: number };
 }
@@ -202,6 +207,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   }
   // Only a measured window differs from what the planner was told.
   const measured = world === 'recorded' && c.recorded.actual !== undefined;
+  const evUsage = world === 'recorded' ? c.recorded.actual?.ev_usage_kwh : d.ev_usage_forecast_kwh;
   const clip = (quarter: number, kind: ViolationKind, wanted: number, allowed: number, report = true) => {
     if (report && wanted - allowed > CLIP_TOLERANCE_W) violations.push({ quarter, kind, clipped_w: r1(wanted - allowed) });
     return Math.min(wanted, allowed);
@@ -237,7 +243,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), poolPendingHeatKwh: new Float64Array(QUARTERS), poolSourceDepletionKwh: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
     baseW: new Float64Array(QUARTERS),
     water: needW && { w: new Float64Array(QUARTERS), owedKwh: new Float64Array(QUARTERS), permitted: new Uint8Array(QUARTERS) },
-    costSek: new Float64Array(QUARTERS), cost: 0, violations, start: { batteryKwh, poolC, poolPendingHeatKwh, poolSourceDepletionKwh, evKwh },
+    costSek: new Float64Array(QUARTERS), cost: 0, evUsageUnservedKwh: 0, violations, start: { batteryKwh, poolC, poolPendingHeatKwh, poolSourceDepletionKwh, evKwh },
   };
 
   for (let i = 0; i < QUARTERS; i++) {
@@ -251,7 +257,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     out.poolStart.push(projected.start);
     const evRequestW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     const evRoomW = Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000);
-    const evW = clip(i, 'ev_full', evRequestW, evRoomW, evRoomW === 0);
+    const evW = clip(i, 'ev_full', evRequestW, evRoomW, evRoomW === 0 && (!measured || !evUsage));
     // Binary allowance with completion of an active heating run.
     let fixedW = baseW[i];
     if (needW && out.water) {
@@ -299,6 +305,10 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     poolPendingHeatKwh = projected.pending_heat_kwh;
     poolSourceDepletionKwh = projected.source_depletion_kwh ?? 0;
     evKwh = evW > 0 && evW === evRoomW ? carLimitKwh : evKwh + evW * h.car.battery.charge_efficiency * HOURS / 1_000;
+    if (evUsage) {
+      out.evUsageUnservedKwh += Math.max(0, evUsage[i] - evKwh);
+      evKwh = Math.max(0, evKwh - evUsage[i]);
+    }
 
     const netW = grossW + chargeW - dischargeW + battery.battery_idle_w - solarW[i];
     // A car finishing mid-quarter still needs its full current while active.
@@ -387,7 +397,8 @@ export function reachability(c: BenchCase, h: Household): { poolC: number[]; car
   if (h.pool.heater.source && (typeof c.start_state.pool_source_depletion_kwh !== 'number' || !Number.isFinite(c.start_state.pool_source_depletion_kwh) || c.start_state.pool_source_depletion_kwh < 0 || h.pool.heater.source.heat_loss_per_kwh * c.start_state.pool_source_depletion_kwh >= 1)) throw new Error('Measured source model requires initial depletion');
   let poolC = c.start_state.pool_water_c, poolPendingHeatKwh = 0, poolSourceDepletionKwh = c.start_state.pool_source_depletion_kwh ?? 0, evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
   // A car already past its charge limit stays where it is: it cannot be charged further.
-  const ceilingKwh = Math.max(evKwh, evLimitKwh(c, h));
+  const limitKwh = evLimitKwh(c, h);
+  const evUsage = c.recorded.actual?.ev_usage_kwh;
   const out = { poolC: [] as number[], carKm: [] as number[] };
   for (let i = 0; i < QUARTERS; i++) {
     const projected = stepPool(h.pool.store, heater, heaterState, true, { water_c: poolC, pending_heat_kwh: poolPendingHeatKwh, source_depletion_kwh: poolSourceDepletionKwh, outdoor_c: c.recorded.outdoor_temperature_c[i], seconds: HOURS * 3600, stop_c: null });
@@ -395,7 +406,7 @@ export function reachability(c: BenchCase, h: Household): { poolC: number[]; car
     poolC = projected.water_c;
     poolPendingHeatKwh = projected.pending_heat_kwh;
     poolSourceDepletionKwh = projected.source_depletion_kwh ?? 0;
-    evKwh = Math.min(ceilingKwh, evKwh + carMaxW * h.car.battery.charge_efficiency * HOURS / 1_000);
+    evKwh = Math.max(0, Math.min(Math.max(evKwh, limitKwh), evKwh + carMaxW * h.car.battery.charge_efficiency * HOURS / 1_000) - (evUsage?.[i] ?? 0));
     out.poolC.push(Math.round(poolC * 100) / 100);
     out.carKm.push(r1(evKwh / h.car.battery.kwh_per_km));
   }
@@ -408,6 +419,10 @@ export function assertDecisions(d: Decisions): void {
     if (!Array.isArray(values) || values.length !== QUARTERS || !values.every(Number.isFinite)) {
       throw new Error(`Plan decisions are incomplete: ${name} needs ${QUARTERS} finite quarters.`);
     }
+  }
+  const usage = d.ev_usage_forecast_kwh;
+  if (usage !== undefined && (!Array.isArray(usage) || usage.length !== QUARTERS || !usage.every(kwh => Number.isFinite(kwh) && kwh >= 0))) {
+    throw new Error(`EV usage forecast needs ${QUARTERS} nonnegative quarters.`);
   }
 }
 
@@ -494,6 +509,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     + (poolInventoryC(h.pool.store, poolC, sim.poolPendingHeatKwh[QUARTERS - 1]) - poolInventoryC(h.pool.store, sim.start.poolC, sim.start.poolPendingHeatKwh)) * poolKwhPerDegree;
   return {
     series, violations,
+    ...(c.recorded.actual?.ev_usage_kwh ? { ev_usage_unserved_kwh: r4(sim.evUsageUnservedKwh) } : {}),
     cost_sek: r4(sim.cost), published_cost_sek: r4(publishedCost),
     terminal: {
       battery_kwh: r4(batteryKwh - sim.start.batteryKwh), pool_c: r4(poolC - sim.start.poolC), ev_kwh: r4(evKwh - sim.start.evKwh),

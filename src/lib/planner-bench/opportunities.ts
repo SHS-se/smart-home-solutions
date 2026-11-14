@@ -391,6 +391,7 @@ export function findOpportunities(
     pool_w: [...decisions.pool_w], ev_w: [...decisions.ev_w],
     battery_charge_w: [...decisions.battery_charge_w], battery_discharge_w: [...decisions.battery_discharge_w],
     ...(decisions.battery_follow ? { battery_follow: decisions.battery_follow } : {}),
+    ...(decisions.ev_usage_forecast_kwh ? { ev_usage_forecast_kwh: decisions.ev_usage_forecast_kwh } : {}),
     ...(decisions.hot_water ? { hot_water: decisions.hot_water } : {}),
   }, original);
 
@@ -531,6 +532,7 @@ export function findOpportunities(
   /** An alternative's saving over the working plan, or null when it breaks a guard. */
   const judge = (sim: Simulation): { grid: number; wear: number } | null => {
     if (sim.violations.length) return null;
+    if (sim.evUsageUnservedKwh > original.evUsageUnservedKwh + 1e-6) return null;
     if (Math.abs(sim.batteryKwh[last] - original.batteryKwh[last]) > END_TOLERANCE_KWH) return null;
     if (Math.abs(sim.evKwh[last] - original.evKwh[last]) > END_TOLERANCE_KWH) return null;
     const warmer = sim.poolC[last] - original.poolC[last];

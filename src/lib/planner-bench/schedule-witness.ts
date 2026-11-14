@@ -27,6 +27,7 @@ export function scheduleWitness(
     const requested = device === 'pool' ? candidate.pool_w : device === 'ev' ? candidate.ev_w : candidate.battery_charge_w;
     if (changed.some(i => Math.abs(delivered[i] - requested[i]) > 1)) return null;
     if (after.batteryKwh[last] < original.batteryKwh[last] - 1e-6
+      || after.evUsageUnservedKwh > original.evUsageUnservedKwh + 1e-6
       || after.evKwh[last] < original.evKwh[last] - 1e-6
       || after.poolC[last] < original.poolC[last] - 1e-6
       || !serviceNotWorse(before, exposure(after))) return null;

@@ -52,7 +52,7 @@
 // cannot take the others with it.
 
 import { loadPlanner } from "./adapter.ts";
-import { benchInputHash } from "./execution.ts";
+import { benchInputHash, planningCase } from "./execution.ts";
 import { hasMeasuredOutcome, loadCase } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { caseHousehold } from "../src/lib/planner-bench/household.ts";
@@ -116,7 +116,8 @@ async function worker(sha: string, root: string) {
   let failures = 0;
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
     for (const lane of requiredLanes(args.scope)) {
-      const hash = await benchInputHash(c, planner.generation, lane, rules);
+      const input = planningCase(c);
+      const hash = await benchInputHash(input, planner.generation, lane, rules);
       const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
       const previous = done.get(laneKey(scenario.id, lane));
       const rulesVerified = plannerRuleInputsCurrent({ planner_generation: planner.generation, ...previous }, rules);
@@ -127,7 +128,7 @@ async function worker(sha: string, root: string) {
       try {
         console.log(`  START ${scenario.name} ${lane}`);
         const started = performance.now();
-        const { record, cpuMs } = planner.plan(toldCase(c, lane), caseHousehold(c), laneParts(lane).scale, rules);
+        const { record, cpuMs } = planner.plan(toldCase(input, lane), caseHousehold(input), laneParts(lane).scale, rules);
         // Whatever the planner was told, its plan is judged on the case as it really was.
         const solved = performance.now();
         const evaluation = evaluate(c, record, rules, lane);

@@ -1,7 +1,7 @@
-import { canonicalJson, caseTargets, hasMeasuredOutcome, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
+import { canonicalJson, caseTargets, hasMeasuredOutcome, QUARTERS, QUARTER_MS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { HOUSEHOLD, caseHousehold } from "../src/lib/planner-bench/household.ts";
-import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
+import { completeCase, recordedDemandDays, recordedEvUsage, recordedWind, type HistorySource } from "./history.ts";
 import { homeComfortTargets } from "./comfort.ts";
 import { homeImportLimitW } from "./grid-limit.ts";
 import type { BenchStore, StoredScenario } from "./store.ts";
@@ -32,6 +32,17 @@ export async function preparation(source: HistorySource | null): Promise<CasePre
 export interface PreparedCaseUpdate {
   dataset?: BenchScenarioData;
   recorded?: { value: BenchRecorded | null; pendingReason: string | null };
+}
+
+async function withRecordedEvUsage(source: HistorySource, dataset: BenchScenarioData, recorded: BenchRecorded): Promise<BenchRecorded> {
+  if (!recorded.actual || (recorded.history.ev_weekday_usage !== undefined && recorded.actual.ev_usage_kwh !== undefined)) return recorded;
+  const usage = await recordedEvUsage(source, dataset);
+  // The closing local day can still be in progress when the 72-hour window ends.
+  if (!usage.actual && Date.now() < Date.parse(dataset.start) + (QUARTERS + 108) * QUARTER_MS) return recorded;
+  // Cases with missing outcome evidence retain their established comparison
+  // until both planners can be replayed against a common driving series.
+  return { ...recorded, actual: { ...recorded.actual, ev_usage_kwh: usage.actual },
+    history: { ...recorded.history, ev_weekday_usage: usage.actual ? usage.forecast : null } };
 }
 
 export async function prepareCase(bench: Pick<BenchStore, "legacyReplayInput">, scenario: StoredScenario,
@@ -71,6 +82,10 @@ export async function prepareCase(bench: Pick<BenchStore, "legacyReplayInput">, 
       update.recorded = { value: recorded, pendingReason: null };
     }
   }
+  if (recorded && source) {
+    const enriched = await withRecordedEvUsage(source, dataset, recorded);
+    if (enriched !== recorded) update.recorded = { value: enriched, pendingReason: null };
+  }
   if (recorded || !source) return update;
   const done = await completeCase(source, dataset);
   if (dataset.start_state_unread?.length && Object.keys(done.startState).length) {
@@ -90,6 +105,7 @@ export async function prepareCase(bench: Pick<BenchStore, "legacyReplayInput">, 
     if (wind) done.recorded.wind = wind;
     const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
     if (demand) done.recorded.history.demand_days = demand;
+    done.recorded = await withRecordedEvUsage(source, dataset, done.recorded);
   }
   update.recorded = { value: done.recorded, pendingReason: done.missing };
   return update;

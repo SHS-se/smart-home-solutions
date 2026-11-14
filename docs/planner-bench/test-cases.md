@@ -102,6 +102,15 @@ Rules:
 - **History is stored, not read at run time.** 60 days of prices (what the live
   planner reads) or as much as exists, and the month's grid import for planners
   that use peak tariffs.
+- **EV usage is frozen with each case.** Case preparation learns seven weekday
+  averages from the same eight-week battery and charger history as live planning,
+  cut off at the case start. The current adapter spreads the averages across the
+  local days. Earlier adapters ignore the weekday evidence. The referee subtracts
+  the same independently inferred battery use for every version and reports
+  unserved use in kWh. It estimates the day's total from SOC and metered charging,
+  then distributes it using four-hour energy balances where available. Cases
+  without a complete driving outcome keep their original comparison. The bench
+  continues to score readiness and bills under the existing rules.
 
 ## Measured windows
 

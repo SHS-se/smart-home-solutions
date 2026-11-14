@@ -2,6 +2,7 @@ import { boilerDemand } from "../src/lib/planner-bench/household.ts";
 import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
+import { weekdayEvUsageKw } from "../supabase/functions/_shared/planner/ev-usage.ts";
 import { READY_ABI, builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Fixture publisher and adapter for the nonpublishing candidate. No observed
 // future price/load/PV is passed through the ready-problem boundary.
@@ -34,7 +35,7 @@ import type {
   PlanRecord,
 } from "../src/lib/planner-bench/types.ts";
 
-export const READY_PRODUCER_VERSION = "bench-ready-v13";
+export const READY_PRODUCER_VERSION = "bench-ready-v14";
 
 /**
  * The water heater as production plans it, around the kernel rather than in
@@ -94,6 +95,8 @@ export function readyProblem(
 ): ReadyProblem {
   const starts = quarterStarts(c.start);
   const months = localMonths(starts, c.timezone);
+  const usage = c.recorded.history.ev_weekday_usage;
+  const usageKw = usage ? weekdayEvUsageKw(usage, starts, at => localDay(at, c.timezone)) : null;
   const level = demandLevel(c.recorded.history.demand_days, localDay(c.start, c.timezone));
   const priceRows = casePriceArchive(c);
   const outlook = buildPriceOutlook(
@@ -143,6 +146,7 @@ export function readyProblem(
       import_price: prices[i],
       export_price: c.known_prices.export_sek_per_kwh[i] ?? prices[i] - spread,
       ev_available: true, ev_current_ceiling_a: null, pool_auxiliary_dispatch: null,
+      ...(usageKw ? { ev_usage_kw: usageKw[i] } : {}),
       published: c.known_prices.import_sek_per_kwh[i] !== null &&
         c.known_prices.export_sek_per_kwh[i] !== null,
     })),
@@ -266,6 +270,8 @@ export async function loadWasmCandidate(root: string) {
                   problem.charger.phase_count
                 : 0
             ),
+            ...(problem.slots.some(slot => slot.ev_usage_kw !== undefined)
+              ? { ev_usage_forecast_kwh: problem.slots.map(slot => (slot.ev_usage_kw ?? 0) * slot.hours) } : {}),
             battery_charge_w: s.quarters.map((q) => q.charge_w),
             battery_discharge_w: s.quarters.map((q) => q.discharge_w),
             battery_follow: s.commands.map((c, i) => ({

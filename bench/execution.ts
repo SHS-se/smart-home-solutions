@@ -11,6 +11,14 @@ export interface LoadedPlanner {
   plan(c: BenchCase, household: Household, scale?: number, criteria?: CriteriaOverrides): { record: PlanRecord; cpuMs: number };
 }
 
+/** Hold out inferred driving during the case from every version's planner process. */
+export function planningCase(c: BenchCase): BenchCase {
+  const actual = c.recorded.actual;
+  if (!actual || actual.ev_usage_kwh === undefined) return c;
+  const { ev_usage_kwh: _outcome, ...household } = actual;
+  return { ...c, recorded: { ...c.recorded, actual: household } };
+}
+
 export function adaptPlanner(candidate: typeof import("./wasm-planner.ts"),
   planner: Awaited<ReturnType<typeof candidate.loadWasmCandidate>>): LoadedPlanner {
   const version = /^wasm-v(10|[2-9]):/.exec(planner.version);

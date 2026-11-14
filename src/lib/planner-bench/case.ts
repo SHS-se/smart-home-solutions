@@ -118,6 +118,8 @@ export interface BenchRecorded {
    */
   actual?: {
     base_load_w: Series; solar_w: Series;
+    /** Estimated battery-side driving and parked use over the recorded window. */
+    ev_usage_kwh?: Series | null;
     /**
      * Devices measured inside `base_load_w`, as the case's `other_devices_w` are
      * forecast inside its base load. Absent on a case recorded before they were kept.
@@ -143,6 +145,8 @@ export interface BenchRecorded {
      * before it was kept.
      */
     demand_days?: DemandDay[];
+    /** Seven battery-kWh averages fitted from observations before the case start. */
+    ev_weekday_usage?: import('../../../supabase/functions/_shared/planner/ev-usage').EvWeekdayUsage | null;
   };
   recorded_at: string;
 }
@@ -225,11 +229,22 @@ export function parseRecorded(raw: unknown): BenchRecorded {
     if (!isRecord(recorded.actual)) throw new CaseFormatError('recorded.actual is malformed.');
     series(recorded.actual.base_load_w, 'recorded.actual.base_load_w');
     series(recorded.actual.solar_w, 'recorded.actual.solar_w');
+    const usage = recorded.actual.ev_usage_kwh;
+    if (usage != null) {
+      series(usage, 'recorded.actual.ev_usage_kwh');
+      if (usage.some(kwh => kwh < 0)) throw new CaseFormatError('recorded.actual.ev_usage_kwh must be nonnegative.');
+    }
     const others = recorded.actual.other_devices_w;
     if (others !== undefined) {
       if (!isRecord(others)) throw new CaseFormatError('recorded.actual.other_devices_w is malformed.');
       for (const [key, values] of Object.entries(others)) series(values, `recorded.actual.other_devices_w.${key}`);
     }
+  }
+  const weekday = recorded.history.ev_weekday_usage;
+  if (weekday != null && (!Array.isArray(weekday.kwh) || weekday.kwh.length !== 7
+    || !weekday.kwh.every(kwh => finite(kwh) && kwh >= 0) || !Array.isArray(weekday.days)
+    || weekday.days.length !== 7 || !weekday.days.every(n => Number.isSafeInteger(n) && n >= 0))) {
+    throw new CaseFormatError('recorded.history.ev_weekday_usage is malformed.');
   }
   const demand = recorded.history.demand_days;
   if (demand !== undefined && (!Array.isArray(demand)

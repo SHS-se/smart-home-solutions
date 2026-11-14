@@ -1,4 +1,6 @@
 import { HOUSEHOLD, BOILER_PHASE_METERS, boilerDemand } from "../src/lib/planner-bench/household.ts";
+import { EV_USAGE_HISTORY_DAYS, fitWeekdayEvUsage, observedEvUsageDays, type EvUsageQuarter } from "../supabase/functions/_shared/planner/ev-usage.ts";
+import { localDay } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
 // What the home recorded, for filling in a test case (docs/planner-bench/test-cases.md).
 //
 // A case made from a replay knows what was forecast at its start. What really
@@ -21,6 +23,50 @@ export interface HistorySource {
   url: string;
   key: string;
   homeId: string;
+}
+
+/** Freeze pre-case estimates and independently inferred outcome usage from the same archive read. */
+export async function recordedEvUsage(source: HistorySource, data: BenchScenarioData, now = Date.now()) {
+  const start = Date.parse(data.start), end = start + QUARTERS * QUARTER_MS;
+  const dayMs = 86_400_000;
+  const response = await fetch(`${source.url}/rest/v1/rpc/get_energy_ev_usage_history`, {
+    method: "POST",
+    headers: { apikey: source.key, Authorization: `Bearer ${source.key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_home_id: source.homeId,
+      p_from: new Date(start - (EV_USAGE_HISTORY_DAYS + 2) * dayMs).toISOString(),
+      p_to: new Date(end + 2 * dayMs).toISOString() }),
+  });
+  if (!response.ok) throw new Error(`TEST EV history read failed (${response.status})`);
+  const rows = await response.json() as EvUsageQuarter[];
+  const localDate = (at: number) => localDay(at, data.timezone);
+  const car = HOUSEHOLD.car.battery;
+  const forecast = fitWeekdayEvUsage(rows, start, localDate, car).usage;
+  const days = observedEvUsageDays(rows.filter(([at]) => at >= start - 2 * dayMs), Math.min(now, end + 2 * dayMs), localDate, car);
+  const actual = new Map<number, number>();
+  const byStart = new Map(rows.map(row => [row[0], row]));
+  for (const day of days) {
+    if (day.kwh === null || day.end <= start || day.start >= end) continue;
+    // Keep the measured day's total, using four-hour balances to locate it
+    // within the day. If an intermediate SOC is absent, only timing is unknown.
+    const blocks: { start: number; end: number; draw: number | null }[] = [];
+    for (let at = day.start; at < day.end; at += 16 * QUARTER_MS) {
+      const stop = Math.min(at + 16 * QUARTER_MS, day.end);
+      const opening = byStart.get(at)?.[1], closing = byStart.get(stop)?.[1];
+      let acKwh = 0;
+      for (let q = at; q <= stop; q += QUARTER_MS) {
+        acKwh += byStart.get(q)![2]! * (q === at || q === stop ? 0.5 : 1);
+      }
+      blocks.push({ start: at, end: stop, draw: opening == null || closing == null ? null
+        : Math.max(0, (opening - closing) * car.capacity_kwh + acKwh * car.charge_efficiency) });
+    }
+    const total = blocks.every(block => block.draw !== null) ? blocks.reduce((sum, block) => sum + block.draw!, 0) : 0;
+    for (const block of blocks) {
+      const kwh = total > 0 ? day.kwh * block.draw! / total * QUARTER_MS / (block.end - block.start)
+        : day.kwh * QUARTER_MS / (day.end - day.start);
+      for (let at = Math.max(start, block.start); at < Math.min(end, block.end); at += QUARTER_MS) actual.set(at, kwh);
+    }
+  }
+  return { forecast, actual: actual.size === QUARTERS ? quarterStarts(data.start).map(at => actual.get(Date.parse(at))!) : null };
 }
 
 type Row = Record<string, unknown> & { start_ts: string };

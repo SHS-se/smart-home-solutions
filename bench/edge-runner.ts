@@ -6,7 +6,7 @@ import { isStale, plannerRuleInputsCurrent, runScore } from "../src/lib/planner-
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 import { STATS_VERSION } from "../src/lib/planner-bench/stats.ts";
 import { BENCH_TOKEN_HEADER, BENCH_URL, type VersionIdentity } from "./edge-version.ts";
-import { benchInputHash } from "./execution.ts";
+import { benchInputHash, planningCase } from "./execution.ts";
 import { DbStore, type EvaluatedResult, type ResultKey } from "./store.ts";
 import { historySource, preparation, prepareCase, type CasePreparation } from "./prepare.ts";
 import { refreshTargets, requiredLanes } from "./scope.ts";
@@ -162,7 +162,7 @@ export class EdgeBench {
     }
     const artifact = await this.artifact(task.sha);
     if (!task.force && current && plannerRuleInputsCurrent(existing, task.rules) &&
-        existing.input_hash === await benchInputHash(c, artifact.generation, task.lane, task.rules)) return null;
+        existing.input_hash === await benchInputHash(planningCase(c), artifact.generation, task.lane, task.rules)) return null;
     return this.solve(artifact, basis, task.lane, task.rules);
   }
 
@@ -177,10 +177,10 @@ export class EdgeBench {
   }
 
   async solve(artifact: BenchArtifact, basis: CaseBasis, lane: LaneId, rules: CriteriaOverrides) {
-    const c = loadCase(basis.dataset, basis.recorded);
+    const c = planningCase(loadCase(basis.dataset, basis.recorded));
     const input_hash = await benchInputHash(c, artifact.generation, lane, rules);
     const solved = await this.worker<VersionIdentity & { input_hash: string; record: PlanRecord; cpu_ms: number }>(
-      artifact.worker, { dataset: basis.dataset, recorded: basis.recorded, rules, lane });
+      artifact.worker, { dataset: basis.dataset, recorded: c.recorded, rules, lane });
     if (solved.sha !== artifact.sha || solved.planner_version !== artifact.planner_version ||
       solved.generation !== artifact.generation || solved.input_hash !== input_hash) {
       throw new Error("Pinned worker returned a different executable or case input");
