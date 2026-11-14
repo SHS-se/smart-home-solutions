@@ -331,9 +331,10 @@ fn validate(p: &Problem) -> Result<(), String> {
     }) {
         return bad("invalid_car_policy");
     }
-    if p.slots.iter().any(|s| {
-        s.ev_usage_kw.is_some_and(|kw| !kw.is_finite() || kw < 0.0)
-    }) {
+    if p.slots
+        .iter()
+        .any(|s| s.ev_usage_kw.is_some_and(|kw| !kw.is_finite() || kw < 0.0))
+    {
         return bad("invalid_ev_usage");
     }
     if p.slots.iter().any(|s| {
