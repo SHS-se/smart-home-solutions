@@ -1,6 +1,6 @@
 import type { OptimisationSnapshot } from "./planning-contracts.ts";
 import { DeviceModelError, validateHeaterSource, parseHeaterResponse, publishHeater, WATER_KWH_PER_M3_K, type PublishedHeater, type ThermalStoreModel } from "./device-models.ts";
-import { poolElectricalDemand } from "./models/pool/electrical.ts";
+import { poolElectricalDemand, poolElectricalReservation } from "./models/pool/electrical.ts";
 import { validatePoolDynamics } from "./pool-response.ts";
 
 type PoolFacts = Pick<OptimisationSnapshot, "pool" | "pool_model" | "device_models" | "device_physics">;
@@ -15,7 +15,11 @@ export function poolPhysics(snapshot: PoolFacts): { store: ThermalStoreModel; he
   const measured = snapshot.pool_model;
   if (!snapshot.pool || !measured?.heater_response) fail("Pool physical response model is unavailable");
   const response = parseHeaterResponse(measured.heater_response);
+  // Heat follows the electricity the equipment is expected to draw; admission
+  // reserves the home's bound on it, which a measured operating point never lowers.
   const { compressor_w: compressor, auxiliary_w: auxiliary } = poolElectricalDemand(snapshot);
+  const bound = poolElectricalReservation(snapshot);
+  const reservation = bound.compressor_w > compressor || bound.auxiliary_w > auxiliary ? { reservation: bound } : {};
   const capacity = snapshot.pool.volume_m3 * WATER_KWH_PER_M3_K;
   if (!(compressor > 0) || !(capacity > 0)) fail("Pool compressor input and water capacity must be positive");
   const dynamics = measured.thermal_dynamics;
@@ -24,7 +28,7 @@ export function poolPhysics(snapshot: PoolFacts): { store: ThermalStoreModel; he
     const startup = response.kind === 'steady' ? response : { ...response,
       startup: response.startup.map(p => ({ ...p, heat_fraction: p.electric_fraction })) };
     const heater = { compressor_w: compressor, auxiliary_w: auxiliary, heat_w: dynamics.heat_c_per_kwh * capacity * compressor,
-      response: startup, ...(dynamics.source ? { source: { recovery_rate_per_h: dynamics.source.recovery_rate_per_h,
+      ...reservation, response: startup, ...(dynamics.source ? { source: { recovery_rate_per_h: dynamics.source.recovery_rate_per_h,
         heat_loss_per_kwh: dynamics.source.heat_loss_c_per_kwh_per_kwh / dynamics.heat_c_per_kwh } } : {}) };
     validateHeaterSource(heater);
     return { store: { capacity_kwh_per_c: capacity, response_time_constant_h: dynamics.response_time_constant_h,
@@ -40,5 +44,5 @@ export function poolPhysics(snapshot: PoolFacts): { store: ThermalStoreModel; he
     : finite(measured.loss_kw_per_k) ? { kind: "linear", kw_per_c: measured.loss_kw_per_k, surroundings_c: null } : null;
   if (!heat || !(heat > 0) || !loss) fail("Pool model requires measured heat delivery and standing loss");
   return { store: { capacity_kwh_per_c: capacity, response_time_constant_h: 0, loss },
-    heater: { compressor_w: compressor, auxiliary_w: auxiliary, heat_w: heat, response } };
+    heater: { compressor_w: compressor, auxiliary_w: auxiliary, heat_w: heat, ...reservation, response } };
 }

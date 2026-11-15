@@ -1,7 +1,9 @@
 import { classifyPlanningFailure, PlanningError } from "../_shared/planning-errors.ts";
 import { recordPlanningActivity } from '../_shared/planning-log.ts';
 import { readPlannerLocation, withPlannerLocation } from "../_shared/home-planning-location.ts";
-import { prepareActualUpload } from "../_shared/actual-upload.ts";
+import { prepareActualUpload, upsertGroups } from "../_shared/actual-upload.ts";
+import { resolvePoolOperatingDraw } from "../_shared/planner/models/pool/electrical.ts";
+import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { mergePlanningWarnings, planningWarning } from "../_shared/planner/planning-warnings.ts";
 import { hasNewPublishedPrices, deviationRecommendations, LATE_ACTUAL_QUARTERS, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
@@ -123,8 +125,10 @@ interface IncomingActualSlot {
   battery_soc?: number | null;
   ev_soc?: number | null;
   device_energy_kwh?: Record<string, number>;
-  device_power_setting?: Record<string, number>;
+  /** A value, or null when the setting was read and none held; a device left out was not read. */
+  device_power_setting?: Record<string, number | null>;
   device_heat_kwh?: Record<string, number>;
+  device_weather_heating?: Record<string, string | null>;
   quality?: Record<string, unknown>;
 }
 
@@ -702,10 +706,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         return json({ error: "storage_failed" }, 500);
       }
     }
-    if (deviceSlotRows.length > 0) {
+    // One upsert per set of columns the rows state: a column a row does not
+    // name is left as stored, so a quarter sent again without its setting,
+    // heat or heating activity does not erase what an earlier upload observed.
+    for (const rows of upsertGroups(deviceSlotRows)) {
       const { error } = await supabase
         .from("energy_optimisation_device_slots")
-        .upsert(deviceSlotRows, { onConflict: "device_id,start_ts" });
+        .upsert(rows, { onConflict: "device_id,start_ts" });
       if (error) {
         console.error("[ENERGY-OPTIMISATION] device slot upsert failed", error);
         return json({ error: "storage_failed" }, 500);
@@ -1198,12 +1205,30 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         try { if(poolModel?.heater_response) heaterResponse=parseHeaterResponse(poolModel.heater_response); }
         catch(error) { snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("pool_response_evidence","pool",
           describeThrown(error),"Pool thermostat permission remains active using empirical demand.")]); }
-        if (lossKwPerK || poolResponse || heaterResponse || poolHardware) {
+        // The daily learner's operating point for the power settings the home
+        // reports: the pool's expected draw. The devices' own `active_power_w`
+        // remain what an ON command reserves. With no point for these settings
+        // the reservation stands in, which can only overstate the draw.
+        const poolMembers = snapshot.device_models.filter(model => model.planning_service === "pool");
+        const operatingDraw = snapshot.device_physics?.pool ? null : resolvePoolOperatingDraw(
+          poolModel?.operating_points, poolMembers, poolHeaters(poolMembers).map(model => model.key));
+        // A home that does not report its settings plans as it always has.
+        if (!snapshot.device_physics?.pool && poolMembers.length && operatingDraw?.basis !== "reported_settings" &&
+          poolMembers.every(model => model.power_setting !== undefined)) {
+          snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [operatingDraw
+            ? planningWarning("pool_draw_estimated", "pool", "A pool power setting could not be read.",
+              "Pool planning uses the draw most recently measured for the pool equipment.",
+              { steady_hours: operatingDraw.steady_hours, last_observed_at: operatingDraw.last_observed_at })
+            : planningWarning("pool_draw_estimated", "pool", "The pool equipment's draw at its present power settings has not been measured yet.",
+              "Pool planning uses the greatest draw recorded for the equipment, so its electricity and heating rate may be overstated until it has run at these settings.")]);
+        }
+        if (lossKwPerK || poolResponse || heaterResponse || poolHardware || operatingDraw) {
           snapshot = {
             ...snapshot,
             pool_model: {
               ...(poolHardware ? { hardware: poolHardware } : {}),
               ...(heaterResponse ? { heater_response: heaterResponse } : {}),
+              ...(operatingDraw ? { operating_draw: operatingDraw } : {}),
               ...(poolModel?.thermal_dynamics ? { thermal_dynamics: poolModel.thermal_dynamics } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,

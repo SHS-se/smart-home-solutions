@@ -16,6 +16,7 @@ import type { ThermostatInput } from "./thermostat.ts";
 import type { UtilityCurve } from "./store-value.ts";
 import type { ValueSettings, ValueStoreKey } from "./value-curves.ts";
 import type { PoolDynamics } from "./pool-response.ts";
+import type { PoolOperatingDraw } from "./models/pool/electrical.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-evidence.ts";
 
 export type PlanKey = "baseline" | "priority" | "cost";
@@ -241,6 +242,14 @@ export interface EmpiricalDeviceModelInput {
   /** Explicit membership resolved from the installation mapping, never category alone. */
   planning_service?: "pool";
   /**
+   * What a pool device's own power setting (a heat pump's output, a pump's
+   * capacity) holds at capture: `null` for a device with no setting of its
+   * own, a `null` value for one that cannot be read at the moment. Absent from
+   * a home that does not report settings. It selects the learned operating
+   * point the device's expected draw comes from; it is never written by SHS.
+   */
+  power_setting?: { value: number | null } | null;
+  /**
    * What a pool device does. Only the heater heats: the pump circulates water
    * past the heat exchanger and must run whenever the heater does. Absent, the
    * pool device drawing the most power is taken to be the heater.
@@ -409,6 +418,13 @@ export interface OptimisationSnapshot {
     source_depletion_kwh?: number;
     hardware?: PoolHardwareInput;
     heater_response?: HeatPumpResponse;
+    /**
+     * The learned operating point for the power settings the home reports,
+     * joined at admission from the pool learner's daily output. The expected
+     * draw of each pool device; the devices' `active_power_w` stay the
+     * electrical reservation. Absent while those settings are unobserved.
+     */
+    operating_draw?: PoolOperatingDraw | null;
     /** Null while only the measured response exists; the seeded loss stands in then. */
     loss_kw_per_k: number | null;
     /** Null while only the idle loss is fitted; the seeded COP stands then. */

@@ -147,6 +147,7 @@ mod tests {
     fn models(tau: f64) -> (Heater, ThermalStore) {
         (
             Heater {
+                reservation: None,
                 source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 764.0,

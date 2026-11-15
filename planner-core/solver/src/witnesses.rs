@@ -946,6 +946,7 @@ pub(crate) mod tests {
                 },
             }),
             heater: Some(Heater {
+                reservation: None,
                 source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 0.0,

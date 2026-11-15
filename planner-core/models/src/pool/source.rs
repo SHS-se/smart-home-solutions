@@ -416,6 +416,7 @@ mod cache_tests {
 
     fn models() -> (Heater, ThermalStore) {
         let heater = Heater {
+            reservation: None,
             compressor_w: 3000.0,
             auxiliary_w: 700.0,
             heat_w: 12000.0,

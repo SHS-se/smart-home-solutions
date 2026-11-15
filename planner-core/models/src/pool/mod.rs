@@ -353,16 +353,27 @@ fn integral(points: &[StartupPoint], age: f64, seconds: f64, heat: bool) -> f64 
     result
 }
 
+/// The most an ON command may draw, bounded by the producer apart from the
+/// draw it expects. Admission reserves it; energy and heat never use it.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct Reservation {
+    pub compressor_w: f64,
+    pub auxiliary_w: f64,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Heater {
     pub source: Option<SourceModel>,
+    /// Expected draw while running: the electricity that is planned and heats.
     pub compressor_w: f64,
     pub auxiliary_w: f64,
     pub heat_w: f64,
     pub response: Response,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<Reservation>,
 }
 impl Heater {
     /// Maximum compressor draw permitted by ON; thermal coefficients cannot change it.
+    /// A separate reservation can raise it above the expected draw, never lower it.
     pub fn full_compressor_w(&self) -> f64 {
         let fraction = match &self.response {
             Response::Steady => 1.0,
@@ -371,7 +382,15 @@ impl Heater {
                 .map(|point| point.electric_fraction)
                 .fold(1.0, f64::max),
         };
-        self.compressor_w * fraction
+        let expected = self.compressor_w * fraction;
+        self.reservation
+            .map_or(expected, |bound| expected.max(bound.compressor_w))
+    }
+    /// Maximum draw of what must run with the compressor.
+    pub fn full_auxiliary_w(&self) -> f64 {
+        self.reservation.map_or(self.auxiliary_w, |bound| {
+            self.auxiliary_w.max(bound.auxiliary_w)
+        })
     }
     pub fn validate_response(&self) -> Result<(), &'static str> {
         let peak_fraction = match &self.response {
@@ -884,6 +903,7 @@ mod tests {
     #[test]
     fn memoized_kernel_preserves_transition_bits_across_models_and_thermostat_roots() {
         let heater = Heater {
+            reservation: None,
             source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,
@@ -1014,6 +1034,7 @@ mod tests {
             PoolKernel::MAX_WEIGHT_MEMO_BYTES - source::SourceKernel::MAX_MEMO_BYTES
         );
         let heater = Heater {
+            reservation: None,
             source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,
@@ -1180,6 +1201,7 @@ mod tests {
         let fixture: VectorSet =
             serde_json::from_str(include_str!("../../heater-transitions.json")).unwrap();
         let heater = Heater {
+            reservation: None,
             source: None,
             compressor_w: 3000.0,
             auxiliary_w: 0.0,
@@ -1220,6 +1242,7 @@ mod tests {
         };
         for response in [Response::Steady, startup] {
             let heater = Heater {
+                reservation: None,
                 source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 1000.0,
@@ -1274,6 +1297,7 @@ mod tests {
     #[test]
     fn startup_keeps_auxiliary_draw_and_distinct_heat_integral() {
         let h = Heater {
+            reservation: None,
             source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,

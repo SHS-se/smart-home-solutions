@@ -402,6 +402,14 @@ fn validate(p: &Problem) -> Result<(), String> {
         if h.compressor_w <= 0.0 || h.heat_w <= 0.0 || h.auxiliary_w < 0.0 {
             return bad("invalid_model_parameters");
         }
+        if h.reservation.is_some_and(|bound| {
+            !bound.compressor_w.is_finite()
+                || !bound.auxiliary_w.is_finite()
+                || bound.compressor_w < 0.0
+                || bound.auxiliary_w < 0.0
+        }) {
+            return bad("invalid_model_parameters");
+        }
         h.validate_response().map_err(str::to_owned)?;
     }
     if p.initial

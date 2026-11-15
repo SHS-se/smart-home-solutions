@@ -22,7 +22,7 @@ refactor does not create a new priority or spending policy.
 | `device-learning/linear-algebra.ts` | Numerical equation solving | Room or pool policy |
 | `planner/models/room/thermal.ts` | Room thermal response and delayed heat | Regression, prices, scheduling |
 | `planner/models/pool/state.ts` | Reconstruction of thermal memory from actual compressor energy | Parameter fitting or releasing commitments |
-| `planner/models/pool/electrical.ts` | Compressor and auxiliary ON electricity from equipment evidence | Thermal gain, comfort targets or statistical fit quality |
+| `planner/models/pool/electrical.ts` | Expected compressor and auxiliary draw from the learned operating point, and the separate ON reservation, from equipment evidence | Thermal gain, comfort targets or statistical fit quality |
 | Rust `models/{battery,ev,pool,room}` | Pure device transitions and actuator simulation | Tariffs, policy, database or search |
 | Rust `solver/{policy,room_policy}` | Existing economic/comfort preferences | Learning or physical response coefficients |
 | Rust `solver/room_heating` | Bellman search, action enumeration and memoization | Its own copy of thermostat physics |
@@ -81,6 +81,21 @@ evidence: a fitted steady-phase wattage cannot override the producer's supported
 ON capability. The integration captures that capability from the same retained,
 setting-specific electrical evidence used by its executor; instantaneous sensor
 watts and quarter-average consumption remain observations, not capability. State reconstruction and a thermal refit cannot lower that draw.
+
+That capability is each pool device's `active_power_w`: the greatest draw the
+home has recorded, a safety bound. It is not what the equipment draws while it
+runs. The expected draw (user requirement, 15 November 2026) is the pool
+learner's operating point for the power settings the home reports at capture,
+joined at admission as `pool_model.operating_draw`. It sets the forecast
+electricity and, through the fitted heat per kWh, the temperature projection.
+The published heater then carries the bound as a separate `reservation`, which
+native admission fits under the import limit; energy, cost and heat never read
+it, and a measured draw can raise it but never lower it. With no point for the
+present settings (never observed running, or a home that does not report its
+settings) the bound stands in for the expected draw as before, which can only
+overstate it, and a home that reports settings gets the routine
+`pool_draw_estimated` note. A setting that cannot be read at capture takes the
+point most recently observed and says so the same way.
 When pool rescheduling is unavailable, accepted ON intervals retain full draw
 and accepted OFF intervals remain OFF. The retained schedule covers its actual
 UTC intervals only and retains its accepted thermostat target. Uncovered
@@ -105,7 +120,8 @@ observed energy exactly and resumes thermal scheduling without relearning. Rooms
 with delayed heat treat unreported heat as none and report it the same way. One pool-owned operational
 note explains an unsuccessful reschedule; member devices do not duplicate it.
 
-Operating points are learned, not yet planned on. Every variable-power device
+Operating points are learned for every variable-power device and planned on
+for the pool (above). Every variable-power device
 (a heat pump's output, a pump's capacity, a charger's current) sends with each
 quarter the setting that held throughout it: a pool device the Power setting it
 names, any other its own power or current control. A device that names a heat
@@ -120,8 +136,11 @@ the stored quarters over 90 days (the pool's clamped to its heat-pump epoch). A
 quarter next to a missing one is not steady, and a session next to one, with
 heat still arriving, or with a setting that changed or was unknown is left out
 of the COP and counted, never read as idle; a later refit includes it once its
-quarters arrive. The planner does not read the points yet, and no snapshot
-carries them.
+quarters arrive. A quarter says only what was read: a setting or heating
+activity that was read and absent is stored as none, and one that could not be
+read leaves the stored quarter untouched, so the routine re-sweep of recent
+quarters cannot erase an earlier observation. Points for devices outside the
+pool are not read by the planner yet.
 
 Room projection metadata is derived from the actual member controls and load
 types. Mixed rooms are explicitly mixed. Graph power and temperature continue

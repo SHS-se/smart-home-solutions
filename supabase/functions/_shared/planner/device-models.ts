@@ -242,8 +242,13 @@ export type HeaterState =
   | { kind: "steady" };
 export interface HeaterStart { off_seconds: number | null }
 export interface PublishedHeater {
+  /** Expected draw while running, and the heat it delivers. */
   compressor_w: number; auxiliary_w: number; heat_w: number; response: HeatPumpResponse;
   source?: PoolSourceModel | null;
+  /** The most an ON command may draw, where the producer bounds it apart from
+   * the expected draw. Electrical admission reserves it; energy, cost and heat
+   * never use it. Never below the expected draw. */
+  reservation?: { compressor_w: number; auxiliary_w: number };
 }
 
 export function parseHeaterState(input: unknown): HeaterState {

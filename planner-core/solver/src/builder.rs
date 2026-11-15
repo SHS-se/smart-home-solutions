@@ -1894,6 +1894,63 @@ mod forecast_tests {
     }
 
     #[test]
+    fn a_reservation_above_the_expected_draw_bounds_admission_and_not_energy() {
+        // The heater is expected to draw 2990.5 W; the home bounds an ON
+        // command at 3690.5 W. The car's current must fit beside the bound,
+        // while the quarter's electricity stays the expected draw.
+        let problem = |reservation| {
+            let mut p = witnesses::tests::problem(8);
+            p.recipe.max_actions = 32;
+            p.charger.as_mut().unwrap().phase_count = 3;
+            p.charger.as_mut().unwrap().min_current_a = 5;
+            p.limits.import_w = 15000.0;
+            p.initial.pool_c = Some(29.0);
+            p.initial.heater_state = Some(HeaterState::Steady);
+            p.heater.as_mut().unwrap().compressor_w = 2990.5;
+            p.heater.as_mut().unwrap().auxiliary_w = 760.0;
+            p.heater.as_mut().unwrap().reservation = reservation;
+            p.car_policy.as_mut().unwrap().floor_kwh = 50.0;
+            p.slots[0].base_w = 1000.0;
+            p
+        };
+        let step = |p: &Problem, amps| {
+            let index = policy::index(p, &mut work(p)).unwrap();
+            let choices = actions(
+                p,
+                &index,
+                0,
+                &initial_label(p),
+                &mut physics::Projector::new(p),
+            );
+            let c = choices
+                .iter()
+                .find(|c| c.pool_on && c.ev_amps == amps && c.battery == Operation::Idle)
+                .unwrap_or_else(|| panic!("{amps} A beside the pool is offered"))
+                .clone();
+            physics::step(p, 0, &c, &mut physics::initial(p))
+        };
+        let unbounded = problem(None);
+        let expected = step(&unbounded, 14).unwrap();
+        let bounded = problem(Some(shs_planner_models::pool::Reservation {
+            compressor_w: 3690.5,
+            auxiliary_w: 760.0,
+        }));
+        // 14 A no longer fits beside the bound, so 13 A is the joint current;
+        // the maximum is still offered for a battery to carry, and refused here.
+        let admitted = step(&bounded, 13).unwrap();
+        assert_eq!(step(&bounded, 16).unwrap_err(), "shared_grid_limit");
+        assert!((admitted.pool_w - expected.pool_w).abs() < 1e-9);
+        assert!((admitted.pool_w - 3750.5).abs() < 1e-6);
+        // A bound below the expected draw never lowers what ON reserves.
+        let low = problem(Some(shs_planner_models::pool::Reservation {
+            compressor_w: 100.0,
+            auxiliary_w: 0.0,
+        }));
+        assert!((step(&low, 14).unwrap().net_w - expected.net_w).abs() < 1e-9);
+        assert_eq!(step(&low, 16).unwrap_err(), "shared_grid_limit");
+    }
+
+    #[test]
     fn replan_retains_the_exact_clipped_allocation_behind_an_integer_ac_request() {
         let mut p = witnesses::tests::problem(4);
         p.car = None;

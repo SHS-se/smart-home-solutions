@@ -105,7 +105,9 @@ pub(crate) fn pool_demand(
         s,
         on,
         if active {
-            p.heater.as_ref().map_or(0.0, |heater| heater.auxiliary_w)
+            p.heater
+                .as_ref()
+                .map_or(0.0, |heater| heater.full_auxiliary_w())
         } else {
             0.0
         },
