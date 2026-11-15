@@ -87,6 +87,20 @@ Deno.test("PIPELINE: a sweep that could not read the setting does not erase it, 
   assertEquals(store.sorted().slice(0, -1), before.slice(0, -1));
 });
 
+Deno.test("PIPELINE: heat and a setting that arrive late fill the quarter on the next sweep", async () => {
+  const store = storage();
+  // The newest quarters first arrive with their electricity only: the heat
+  // meter reports late and the setting could not be read yet.
+  store.receive([...quarters(192, 8, 12, 3000), ...quarters(8, 0, undefined, 3000, false)]);
+  assertEquals(store.sorted().slice(-8).map(row => [row.power_setting, row.heat_kwh]), Array(8).fill([null, null]));
+  // Until then the learner counts the session as still arriving, not as heat-free.
+  const complete = storage();
+  complete.receive(quarters(192, 0, 12, 3000));
+  store.receive(quarters(8, 0, 12, 3000));
+  assertEquals(store.sorted(), complete.sorted());
+  assertEquals(await learned(store.db), await learned(complete.db));
+});
+
 Deno.test("PIPELINE: duplicate, out-of-order and repeated uploads store the same quarters once", async () => {
   const whole = quarters(192, 0, 12, 3000);
   const once = storage();
