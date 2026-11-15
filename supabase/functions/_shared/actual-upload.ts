@@ -69,9 +69,19 @@ export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyM
       const setting = settings[key], metered = heat[key];
       if (setting != null && !powerSetting(setting)) ignore("invalid_device_setting");
       if (metered != null && !energy(metered)) ignore("invalid_device_heat");
-      deviceSlotRows.push({ ...context, device_id: device.id, start_ts: startTs, energy_kwh: round(value),
-        power_setting: powerSetting(setting) ? setting : null, heat_kwh: energy(metered) ? round(metered) : null,
-        quality: isWeatherHeatingBinding(weatherHeating[key]) ? { ...quality, weather_heating_binding: weatherHeating[key] } : quality });
+      // A row carries a column only when the upload stated it. `null` is a
+      // statement: the setting, or the heating activity, was read and there
+      // was none. A device left out, or an unusable value, says nothing, and
+      // the stored quarter keeps what an earlier upload observed: the same
+      // quarter is sent again on every sweep, and an observation that could
+      // not be read that time has not become unknown.
+      const stated: Record<string, unknown> = {};
+      if (powerSetting(setting) || (setting === null && Object.hasOwn(settings, key))) stated.power_setting = setting;
+      if (energy(metered)) stated.heat_kwh = round(metered);
+      const binding = weatherHeating[key];
+      if (isWeatherHeatingBinding(binding)) stated.quality = { ...quality, weather_heating_binding: binding };
+      else if (binding === null && Object.hasOwn(weatherHeating, key)) stated.quality = quality;
+      deviceSlotRows.push({ ...context, device_id: device.id, start_ts: startTs, energy_kwh: round(value), ...stated });
       accepted = true;
     }
     if (accepted && (latestAccepted === null || start > latestAccepted)) latestAccepted = start;
@@ -82,4 +92,19 @@ export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyM
     "Usable history was retained and planning continues.", { count }, count >= 5 ? "error" : "warning"));
   return { actualRows, deviceSlotRows, ignored, warnings,
     accepted_until: latestAccepted === null ? null : new Date(latestAccepted).toISOString() };
+}
+
+/** Rows grouped by the columns they carry, for one upsert each.
+ *
+ * An upsert writes the columns its rows name and no others, so a group whose
+ * rows do not name a column leaves that column as stored. Mixing the groups
+ * in one upsert would write null for every column a row left out. */
+export function upsertGroups<Row extends Record<string, unknown>>(rows: readonly Row[]): Row[][] {
+  const groups = new Map<string, Row[]>();
+  for (const row of rows) {
+    const columns = Object.keys(row).sort().join(",");
+    const group = groups.get(columns);
+    if (group) group.push(row); else groups.set(columns, [row]);
+  }
+  return [...groups.values()];
 }

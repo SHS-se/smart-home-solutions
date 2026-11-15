@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { prepareActualUpload } from "./actual-upload.ts";
+import { prepareActualUpload, upsertGroups } from "./actual-upload.ts";
 
 const now = Date.parse("2026-10-15T12:20:00Z");
 const context = { customer_id: "c", home_id: "h", device_token_id: "t" };
@@ -45,29 +45,41 @@ Deno.test("a pool device's setting and metered heat are stored on its own quarte
   const result = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75, pump: .1 },
     device_power_setting: { heater: 12, pump: 80 }, device_heat_kwh: { heater: 2.9 } }], devices, context, now);
   assertEquals(result.deviceSlotRows.map(r => [r.device_id, r.energy_kwh, r.power_setting, r.heat_kwh]),
-    [["h", .75, 12, 2.9], ["p", .1, 80, null]]);
+    [["h", .75, 12, 2.9], ["p", .1, 80, undefined]]);
   assertEquals(result.ignored, {});
 });
-Deno.test("an unusable setting or heat reading is not observed and keeps the quarter's energy", () => {
+Deno.test("an unusable setting or heat reading says nothing and keeps the quarter's energy", () => {
   const devices = new Map([["heater", { id: "h" }]]);
   const result = prepareActualUpload([
     { ...row(), device_energy_kwh: { heater: .75 }, device_power_setting: { heater: "12" }, device_heat_kwh: { heater: -1 } },
     { ...row("2026-10-15T11:45:00Z"), device_energy_kwh: { heater: .5 }, device_power_setting: [12] },
   ], devices, context, now);
-  assertEquals(result.deviceSlotRows.map(r => [r.energy_kwh, r.power_setting, r.heat_kwh]), [[.75, null, null], [.5, null, null]]);
+  assertEquals(result.deviceSlotRows.map(r => [r.energy_kwh, "power_setting" in r, "heat_kwh" in r]), [[.75, false, false], [.5, false, false]]);
   assertEquals(result.ignored, { invalid_device_setting: 2, invalid_device_heat: 1 });
-  // An app that sends neither stores neither, as before.
-  const plain = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75 } }], devices, context, now);
-  assertEquals([plain.deviceSlotRows[0].power_setting, plain.deviceSlotRows[0].heat_kwh], [null, null]);
+});
+Deno.test("only what an upload states is written: unread is not the same as none", () => {
+  const devices = new Map([["heater", { id: "h" }], ["pump", { id: "p" }], ["room", { id: "r" }]]);
+  // The heater's setting was read and none held; the pump's was not read at all.
+  const result = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75, pump: .1, room: .2 },
+    device_power_setting: { heater: null }, device_weather_heating: { room: null } }], devices, context, now);
+  const [heater, pump, room] = result.deviceSlotRows;
+  assertEquals([heater.power_setting, "power_setting" in pump, "heat_kwh" in heater], [null, false, false]);
+  // Heating activity that was read and absent clears the binding; unread leaves it.
+  assertEquals([room.quality, "quality" in pump], [row().quality, false]);
+  assertEquals(result.ignored, {});
+  // One upsert per set of stated columns, so an unstated column is never written.
+  assertEquals(upsertGroups(result.deviceSlotRows).map(group => group.map(r => r.device_id)), [["h"], ["p"], ["r"]]);
+  assertEquals(upsertGroups([heater, { ...heater, start_ts: "later" }]).length, 1);
 });
 
 Deno.test("confirmed heating provenance follows the associated meter quarter", () => {
   const result = prepareActualUpload([{ ...row(), device_energy_kwh: { first: .3, second: .1 },
     device_weather_heating: { first: "climate.unit|sensor.power|sensor.energy", second: {} } }],
   new Map([["first", { id: "a" }], ["second", { id: "b" }]]), context, now);
+  // An unusable binding says nothing about the second device's heating.
   assertEquals(result.deviceSlotRows.map(slot => slot.quality), [
     { ...row().quality, weather_heating_binding: "climate.unit|sensor.power|sensor.energy" },
-    row().quality,
+    undefined,
   ]);
   assertEquals(result.actualRows[0].quality, row().quality);
 });
