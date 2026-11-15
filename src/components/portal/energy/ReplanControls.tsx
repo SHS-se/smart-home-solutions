@@ -6,9 +6,15 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { replanCompleted, replanState, type ReplanRow } from '@/lib/energy-shift/replan-request';
+import type { PlanDisplayTrace } from '@/lib/energy-shift/plan-display-trace';
 
-export default function ReplanControls({ homeId, replan, refreshing, onReplanChanged, onBusyChange }: {
-  homeId: string | null; replan: ReplanRow | null; refreshing: boolean; onReplanChanged?: () => void; onBusyChange?: (busy: boolean) => void;
+export default function ReplanControls({ homeId, replan, refreshing, trace, onReplanChanged, onBusyChange }: {
+  homeId: string | null;
+  replan: (ReplanRow & { plan_id: string | null }) | null;
+  refreshing: boolean;
+  trace: PlanDisplayTrace;
+  onReplanChanged?: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -29,9 +35,12 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
     if (!homeId) return;
     setRequestBaselineId(replan?.replan_request_id ?? null);
     setReplanning(true);
+    trace.record({ event: 'replan_clicked', displayed_plan_id: replan?.plan_id ?? null });
     const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
       body: { home_id: homeId },
     });
+    const requestId = typeof data?.replan_request_id === 'string' ? data.replan_request_id : null;
+    trace.record({ event: 'replan_response', replan_request_id: requestId, queued: !error && requestId !== null });
     setReplanning(false);
     if (error) {
       // supabase-js reports only "non-2xx status code" for a failed call, so
@@ -51,16 +60,15 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
     }
     // Held only to tell this browser's own request from one that was already
     // outstanding when the page loaded; the wait itself is read from the row.
-    setAwaitedReplanId(
-      typeof data?.replan_request_id === 'string' ? data.replan_request_id : null,
-    );
+    setAwaitedReplanId(requestId);
     onReplanChanged?.();
   };
 
   // The answer arrives through the row on the workspace's own refresh, not
   // through the call that asked for it, so the confirmation is raised here.
   useEffect(() => {
-    if (!replanCompleted(replan, awaitedReplanId)) return;
+    if (!awaitedReplanId || !replanCompleted(replan, awaitedReplanId)) return;
+    trace.record({ event: 'replan_completed', replan_request_id: awaitedReplanId, displayed_plan_id: replan?.plan_id ?? null });
     setAwaitedReplanId(null);
     toast({
       title: t('Planen är omräknad', 'Plan rebuilt'),
@@ -69,7 +77,7 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
         'The house sent fresh measurements and was replanned with your numbers.',
       ),
     });
-  }, [awaitedReplanId, replan, t, toast]);
+  }, [awaitedReplanId, replan, t, toast, trace]);
 
 
   // A fragment, so the host lays out the button and the failure separately: the

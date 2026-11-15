@@ -124,5 +124,6 @@ export function projectPlanChart(input: {
       ? hotWater.byStart.get(Date.parse(slot.start))?.expectedW ?? slot.device_loads_w?.[entry.key]
       : slot.device_loads_w?.[entry.key])
     : entry.values);
-  return { rows: panelRows, consumption: { ...consumption, series }, realPrices: prices.kind !== 'live' };
+  return { rows: panelRows, consumption: { ...consumption, series },
+    hotWaterSeriesKey: hotWater ? waterKey : undefined, realPrices: prices.kind !== 'live' };
 }
