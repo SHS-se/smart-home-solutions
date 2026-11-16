@@ -1,5 +1,5 @@
 import { assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
-import { forecastGenerationMix, scoreGenerationRuns, type GenerationPrediction } from "../supabase/functions/_shared/generation-mix.ts";
+import { forecastGenerationMix, forecastRegionalGeneration, scoreGenerationRuns, type GenerationPrediction } from "../supabase/functions/_shared/generation-mix.ts";
 import type { EntsoeInterval } from "../supabase/functions/_shared/entsoe-market-data.ts";
 import { parseMediumRangeWeather } from "../supabase/functions/_shared/medium-range-weather.ts";
 import { mediumRangeWeatherFixture } from "./medium-range-weather.fixture.ts";
@@ -18,6 +18,35 @@ function weather(times: string[]) {
   return parseMediumRangeWeather(mediumRangeWeatherFixture(times), ORIGIN);
 }
 const forecast = (actuals: EntsoeInterval[], origin = ORIGIN) => forecastGenerationMix({ origin, actuals, weather: null, published: [] });
+
+Deno.test("SE3 regional analogs use issued provider weather, train on past MW and cover a 25-hour delivery date", () => {
+  const first = Date.parse("2026-10-24T22:00Z");
+  const morning = "2026-10-23T08:00Z", noon = "2026-10-23T11:00Z", later = "2026-10-23T12:00Z";
+  const point = (at: number, wind: number, sun: number): [number, number, number, number] => [at, wind, 0, sun];
+  const history = [
+    point(Date.parse(morning), 1, 1000), point(Date.parse(morning) + HOUR, 0, 20),
+    point(Date.parse(noon), 9, 1000), point(Date.parse(noon) + HOUR, 1000, 100),
+  ];
+  const actuals = [
+    interval(morning, 100, "B19"), interval(noon, 900, "B19"), interval(later, 999_000, "B19"),
+    interval(morning, 10, "B16"), interval(noon, 1000, "B16"),
+    interval("2026-10-17T22:00Z", 1100), interval("2026-10-24T22:00Z", 999_000),
+  ];
+  const run = (wind: number, sun: number) => forecastRegionalGeneration({
+    origin: Date.parse("2026-10-23T12:00Z"), actuals,
+    weather: { history, forecast: [point(first, wind, 900_000), point(first + HOUR, 1, sun)] },
+  });
+  const ecmwf = run(1, 20), gfs = run(9, 100);
+  assertEquals(ecmwf.length, 49);
+  assertEquals(ecmwf[0].at, first);
+  assertEquals(new Set(ecmwf.map(hour => hour.at)).size, 49);
+  assertEquals(ecmwf[25].at, Date.parse("2026-10-25T23:00Z"));
+  assertAlmostEquals(ecmwf[0].mw.B19!, (100 + 900 / 5) / 1.2);
+  assertAlmostEquals(gfs[0].mw.B19!, (900 + 100 / 5) / 1.2);
+  assertAlmostEquals(ecmwf[0].mw.B16!, (10 + 1000 / 5) / 1.2);
+  assertAlmostEquals(gfs[0].mw.B16!, (1000 + 10 / 5) / 1.2);
+  assertEquals([ecmwf[0].mw.B14, gfs[0].mw.B14, gfs[1].mw.B16, gfs[2].mw.B19], [1100, 1100, null, null]);
+});
 
 Deno.test("generation panel has 72 distinct hourly targets, exact algorithm and observed production types only", () => {
   const run = forecast([

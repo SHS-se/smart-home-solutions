@@ -522,6 +522,12 @@ test.describe('planner bench', () => {
       const quarters = Array.from({ length: 100 }, (_, index) => ({
         start: new Date(start + index * 900_000).toISOString(), spot: 30 + index / 2,
         generation: { B14: 1900, B19: 600 + index, B12: 500 },
+        generation_forecasts: {
+          ecmwf_d2: { reconstructed: true, mw: { B04: 100, B12: 500, B14: 1800, B16: 0, B19: 720, B20: 10 } },
+          gfs_d2: { reconstructed: true, mw: { B04: 100, B12: 500, B14: 1800, B16: 0, B19: 340, B20: 10 } },
+          ecmwf_d3: { reconstructed: true, mw: { B04: 90, B12: 520, B14: 1700, B16: 0, B19: 640, B20: 15 } },
+          gfs_d3: { reconstructed: true, mw: { B04: 90, B12: 520, B14: 1700, B16: 0, B19: 440, B20: 15 } },
+        },
         measured: { SE2: 1200, SE4: -200, DK1: -100, NO1: null, FI: -80 },
         scheduled: { SE2: 1300, SE4: -300, DK1: -100, NO1: -50, FI: -90 },
         forecast_d2: 700 + index, forecast_d3: 650 + index,
@@ -541,12 +547,20 @@ test.describe('planner bench', () => {
     await expect(date).toHaveAttribute('min', '2026-10-22');
     await date.fill('2026-10-25');
     await expect(view.getByTestId('se3-generation-chart').locator('.recharts-bar-rectangle').first()).toBeVisible();
+    await expect(view.getByTestId('se3-generation-chart').locator('.recharts-line-curve')).toHaveCount(3);
     await expect(view.getByTestId('se3-flow-chart')).toBeVisible();
     await view.locator('summary').click();
     await expect(view.locator('tbody tr').first().locator('td').nth(7)).toHaveText('—');
+    await view.locator('#se3-generation-type').click();
+    await page.getByRole('option', { name: /^(Wind|Vindkraft)$/ }).click();
+    await expect(view.locator('tbody tr').first().locator('td').nth(-2)).toHaveText('530');
+    await view.locator('#se3-generation-weather').click();
+    await page.getByRole('option', { name: 'NOAA GFS' }).click();
+    await expect(view.locator('tbody tr').first().locator('td').nth(-2)).toHaveText('340');
+    await expect(view.locator('tbody tr').first().locator('td').last()).toHaveText('440');
     await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(5);
     await expect(view.getByRole('columnheader', { name: /D−2 forecast|D−2-prognos/ })).toBeVisible();
-    await expect(view.getByRole('columnheader', { name: /D−3 \(reconstructed\)|D−3 \(återskapad\)/ })).toBeVisible();
+    await expect(view.getByRole('columnheader', { name: /^D−3 \((reconstructed|återskapad)\)$/ })).toBeVisible();
     await view.locator('#se3-market-border').click();
     await page.getByRole('option', { name: /Gross imports and exports|Import och export/ }).click();
     await expect(view.getByTestId('se3-flow-chart').locator('.recharts-line-curve')).toHaveCount(9);

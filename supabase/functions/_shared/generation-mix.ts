@@ -1,6 +1,8 @@
 /** Pure TEST research: MW forecasts never enter household planning or price policy. */
 import type { EntsoeInterval } from "./entsoe-market-data.ts";
 import type { MediumRangeWeatherDocument } from "./medium-range-weather.ts";
+import type { RegionalWeatherHour } from "./price-weather.ts";
+import { marketDate, marketDaySpan } from "./demand-forecast-quality.ts";
 
 const HOUR = 3_600_000;
 const NEIGHBOURS = 12;
@@ -157,6 +159,53 @@ function weatherPrediction(analog: WeatherAnalog, target: number[] | null, suppo
   return predicted(neighbours.map(value => value.row), neighbours.map(value => 1 / (1 + value.distance)));
 }
 
+function calendarAnalogs(rows: readonly HourlyMw[], clockAt: typeof local) {
+  const groups = new Map<string, HourlyMw[]>();
+  for (const row of rows) {
+    const clock = clockAt(row.start), key = `${clock.hour}:${clock.dayType}`;
+    groups.set(key, [...(groups.get(key) ?? []), row].slice(-NEIGHBOURS));
+  }
+  return groups;
+}
+
+export const REGIONAL_GENERATION_ALGORITHM = "se3-generation-regional-v1";
+const FORECAST_TYPES = ["B04", "B12", "B14", "B16", "B19", "B20"] as const;
+
+/** Generation MW from one provider. History trains the fit, and only the issued run drives its targets. */
+export function forecastRegionalGeneration(input: {
+  origin: number;
+  actuals: readonly EntsoeInterval[];
+  weather: { history: RegionalWeatherHour[]; forecast: RegionalWeatherHour[] };
+}) {
+  const { origin, actuals, weather } = input;
+  const calendarDay = Date.parse(marketDate(origin));
+  const [start] = marketDaySpan(iso(calendarDay + 48 * HOUR).slice(0, 10));
+  const [, end] = marketDaySpan(iso(calendarDay + 72 * HOUR).slice(0, 10));
+  const panel = hourlyPanel(actuals.filter(row => row.startMs >= origin - 28 * 24 * HOUR), origin);
+  const history = new Map(weather.history.filter(row => row[0] <= origin).map(row => [row[0], row]));
+  const forecast = new Map(weather.forecast.map(row => [row[0], row]));
+  const features = (byHour: ReadonlyMap<number, RegionalWeatherHour>, type: string, at: number): number[] | null => {
+    const value = type === "B16" ? byHour.get(at + HOUR)?.[3] : byHour.get(at)?.[1];
+    return value !== undefined && Number.isFinite(value) ? [value] : null;
+  };
+  const hours = Array.from({ length: (end - start) / HOUR }, (_, i) => start + i * HOUR);
+  const result = hours.map(at => ({ at, mw: {} as Record<string, number | null> }));
+  const types = [...new Set([...FORECAST_TYPES, ...panel.keys()])].sort();
+  for (const type of types) {
+    const rows = [...(panel.get(type)?.values() ?? [])].sort((a, b) => a.start - b.start);
+    const weatherDriven = type === "B16" || type === "B18" || type === "B19";
+    const analog = weatherDriven ? fitWeather(rows, { at: (psr, at) => features(history, psr, at) }, type) : null;
+    const calendar = calendarAnalogs(rows, local);
+    for (const hour of result) {
+      const clock = local(hour.at);
+      const prediction = analog ? weatherPrediction(analog, features(forecast, type, hour.at), true)
+        : predicted(calendar.get(`${clock.hour}:${clock.dayType}`) ?? []);
+      hour.mw[type] = prediction.status === "predicted" ? prediction.mw : null;
+    }
+  }
+  return result;
+}
+
 /** Observed production types only. Each candidate is independent; missing inputs never substitute another model. */
 export function forecastGenerationMix(input: {
   origin: string;
@@ -182,14 +231,7 @@ export function forecastGenerationMix(input: {
     if (!clocks.has(start)) clocks.set(start, local(start));
     return clocks.get(start)!;
   };
-  const calendarByType = new Map(types.map(type => {
-    const groups = new Map<string, HourlyMw[]>();
-    for (const row of rowsByType.get(type)!) {
-      const clock = clockAt(row.start), key = `${clock.hour}:${clock.dayType}`;
-      groups.set(key, [...(groups.get(key) ?? []), row].slice(-NEIGHBOURS));
-    }
-    return [type, groups];
-  }));
+  const calendarByType = new Map(types.map(type => [type, calendarAnalogs(rowsByType.get(type)!, clockAt)]));
   const first = Math.ceil(origin / HOUR) * HOUR;
   const hours = Array.from({ length: 72 }, (_, index) => {
     const start = first + index * HOUR, clock = clockAt(start);

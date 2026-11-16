@@ -32,7 +32,8 @@ Deno.test('SE3 staff day projection keeps native blocks, holes, revisions and bo
     for (const migration of ['20261101143000_retire_test_price_workers', '20261101144000_market_data_foundation',
       '20261101162000_weather_accuracy_quality_monitor', '20261101164000_verified_regional_context',
       '20261101180000_retrospective_regional_backfill', '20261101181000_native_history_request_windows',
-      '20261113134000_se3_market_history', '20261113205000_test_se3_net_import_forecast', '20261113220000_test_se3_gross_flow_forecasts']) {
+      '20261113134000_se3_market_history', '20261113205000_test_se3_net_import_forecast', '20261113220000_test_se3_gross_flow_forecasts',
+      '20261116230500_test_se3_regional_generation_forecasts']) {
       await db.exec(await Deno.readTextFile(`supabase/migrations/${migration}.sql`));
     }
     await db.exec('SELECT private.enable_test_market_archive()');
@@ -71,7 +72,8 @@ Deno.test('SE3 staff day projection keeps native blocks, holes, revisions and bo
     assertEquals(result.length, 100);
     assertEquals((await read('2026-03-29')).length, 92);
     const missing = { forecast_d2: null, forecast_d3: null, reconstructed_d2: null, reconstructed_d3: null,
-      gross_forecast_d2: null, gross_forecast_d3: null, gross_reconstructed_d2: null, gross_reconstructed_d3: null };
+      gross_forecast_d2: null, gross_forecast_d3: null, gross_reconstructed_d2: null, gross_reconstructed_d3: null,
+      generation_forecasts: null };
     assertEquals(result[0], { ...missing, start: '2026-10-24T22:00:00+00:00', spot: 4, generation: { B14: 4, B19: null }, measured: { SE2: 20, FI: -10 },
       scheduled: { SE2: 20, SE4: -7, DK1: null, FI: null, NO1: null } });
     assertEquals(result[1], { ...missing, start: '2026-10-24T22:15:00+00:00', spot: 4, generation: { B14: 4, B19: null }, measured: null,
@@ -79,6 +81,25 @@ Deno.test('SE3 staff day projection keeps native blocks, holes, revisions and bo
     await db.exec('RESET ROLE');
     await add({ svk_physical_imports: { unit: 'MW', records: [] } });
     assertEquals((await read(day))[0], { ...(result[0] as object), measured: { FI: -10 } });
+    await db.query(`INSERT INTO private.test_se3_generation_forecasts
+      (source,origin_day,issued_at,algorithm,reconstructed,weather_cycle,weather_collected_at,actuals_id,weather,hours)
+      SELECT source,origin,origin::timestamptz + interval '12 hours','se3-generation-regional-v1',reconstructed,
+        origin::timestamptz,origin::timestamptz,id,'{}'::jsonb,jsonb_build_object($1::text,jsonb_build_object('B19',wind,'B14',1100))
+      FROM energy_market_forecast_observations
+      CROSS JOIN (VALUES ('ecmwf',DATE '2026-10-23',true,850),('gfs',DATE '2026-10-23',true,950),
+        ('ecmwf',DATE '2026-10-22',false,780)) v(source,origin,reconstructed,wind)
+      WHERE dataset='generation_actual'`, [start / 1000]);
+    await db.exec('SET ROLE authenticated');
+    const mix = (await read(day) as Record<string, unknown>[]).map(row => row.generation_forecasts);
+    const firstHour = {
+      ecmwf_d2: { reconstructed: true, mw: { B14: 1100, B19: 850 } },
+      gfs_d2: { reconstructed: true, mw: { B14: 1100, B19: 950 } },
+      ecmwf_d3: { reconstructed: false, mw: { B14: 1100, B19: 780 } },
+    };
+    assertEquals(mix.slice(0, 4), Array(4).fill(firstHour));
+    assertEquals(mix[4], { ecmwf_d2: { reconstructed: true, mw: null }, gfs_d2: { reconstructed: true, mw: null },
+      ecmwf_d3: { reconstructed: false, mw: null } });
+    await db.exec('RESET ROLE');
 
     // Forecast for 1 November uses a repeated Stockholm quarter on 25 October.
     const priorWeeks = ['2026-10-25', '2026-10-18', '2026-10-11', '2026-10-04'];

@@ -262,6 +262,9 @@ def refresh(project, source):
       SELECT true AS refreshed;
     """)
     print(f"{source} {iso(cycle)}: {len(merged)} history hours, {len(packed['forecast'])} forecast hours")
+    if project == PROJECTS[0]:
+        subprocess.run(["deno", "run", "--allow-run=supabase", "scripts/record-se3-generation.ts", source],
+                       check=True)
 
 
 if __name__ == "__main__":

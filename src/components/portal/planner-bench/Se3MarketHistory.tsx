@@ -16,11 +16,15 @@ const BORDERS = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 type Border = typeof BORDERS[number];
 type Flow = 'net' | 'gross' | Border;
 type Values = Record<string, number | null> | null;
+type GenerationSource = 'ecmwf' | 'gfs' | 'blend';
+type GenerationForecastKey = `${Exclude<GenerationSource, 'blend'>}_d${2 | 3}`;
+type GenerationForecasts = Partial<Record<GenerationForecastKey, { reconstructed: boolean; mw: Values }>>;
 type GrossFlows = { imports_mw: number; exports_mw: number } | null;
 interface MarketQuarter {
   start: string;
   spot: number | null;
   generation: Values;
+  generation_forecasts: GenerationForecasts | null;
   measured: Values;
   scheduled: Values;
   forecast_d2: number | null;
@@ -42,12 +46,30 @@ const GENERATION = [
   { key: 'other', types: [], sv: 'Övrigt', en: 'Other', colour: '#778899' },
 ];
 const generationTypes = new Set(GENERATION.flatMap(item => item.types));
+type GenerationSelection = 'total' | typeof GENERATION[number]['key'];
 const changeDay = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 const stockholmToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
 function sum(values: (number | null | undefined)[]) {
   return values.length && values.every((value): value is number => typeof value === 'number')
     ? values.reduce((total, value) => total + value, 0) : null;
+}
+
+function generationValues(values: Values) {
+  const types = Object.entries(values ?? {});
+  return Object.fromEntries(GENERATION.map(group => [group.key, sum(types
+    .filter(([type]) => group.key === 'other' ? !generationTypes.has(type) : group.types.includes(type))
+    .map(([, value]) => value))]));
+}
+
+function generationEstimate(forecasts: GenerationForecasts | null, lead: 2 | 3, source: GenerationSource, selection: GenerationSelection) {
+  const value = (provider: Exclude<GenerationSource, 'blend'>) => {
+    const groups = generationValues(forecasts?.[`${provider}_d${lead}`]?.mw ?? null);
+    return selection === 'total' ? sum(Object.values(groups)) : groups[selection];
+  };
+  if (source !== 'blend') return value(source);
+  const ecmwf = value('ecmwf'), gfs = value('gfs');
+  return ecmwf == null || gfs == null ? null : (ecmwf + gfs) / 2;
 }
 
 function flowValues(flows: Values, mode: Flow) {
@@ -69,6 +91,8 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
   const today = stockholmToday();
   const [chosen, setDay] = useState('');
   const [mode, setMode] = useState<Flow>('net');
+  const [generationSource, setGenerationSource] = useState<GenerationSource>('blend');
+  const [generationSelection, setGenerationSelection] = useState<GenerationSelection>('total');
   const day = chosen || changeDay(today, -1);
   const latest = changeDay(today, 3);
   const query = useQuery({
@@ -80,22 +104,33 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
     },
   });
   const rows = useMemo(() => (query.data ?? []).map(quarter => {
-    const types = Object.entries(quarter.generation ?? {});
-    const production = Object.fromEntries(GENERATION.map(group => [group.key, sum(types
-      .filter(([type]) => group.key === 'other' ? !generationTypes.has(type) : group.types.includes(type)).map(([, value]) => value))]));
+    const production = generationValues(quarter.generation);
     const [actual, actualExport] = flowValues(quarter.measured, mode);
     const [dayAhead, dayAheadExport] = flowValues(quarter.scheduled, mode);
     return { at: Date.parse(quarter.start), spot: quarter.spot, ...production, actual, actualExport, dayAhead, dayAheadExport,
+      generationD2: generationEstimate(quarter.generation_forecasts, 2, generationSource, generationSelection),
+      generationD3: generationEstimate(quarter.generation_forecasts, 3, generationSource, generationSelection),
       forecastD2: quarter.forecast_d2, forecastD3: quarter.forecast_d3,
       grossImportD2: quarter.gross_forecast_d2?.imports_mw ?? null, grossExportD2: quarter.gross_forecast_d2?.exports_mw ?? null,
       grossImportD3: quarter.gross_forecast_d3?.imports_mw ?? null, grossExportD3: quarter.gross_forecast_d3?.exports_mw ?? null };
-  }), [query.data, mode]);
+  }), [query.data, mode, generationSource, generationSelection]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const times = new Intl.DateTimeFormat(locale, { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const detailedTimes = new Intl.DateTimeFormat(locale, { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' });
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
   const price: Series = { key: 'spot', label: t('Spotpris', 'Spot price'), colour: foreground, dash: '3 3' };
   const generation: Series[] = GENERATION.map(item => ({ ...item, label: t(item.sv, item.en) }));
+  const generationForecasts: Series[] = ([2, 3] as const).map(lead => {
+    const mix = query.data?.[0]?.generation_forecasts;
+    const reconstructed = generationSource === 'blend'
+      ? mix?.[`ecmwf_d${lead}`]?.reconstructed || mix?.[`gfs_d${lead}`]?.reconstructed
+      : mix?.[`${generationSource}_d${lead}`]?.reconstructed;
+    const suffix = reconstructed ? t(' (återskapad)', ' (reconstructed)') : '';
+    return {
+      key: `generationD${lead}`, label: t(`Produktionsprognos D−${lead}`, `D−${lead} generation forecast`) + suffix,
+      colour: lead === 2 ? '#ba6b19' : '#087c6c', dash: lead === 2 ? '8 4' : '2 4',
+    };
+  });
   const forecastLabel = (lead: 2 | 3, reconstructed: boolean | null | undefined) => {
     if (reconstructed) return t(`D−${lead} (återskapad)`, `D−${lead} (reconstructed)`);
     return t(`D−${lead}-prognos`, `D−${lead} forecast`);
@@ -130,6 +165,28 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
     return <section aria-label={title} className="min-w-0 space-y-2">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <h3 className="text-base font-medium">{title}</h3>
+        {stacked && <div className="flex flex-wrap gap-2">
+          <div>
+            <label htmlFor="se3-generation-type" className="mb-1 block text-sm">{t('Kraftslag', 'Generation type')}</label>
+            <Select value={generationSelection} onValueChange={setGenerationSelection}>
+              <SelectTrigger id="se3-generation-type" className="min-h-11 w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="total">{t('Alla kraftslag', 'All generation')}</SelectItem>
+                {generation.map(item => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="se3-generation-weather" className="mb-1 block text-sm">{t('Väderkälla', 'Forecast weather source')}</label>
+            <Select value={generationSource} onValueChange={value => setGenerationSource(value as GenerationSource)}>
+              <SelectTrigger id="se3-generation-weather" className="min-h-11 w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="blend">{t('ECMWF och GFS', 'ECMWF and GFS')}</SelectItem>
+                <SelectItem value="ecmwf">ECMWF</SelectItem><SelectItem value="gfs">NOAA GFS</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>}
         {!stacked && <div>
           <label htmlFor="se3-market-border" className="mb-1 block text-sm">{t('Visa flöden', 'Show flows')}</label>
           <Select value={mode} onValueChange={value => setMode(value as Flow)}>
@@ -158,7 +215,7 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
               <YAxis yAxisId="price" orientation="right" width={45} stroke={muted} tick={axis} domain={['auto', 'auto']} label={{ value: '€/MWh', position: 'insideTopRight', offset: 0, fill: muted, fontSize: 11 }} />
               <Tooltip labelFormatter={value => detailedTimes.format(Number(value))} formatter={(value: number, label: string) => [`${number.format(value)} ${label === price.label ? '€/MWh' : 'MW'}`, label]} contentStyle={{ backgroundColor: 'hsl(var(--popover))', color: foreground, borderColor: grid, fontSize: 12 }} />
               {!stacked && <ReferenceLine yAxisId="mw" y={0} stroke={muted} />}
-              {series.map(item => stacked
+              {series.map(item => stacked && !item.dash
                 ? <Bar key={item.key} yAxisId="mw" dataKey={item.key} stackId="generation" name={item.label} fill={item.colour} isAnimationActive={false} />
                 : <Line key={item.key} yAxisId="mw" dataKey={item.key} name={item.label} stroke={item.colour} strokeDasharray={item.dash} type="stepAfter" strokeWidth={item.width ?? 2} dot={false} connectNulls={false} isAnimationActive={false} />)}
               <Line yAxisId="price" dataKey={price.key} name={price.label} stroke={price.colour} strokeDasharray={price.dash} type="stepAfter" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
@@ -166,7 +223,10 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
           </ResponsiveContainer>
         </div>
       </>}
-      {stacked && <p className="text-xs text-muted-foreground">{t('Staplarna visar rapporterad produktion per kraftslag.', 'Bars show reported generation by source.')}</p>}
+      {stacked && <p className="text-xs text-muted-foreground">{t(
+        'Staplarna visar uppmätt produktion per kvart. Prognoslinjerna visar medeleffekt per timme. ECMWF och GFS väger lika när båda är valda.',
+        'Bars show measured generation by quarter. Forecast lines show hourly average output. ECMWF and GFS are weighted equally when both are selected.',
+      )}</p>}
     </section>;
   };
 
@@ -191,14 +251,16 @@ export default function Se3MarketHistory({ forecastDay }: { forecastDay?: string
       {query.isLoading && <p role="status" className="text-sm text-muted-foreground">{t('Laddar marknadshistorik…', 'Loading market history…')}</p>}
       {query.isError && <div className="flex flex-wrap items-center gap-2 text-sm" role="alert">{t('Kunde inte hämta marknadshistoriken.', 'Could not load market history.')} <Button variant="outline" className="min-h-11" onClick={() => void query.refetch()}>{t('Försök igen', 'Try again')}</Button></div>}
       {query.data && <>
-        {renderChart(t('Produktionsmix och spotpris', 'Generation mix and spot price'), generation, true)}
+        {renderChart(t('Produktionsmix och spotpris', 'Generation mix and spot price'), [
+          ...generation.filter(item => generationSelection === 'total' || item.key === generationSelection), ...generationForecasts,
+        ], true)}
         {renderChart(t('Import, export och spotpris', 'Imports, exports and spot price'), flows, false)}
         {rows.length > 0 && <details className="min-w-0 overflow-hidden rounded-md border p-3 text-sm">
           <summary className="cursor-pointer py-2">{t('Visa marknadsvärden per kvart', 'Show market values by quarter')}</summary>
           <div className="mt-2 max-h-80 max-w-full overflow-auto" tabIndex={0} aria-label={t('Kvartsvärden', 'Quarter values')}>
             <table className="w-full whitespace-nowrap text-sm tabular-nums"><caption className="sr-only">{t('Spotpris i €/MWh, produktion och flöden i MW', 'Spot price in €/MWh, generation and flows in MW')}</caption>
-              <thead><tr><th scope="col" className="px-2 py-2 text-left">{t('Tid', 'Time')}</th>{[price, ...generation, ...flows].map(item => <th scope="col" className="px-2 py-2 text-right" key={item.key}>{item.label}</th>)}</tr></thead>
-              <tbody>{rows.map(row => <tr key={row.at} className="border-t"><th scope="row" className="px-2 py-2 text-left font-normal">{detailedTimes.format(row.at)}</th>{[price, ...generation, ...flows].map(item => {
+              <thead><tr><th scope="col" className="px-2 py-2 text-left">{t('Tid', 'Time')}</th>{[price, ...generation, ...flows, ...generationForecasts].map(item => <th scope="col" className="px-2 py-2 text-right" key={item.key}>{item.label}</th>)}</tr></thead>
+              <tbody>{rows.map(row => <tr key={row.at} className="border-t"><th scope="row" className="px-2 py-2 text-left font-normal">{detailedTimes.format(row.at)}</th>{[price, ...generation, ...flows, ...generationForecasts].map(item => {
                 const value = (row as Record<string, number | null>)[item.key];
                 return <td className="px-2 py-2 text-right" key={item.key}>{value == null ? '—' : number.format(value)}</td>;
               })}</tr>)}</tbody>
