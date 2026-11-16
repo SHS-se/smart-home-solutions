@@ -419,7 +419,6 @@ test.describe('staff navigation shell', () => {
 
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
-    const labels = ['—', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
     const devices = methods.map((method, index) => ({
       id: `device-${index}`, device_key: `sensor.device_${index}`, statistic_id: `sensor.device_${index}`,
       name: `Device ${index}`, colour: TEST_DEVICE_COLOURS[index], retired_at: null, category: 'heating', load_type_override: 'duty_cycle',
@@ -451,13 +450,11 @@ test.describe('staff navigation shell', () => {
     });
     const toggle = (i: number) => page.getByRole('switch', { name: `Planera Device ${i}`, exact: true });
     const deviceRow = (i: number) => page.getByRole('row').filter({ has: toggle(i) });
-    const method = (i: number) => deviceRow(i).getByText(labels[i], { exact: true });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < methods.length; i++) {
-        await expect(method(i)).toBeVisible();
-        await expect(deviceRow(i).getByText('Termostat / driftcykel', { exact: true })).toBeVisible();
+        await expect(deviceRow(i).getByText('Termostat / driftcykel', { exact: true })).toHaveCount(0);
         await expect(deviceRow(i).getByRole('combobox')).toHaveCount(0);
         await expect(toggle(i)).toBeChecked({ checked: i > 0 });
       }
@@ -470,8 +467,8 @@ test.describe('staff navigation shell', () => {
       await toggle(i).click();
       await expect(toggle(i)).not.toBeChecked();
       await page.reload();
-      await expect(method(i)).toBeVisible();
       await expect(toggle(i)).not.toBeChecked();
+      await expect(toggle(i)).toBeEnabled();
       await toggle(i).click();
       await expect(toggle(i)).toBeChecked();
       expect(writes.slice(-2)).toEqual([
@@ -482,9 +479,10 @@ test.describe('staff navigation shell', () => {
     // The website waits for the app to provide a method.
     await expect(toggle(0)).toBeDisabled();
     devices[0].control_type_override = 'setpoint';
-    labels[0] = 'Börvärde';
+    devices[1].mapping_status = 'invalid';
+    devices[1].mapping_summary = { setup_fields: ['temperature_entity_id'] };
     await page.reload();
-    await expect(method(0)).toBeVisible();
+    await expect(deviceRow(1).getByText(/Kontrollera Rumstemperatur/)).toBeVisible();
     await expect(toggle(0)).toBeEnabled();
     await expect(toggle(0)).not.toBeChecked();
     // Keyboard operation and failed-save state are both truthful.

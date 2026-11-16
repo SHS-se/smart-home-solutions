@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2 } from 'lucide-react';
+import { AlertTriangle, Database, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -7,12 +7,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import type {
-  DeviceControlType,
-  DeviceLoadType,
-  DevicePlanningRole,
-} from '@/lib/energy-shift/contracts';
-
 export type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import DeviceName from './DeviceName';
@@ -56,18 +50,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
     else { setBattery(data); await onChanged(); }
     setSavingId(null);
   };
-  const loadLabel: Record<DeviceLoadType, string> = {
-    fixed_full_load: t('Fast full last', 'Fixed full load'),
-    variable_full_load: t('Variabel full last', 'Variable full load'),
-    duty_cycle: t('Termostat / driftcykel', 'Thermostat / duty cycle'),
-    inverter: t('Inverterlast', 'Inverter load'),
-  };
-  const controlLabel: Record<DeviceControlType, string> = {
-    switch_schedule: t('På/av-schema', 'On/off schedule'),
-    variable_power: t('Variabel effekt', 'Variable power'),
-    permit_inhibit: t('Tillåt/blockera', 'Permit/inhibit'),
-    setpoint: t('Börvärde', 'Setpoint'),
-  };
   const mappingState = (device: EmpiricalEnergyDevice) => {
     if (device.planning_role_override === 'base_load') return 'base_load' as const;
     if (
@@ -80,8 +62,24 @@ const EmpiricalDeviceModelsCard: React.FC<{
     ) return 'invalid' as const;
     return 'pending' as const;
   };
-  const pendingCount = devices.filter(device => mappingState(device) === 'pending').length;
-  const invalidCount = devices.filter(device => mappingState(device) === 'invalid').length;
+  const setupFieldLabels: Record<string, string> = {
+    control_type: t('Styrmetod', 'Control method'),
+    actuator_entity_ids: t('Styrenhet', 'Control entity'),
+    control_entity_id: t('Effekt- eller strömstyrning', 'Power or current control'),
+    temperature_entity_id: t('Rumstemperatur', 'Room temperature'),
+    room_area_id: t('Rum', 'Room'),
+    power: t('Effekt', 'Power'),
+    minimum_value: t('Minimivärde', 'Minimum value'),
+    maximum_value: t('Maximivärde', 'Maximum value'),
+    pool_water_temperature_entity: t('Pooltemperatur', 'Pool water temperature'),
+    pool_start_temperature_entity: t('Värmarens starttemperatur', 'Heater start temperature'),
+    pool_stop_temperature_entity: t('Värmarens stopptemperatur', 'Heater stop temperature'),
+  };
+  const setupFields = (device: EmpiricalEnergyDevice) => {
+    const fields = device.mapping_summary?.setup_fields;
+    return Array.isArray(fields) ? fields.flatMap((field: unknown) =>
+      typeof field === 'string' && Object.hasOwn(setupFieldLabels, field) ? [setupFieldLabels[field]] : []) : [];
+  };
 
   const persist = async (
     device: EmpiricalEnergyDevice,
@@ -115,7 +113,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Database className="h-4 w-4" />
-          {t('Empiriska enhetsmodeller från Home Assistant', 'Empirical Home Assistant device models')}
+          {t('Enhetsplanering', 'Device planning')}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -127,31 +125,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
             disabled={refreshing || savingId !== null} onChange={included => void chooseBattery(included)} />
           <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
         </div>}
-        <p className="text-sm text-muted-foreground">
-          {t(
-            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. Välj Övervakning för baslast eller Planerad för individuell schemaläggning. Styrmetoden sparas separat och behålls när reglaget är av. Planerad utrustning behöver en giltig lokal konfiguration. Saknad konfiguration visas som ett planeringshinder.',
-            'Every new device starts in base load and is learned from real 15-minute values. Choose Monitoring to keep consumption in base load, or Planned to schedule it individually. Its control method is saved separately and is retained when the toggle is off. Planned equipment needs valid local setup. Missing setup is shown as a planning blocker.',
-          )}
-        </p>
-        {(pendingCount > 0 || invalidCount > 0) && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              <div className="font-medium">
-                {t(
-                  `${pendingCount + invalidCount} styrbara enheter behöver konfigureras i Home Assistant`,
-                  `${pendingCount + invalidCount} controllable devices need Home Assistant configuration`,
-                )}
-              </div>
-              <div className="text-xs opacity-80">
-                {t(
-                  'Öppna Konfigurera på SHS-integrationen. Den hämtar dessa val direkt—ingen omstart av Home Assistant krävs.',
-                  'Open Configure on the SHS integration. It fetches these selections immediately—no Home Assistant restart is required.',
-                )}
-              </div>
-            </div>
-          </div>
-        )}
         {devices.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {t('Väntar på en enhetsinventering från Home Assistant.', 'Waiting for a device inventory from Home Assistant.')}
@@ -164,47 +137,44 @@ const EmpiricalDeviceModelsCard: React.FC<{
                   <TableHead>{t('Enhet', 'Device')}</TableHead>
                   <TableHead>{t('Kategori', 'Category')}</TableHead>
                   <TableHead>{t('Planering', 'Planning')}</TableHead>
-                  <TableHead>{t('Styrmetod', 'Control method')}</TableHead>
-                  <TableHead>{t('Lastkaraktär', 'Load characteristic')}</TableHead>
+                  <TableHead>{t('Planeringsstatus', 'Planning status')}</TableHead>
                   <TableHead className="text-right">{t('Aktiv effekt', 'Active power')}</TableHead>
                   <TableHead className="text-right">{t('Historik', 'History')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {devices.map(device => (
-                  <TableRow key={device.id}>
+                {devices.map(device => {
+                  const status = mappingState(device);
+                  const fields = setupFields(device);
+                  return <TableRow key={device.id}>
                     <TableCell>
                       <DeviceName name={device.name} colour={device.colour} deviceKey={device.device_key} className="font-medium" />
-                      <div className="max-w-[300px] truncate text-xs text-muted-foreground" title={device.statistic_id}>{device.statistic_id}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell>
                       <PlanningToggle name={device.name} included={device.planning_role_override === 'controllable'}
                         disabled={refreshing || savingId !== null || (!device.control_type_override && device.planning_role_override !== 'controllable')}
                         onChange={included => void updatePlanning(device, included)} />
-                      {!device.control_type_override && <p className="mt-1 text-xs text-muted-foreground">
-                        {t('Välj en styrmetod i SHS-appen.', 'Choose a control method in the SHS app.')}
-                      </p>}
+                      {savingId === device.id && <Loader2 aria-label={t('Sparar', 'Saving')} className="mt-1 h-4 w-4 animate-spin" />}
                     </TableCell>
-                    <TableCell className="min-w-[200px]">
-                      <span>{device.control_type_override ? controlLabel[device.control_type_override] : '—'}</span>
-                      <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
-                        {mappingState(device) === 'ready' ? (
-                          <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{t('Klar i Home Assistant', 'Ready in Home Assistant')}</>
-                        ) : mappingState(device) === 'invalid' ? (
-                          <><AlertTriangle className="h-3.5 w-3.5 text-destructive" /><span title={device.mapping_error ?? undefined}>{t('Behöver åtgärdas', 'Needs attention')}</span></>
-                        ) : mappingState(device) === 'pending' ? (
-                          <><Clock3 className="h-3.5 w-3.5 text-amber-600" />{t('Konfigurera i Home Assistant', 'Set up in Home Assistant')}</>
-                        ) : (
-                          <>{t('Ingår i empirisk baslast', 'Included in empirical base load')}</>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="min-w-[230px]">
-                      <div className="flex items-center gap-2">
-                        <span>{loadLabel[device.load_type_override]}</span>
-                        {savingId === device.id && <Loader2 className="h-4 w-4 animate-spin" />}
-                      </div>
+                    <TableCell className="min-w-[200px] text-sm">
+                      {!device.control_type_override || status === 'pending' || status === 'invalid' ? (
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div>
+                            {status === 'base_load' ? t('Ingår i baslasten', 'Counted in household use')
+                              : t('Utanför planeringen tills installationen är klar', 'Left out of planning until setup is complete')}
+                            <p className="text-xs text-muted-foreground">
+                              {!device.control_type_override
+                                ? t('Välj Styrmetod under Enheter i SHS-appen.', 'Choose Control method under Devices in the SHS app.')
+                                : fields.length
+                                  ? t(`Kontrollera ${fields.join(', ')} under Enheter i SHS-appen.`, `Check ${fields.join(', ')} under Devices in the SHS app.`)
+                                  : t('Öppna enhetens inställningar under Enheter i SHS-appen.', 'Open this device under Devices in the SHS app to complete its setup.')}
+                            </p>
+                          </div>
+                        </div>
+                      ) : status === 'ready' ? t('Klar för planering', 'Ready to plan')
+                        : t('Ingår i baslasten', 'Counted in household use')}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {device.active_power_w == null ? '—' : `${(device.active_power_w / 1_000).toFixed(2)} kW`}
@@ -214,24 +184,12 @@ const EmpiricalDeviceModelsCard: React.FC<{
                         ? `${device.profile_sample_count} × 15 min`
                         : t('Samlas in', 'Collecting')}
                     </TableCell>
-                  </TableRow>
-                ))}
+                  </TableRow>;
+                })}
               </TableBody>
             </Table>
           </div>
         )}
-        <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-4">
-          <div><span className="font-medium text-foreground">{loadLabel.fixed_full_load}:</span> {t('samma märkeffekt under hela på-tiden', 'one rated power throughout on-time')}</div>
-          <div><span className="font-medium text-foreground">{loadLabel.variable_full_load}:</span> {t('varierande effekt medan enheten arbetar', 'varying power while the device works')}</div>
-          <div><span className="font-medium text-foreground">{loadLabel.duty_cycle}:</span> {t('en intern termostat styr den verkliga driftcykeln', 'an internal thermostat owns the real duty cycle')}</div>
-          <div><span className="font-medium text-foreground">{loadLabel.inverter}:</span> {t('empirisk varierande last, normalt temperaturberoende', 'empirical variable load, normally temperature-dependent')}</div>
-        </div>
-        <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-          {t(
-            'Styrtypen beskriver den verkliga kontrollmöjligheten. Integrationen hämtar ändringar automatiskt vid nästa 15-minutersutbyte eller direkt när Konfigurera öppnas. Ofullständiga eller felaktiga mappningar stannar säkert i baslasten. Varmvatten med Tillåt/blockera låter fortfarande den egna termostaten bestämma driftcykeln; planen kan bara blockera olämpliga kvartar, aldrig tvinga enheten att slå på.',
-            'The control type describes the real control capability. The integration fetches changes automatically on the next 15-minute exchange, or immediately when Configure is opened. Incomplete or invalid mappings safely remain in base load. Permit/inhibit hot water still leaves the duty cycle to its own thermostat; the plan can only block unsuitable quarters, never force the device on.',
-          )}
-        </div>
       </CardContent>
     </Card>
   );

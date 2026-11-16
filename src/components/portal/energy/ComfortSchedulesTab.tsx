@@ -153,10 +153,15 @@ const ComfortSchedulesTab: React.FC<{
       room.controlledDevices = [...new Set([...room.controlledDevices, ...controlled])].sort();
       grouped.set(roomKey, room);
     }
-    const nextZones = [...grouped.values()].sort((left, right) => left.name.localeCompare(right.name));
     const rowsByRoom = new Map(
       (scheduleResult.data ?? []).map(row => [row.room_key, row]),
     );
+    for (const row of rowsByRoom.values()) {
+      if (!grouped.has(row.room_key)) grouped.set(row.room_key, {
+        id: row.room_key, name: row.room_name, controlledDevices: [],
+      });
+    }
+    const nextZones = [...grouped.values()].sort((left, right) => left.name.localeCompare(right.name));
     const nextStored: Record<string, StoredComfortSchedule> = {};
     const nextDrafts: Record<string, ZoneComfortSchedule> = {};
     const missing: string[] = [];
@@ -192,8 +197,8 @@ const ComfortSchedulesTab: React.FC<{
     ));
     if (missing.length > 0) {
       setError(t(
-        `Komfortschema saknas för ${missing.join(', ')}. Spara om styrtypen Börvärde på fliken Enheter.`,
-        `A comfort schedule is missing for ${missing.join(', ')}. Re-save Setpoint control on the Devices tab.`,
+        `Komfortschema saknas för ${missing.join(', ')}. Kontrollera rumsinställningarna för värmaren under Enheter i SHS-appen.`,
+        `A comfort schedule is missing for ${missing.join(', ')}. Review the heater’s room settings under Devices in the SHS app.`,
       ));
     }
     setLoading(false);
@@ -213,6 +218,7 @@ const ComfortSchedulesTab: React.FC<{
   const selectedZone = zones.find(zone => zone.id === selectedId) ?? null;
   const draft = selectedId ? drafts[selectedId] : undefined;
   const saved = selectedId ? stored[selectedId] : undefined;
+  const canEdit = Boolean(selectedZone?.controlledDevices.length);
   const dirty = !sameSchedule(draft, saved);
   const dirtyCount = zones.filter(zone => !sameSchedule(drafts[zone.id], stored[zone.id])).length;
   const temperaturesValid = Boolean(
@@ -224,7 +230,7 @@ const ComfortSchedulesTab: React.FC<{
   );
 
   const updateDraft = (updater: (current: ZoneComfortSchedule) => ZoneComfortSchedule) => {
-    if (!selectedId) return;
+    if (!selectedId || !canEdit) return;
     setDrafts(current => ({
       ...current,
       [selectedId]: updater(current[selectedId]),
@@ -245,7 +251,7 @@ const ComfortSchedulesTab: React.FC<{
   }));
 
   const save = async () => {
-    if (!selectedId || !draft || !temperaturesValid) return;
+    if (!canEdit || !selectedId || !draft || !temperaturesValid) return;
     setSaving(true);
     const { data, error: saveError } = await supabase.rpc(
       'set_energy_room_comfort_schedule',
@@ -361,6 +367,12 @@ const ComfortSchedulesTab: React.FC<{
                 </div>
               </div>
 
+              {selectedZone && !canEdit && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {t('Schemat är sparat. En planerad värmare behöver vara klar innan du kan ändra det.',
+                    'This schedule is saved. A planned heater must be ready before you can edit it.')}
+                </p>
+              )}
               {selectedZone && draft && saved && (
                 <div className="min-w-0 space-y-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -392,7 +404,7 @@ const ComfortSchedulesTab: React.FC<{
                       <Button
                         type="button"
                         size="sm"
-                        disabled={!dirty || !temperaturesValid || saving}
+                        disabled={!canEdit || !dirty || !temperaturesValid || saving}
                         onClick={() => void save()}
                       >
                         {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -415,6 +427,7 @@ const ComfortSchedulesTab: React.FC<{
                         <div className="mt-2 flex items-center gap-2">
                           <Input
                             id={`${selectedId}-${field}`}
+                            disabled={!canEdit}
                             type="number"
                             min={5}
                             max={30}
@@ -477,6 +490,7 @@ const ComfortSchedulesTab: React.FC<{
                           </div>
                           <Button
                             type="button"
+                            disabled={!canEdit}
                             size="sm"
                             variant="ghost"
                             onClick={() => copyDay(dayType === 'weekday' ? 'weekend' : 'weekday', dayType)}
@@ -503,6 +517,7 @@ const ComfortSchedulesTab: React.FC<{
                                     <TooltipTrigger asChild>
                                       <button
                                         type="button"
+                                        disabled={!canEdit}
                                         role="gridcell"
                                         aria-label={`${quarterLabel(quarter)}–${quarterLabel(quarter + 1)}: ${modeLabel[mode]}`}
                                         className={cn(
