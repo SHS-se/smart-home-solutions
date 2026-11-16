@@ -139,6 +139,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
         || (system != null && currentPlan?.services.some(service => service.device === system
           && (Object.prototype.hasOwnProperty.call(priority?.service_slots ?? {}, service.id)
             || Object.prototype.hasOwnProperty.call(priority?.service_inhibited_slots ?? {}, service.id))));
+    const forecast = device && currentPlan?.device_models.some(model => model.key === key)
+      && priority?.slots.some(slot => Object.prototype.hasOwnProperty.call(slot.device_loads_w ?? {}, key));
     const included = device ? device.planning_role_override === 'controllable' : battery?.battery_included;
     const setup = device && mappingState(device) !== 'ready';
     const fields = device ? setupFields(device) : [];
@@ -159,8 +161,10 @@ const EmpiricalDeviceModelsCard: React.FC<{
       reason: null, details: measurement.map(issue => describeMeasurementIssue(issue, t)) };
     if (setup && !scheduled) return { heading: t('Utanför planen', 'Not in the plan'), label: t('Behöver ställas in i appen', 'Needs app setup'),
       reason: detail, details: [correction] };
-    if (scheduled) return { heading: t('Ingår i planen', 'In the plan'), label: null,
-      reason: t('Den senaste planen omfattar enheten.', 'The latest plan includes this device.'), details: warnings.flatMap(warning => [warning.message, warning.consequence]) };
+    if (scheduled || forecast) return { heading: t('Ingår i planen', 'In the plan'), label: null,
+      reason: scheduled ? t('Den senaste planen omfattar enheten.', 'The latest plan includes this device.')
+        : t('Planen innehåller en prognos för enhetens förbrukning.', 'The plan includes a forecast of this device’s consumption.'),
+      details: warnings.flatMap(warning => [warning.message, warning.consequence]) };
     return { heading: currentPlan ? t('Utanför planen', 'Not in the plan') : t('Ingen aktuell plan', 'No current plan'), label: null,
       reason: warnings.length ? null : currentPlan
         ? t('Den senaste planen innehåller inga instruktioner för enheten. Ingen specifik orsak har rapporterats.', 'The latest plan has no instructions for this device. No specific reason was reported.')

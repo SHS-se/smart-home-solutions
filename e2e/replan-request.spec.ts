@@ -1048,6 +1048,7 @@ test.describe('requesting a replan', () => {
     const guestSwatch = page.locator(`[data-device-colour="${guest.key}"]`).first();
     await expect(guestSwatch).toHaveCSS('background-color', guestColour);
     await page.getByRole('navigation', { name: /^(Enheter|Devices)$/ }).getByRole('button', { name: guest.name, exact: true }).click();
+    await expect(page.getByRole('heading', { name: /^(Ingår i planen|In the plan)$/ })).toBeVisible();
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
     await expect(guestSwatch).toHaveCSS('background-color', guestColour);
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
