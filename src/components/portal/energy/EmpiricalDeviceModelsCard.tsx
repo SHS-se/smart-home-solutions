@@ -78,7 +78,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
   const setupFields = (device: EmpiricalEnergyDevice) => {
     const fields = device.mapping_summary?.setup_fields;
     return Array.isArray(fields) ? fields.flatMap((field: unknown) =>
-      typeof field === 'string' && Object.hasOwn(setupFieldLabels, field) ? [setupFieldLabels[field]] : []) : [];
+      typeof field === 'string' && Object.prototype.hasOwnProperty.call(setupFieldLabels, field)
+        ? [setupFieldLabels[field]] : []) : [];
   };
 
   const persist = async (
