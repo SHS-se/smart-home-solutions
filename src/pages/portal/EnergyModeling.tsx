@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useCallback, useState, useEffect } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
@@ -60,9 +61,34 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const resolvedCustomerId = propCustomerId || customerData?.id || '';
   const showStaffGlobal = isStaff && !propCustomerId;
 
-  const [selectedHomeId, setSelectedHomeId] = useState<string | null>(null);
+  const [defaultHomeId, setDefaultHomeId] = useState<string | null>(null);
   const [homeCount, setHomeCount] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedHomeId = searchParams.get('home');
+  const hasHomeLink = requestedHomeId !== null;
+  const { data: linkedHome, isPending: loadingLinkedHome, isError: linkedHomeError } = useQuery({
+    queryKey: ['energy-home-link', requestedHomeId, resolvedCustomerId, showStaffGlobal],
+    enabled: hasHomeLink,
+    retry: false,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('homes')
+        .select('id, customer_id').eq('id', requestedHomeId ?? '').maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const selectedHomeId = hasHomeLink ? linkedHome?.id ?? null : defaultHomeId;
+  const changeHome = useCallback((homeId: string) => {
+    if (!hasHomeLink) {
+      setDefaultHomeId(homeId);
+      return;
+    }
+    if (homeId === requestedHomeId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('home', homeId);
+    next.delete('room');
+    setSearchParams(next, { replace: true });
+  }, [hasHomeLink, requestedHomeId, searchParams, setSearchParams]);
   const requestedTab = searchParams.get('tab');
   const requestedSection = searchParams.get('section');
   const tab: EnergyTab = requestedTab === 'setup' && requestedSection === 'devices' ? 'devices'
@@ -79,7 +105,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   };
 
   useEffect(() => {
-    if (!resolvedCustomerId || showStaffGlobal) return;
+    if (!resolvedCustomerId || showStaffGlobal || hasHomeLink) return;
     const fetchPrimary = async () => {
       const { data: customer } = await supabase
         .from('customers')
@@ -87,14 +113,20 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         .eq('id', resolvedCustomerId)
         .single();
       const primaryId = (customer as { primary_home_id?: string })?.primary_home_id;
-      if (primaryId) setSelectedHomeId(primaryId);
+      if (primaryId) setDefaultHomeId(primaryId);
     };
     fetchPrimary();
-  }, [resolvedCustomerId, showStaffGlobal]);
+  }, [resolvedCustomerId, showStaffGlobal, hasHomeLink]);
 
   const title = t('Energioptimering', 'Energy Optimisation');
+  if (hasHomeLink && showStaffGlobal && linkedHome && !linkedHomeError) {
+    return <Navigate replace to={{
+      pathname: `/portal/customers/${linkedHome.customer_id}/energy-modeling`,
+      search: searchParams.toString(),
+    }} />;
+  }
 
-  if (showStaffGlobal) {
+  if (showStaffGlobal || (hasHomeLink && (loadingLinkedHome || linkedHomeError || linkedHome?.customer_id !== resolvedCustomerId))) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
@@ -104,7 +136,11 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
           <h1 className="text-3xl font-medium">{title}</h1>
         </div>
         <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
-          <p>{t('Välj en kund för att se energioptimering.', 'Select a customer to view energy optimisation.')}</p>
+          <p role="status">{hasHomeLink
+            ? loadingLinkedHome
+              ? t('Öppnar det länkade hemmet…', 'Opening the linked home…')
+              : t('Det länkade hemmet är inte tillgängligt för ditt konto.', 'The linked home is unavailable to your account.')
+            : t('Välj en kund för att se energioptimering.', 'Select a customer to view energy optimisation.')}</p>
         </div>
       </div>
     );
@@ -137,7 +173,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         <HomeSelector
           customerId={resolvedCustomerId}
           selectedHomeId={selectedHomeId}
-          onHomeChange={setSelectedHomeId}
+          onHomeChange={changeHome}
           onHomeCountChange={setHomeCount}
         />
       )}
@@ -177,7 +213,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         ) : tab === 'log' ? (
           <PlanningLog homeId={selectedHomeId} />
         ) : tab === 'comfort' ? (
-          <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
+          <ComfortSchedulesTab key={selectedHomeId} customerId={resolvedCustomerId} homeId={selectedHomeId} />
         ) : tab === 'setup' && (setupSection === 'data' || setupSection === 'changes') ? (
           <SetupRecords customerId={resolvedCustomerId} isStaffView={isStaffView} section={setupSection} />
         ) : (

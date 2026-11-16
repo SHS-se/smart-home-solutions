@@ -17,6 +17,8 @@ const STAFF_USER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 const VIEWED_CUSTOMER_NAME = 'Ana the Wifey';
 const PRIMARY_HOME_ID = 'cccccccc-dddd-4eee-8fff-111111111111';
+const LINKED_HOME_ID = 'cccccccc-dddd-4eee-8fff-222222222222';
+const COMFORT_LINK = `/portal/energy-modeling?tab=comfort&home=${LINKED_HOME_ID}&room=studio`;
 const MOVE_IN_QUESTION_ID = '50000000-0000-4000-8000-000000000001';
 const HEATED_BOAREA_QUESTION_ID = '50000000-0000-4000-8000-000000000002';
 const HEATED_BIAREA_QUESTION_ID = '50000000-0000-4000-8000-000000000003';
@@ -412,9 +414,44 @@ async function login(page: Page) {
   await page.waitForURL('**/portal');
 }
 
+async function mockComfortLink(context: BrowserContext) {
+  const homes = [
+    { id: PRIMARY_HOME_ID, customer_id: CUSTOMER_ID, name: 'Primary home' },
+    { id: LINKED_HOME_ID, customer_id: CUSTOMER_ID, name: 'Linked home' },
+  ];
+  await context.route('**/rest/v1/homes?**', route => {
+    const id = new URL(route.request().url()).searchParams.get('id');
+    return route.fulfill({ json: id ? homes.filter(home => `eq.${home.id}` === id) : homes });
+  });
+  await context.route('**/rest/v1/energy_optimisation_comfort_schedules?**', route => {
+    const home = new URL(route.request().url()).searchParams.get('home_id');
+    return route.fulfill({ json: home === `eq.${LINKED_HOME_ID}` ? ['Library', 'Studio'].map(name => ({
+      id: name,
+      room_key: name.toLowerCase(), room_name: name,
+      weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('low-temp'),
+      off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21,
+      source: 'portal', updated_at: '2026-01-01T00:00:00Z',
+    })) : [] });
+  });
+}
+
 test.describe('staff navigation shell', () => {
   test.beforeEach(async ({ context }) => {
     await mockSupabase(context, 'staff');
+  });
+
+  test('opens the app-linked room in the linked home under the staff customer view', async ({ page, context }) => {
+    await mockComfortLink(context);
+    await login(page);
+    await page.goto(COMFORT_LINK);
+    const customerUrl = `/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=comfort&home=${LINKED_HOME_ID}&room=studio`;
+    await expect(page).toHaveURL(url => `${url.pathname}${url.search}` === customerUrl);
+    await expect(page.getByRole('combobox').filter({ hasText: 'Linked home' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading', { name: 'Studio' })).toBeVisible();
+
+    await page.goto(COMFORT_LINK.replace('room=studio', 'room=missing'));
+    await expect(page.getByText('Rummet i länken har inget komfortschema här.')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading')).toHaveCount(0);
   });
 
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
@@ -921,6 +958,17 @@ test.describe('staff navigation shell', () => {
 test.describe('customer navigation shell', () => {
   test.beforeEach(async ({ context }) => {
     await mockSupabase(context, 'customer');
+  });
+
+  test('opens an owned home link and shows when a home is unavailable', async ({ page, context }) => {
+    await mockComfortLink(context);
+    await login(page);
+    await page.goto(COMFORT_LINK);
+    await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading', { name: 'Studio' })).toBeVisible();
+
+    await page.goto(COMFORT_LINK.replace(LINKED_HOME_ID, 'cccccccc-dddd-4eee-8fff-333333333333'));
+    await expect(page.getByText('Det länkade hemmet är inte tillgängligt för ditt konto.')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Valt rum' })).toHaveCount(0);
   });
 
   test('customer sees flat portal nav without staff sections', async ({ page }) => {

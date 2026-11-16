@@ -226,7 +226,7 @@ const ComfortSchedulesTab: React.FC<{
     setStored(nextStored);
     setDrafts(nextDrafts);
     setSelectedId(current => (
-      roomFromLink && nextZones.some(zone => zone.id === roomFromLink) ? roomFromLink
+      roomFromLink ? nextZones.find(zone => zone.id === roomFromLink)?.id ?? null
         : current && nextDrafts[current] ? current : nextZones.find(zone => nextDrafts[zone.id])?.id ?? null
     ));
     if (missing.length > 0) {
@@ -368,6 +368,12 @@ const ComfortSchedulesTab: React.FC<{
           </div>
         </CardHeader>
         <CardContent>
+          {roomFromLink && !selectedZone && (
+            <p role="status" className="mb-4 text-sm text-muted-foreground">{t(
+              'Rummet i länken har inget komfortschema här.',
+              'The room in this link has no comfort schedule here.',
+            )}</p>
+          )}
           {zones.length === 0 ? (
             <div className="rounded-lg border border-dashed p-8 text-center">
               <ThermometerSun className="mx-auto h-8 w-8 text-muted-foreground" />
