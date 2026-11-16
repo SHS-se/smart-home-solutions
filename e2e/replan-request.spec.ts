@@ -1047,6 +1047,7 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=devices');
     const guestSwatch = page.locator(`[data-device-colour="${guest.key}"]`).first();
     await expect(guestSwatch).toHaveCSS('background-color', guestColour);
+    await page.getByRole('navigation', { name: /^(Enheter|Devices)$/ }).getByRole('button', { name: guest.name, exact: true }).click();
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
     await expect(guestSwatch).toHaveCSS('background-color', guestColour);
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();

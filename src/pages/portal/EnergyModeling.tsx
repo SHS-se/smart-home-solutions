@@ -19,11 +19,11 @@ interface EnergyModelingProps {
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'savings' | 'plan' | 'comfort' | 'setup' | 'log';
+type EnergyTab = 'savings' | 'plan' | 'devices' | 'comfort' | 'setup' | 'log';
 /** Everything the planner needs to be told: what it controls, how the house behaves, what was billed, what changed. */
 type SetupSection = Exclude<PlanSection, 'plan'> | 'data' | 'changes';
 
-const ENERGY_TABS = new Set<EnergyTab>(['savings', 'plan', 'comfort', 'setup', 'log']);
+const ENERGY_TABS = new Set<EnergyTab>(['savings', 'plan', 'devices', 'comfort', 'setup', 'log']);
 const SETUP_SECTIONS = new Set<SetupSection>(['devices', 'thermal', 'data', 'changes']);
 
 /**
@@ -64,11 +64,11 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const [homeCount, setHomeCount] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  // Devices and Thermal were tabs of their own before Setup gathered them; their links still open.
-  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : isSetupSection(requestedTab) ? 'setup' : 'savings';
   const requestedSection = searchParams.get('section');
+  const tab: EnergyTab = requestedTab === 'setup' && requestedSection === 'devices' ? 'devices'
+    : isEnergyTab(requestedTab) ? requestedTab : isSetupSection(requestedTab) ? 'setup' : 'savings';
   const setupSection: SetupSection = isSetupSection(requestedSection) ? requestedSection
-    : isSetupSection(requestedTab) ? requestedTab : 'devices';
+    : isSetupSection(requestedTab) ? requestedTab : 'thermal';
   const setTab = (next: EnergyTab, section?: SetupSection) => {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('tab', next);
@@ -113,12 +113,12 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const tabs: Array<{ key: EnergyTab; label: string }> = [
     { key: 'savings', label: t('Besparing', 'Savings') },
     { key: 'plan', label: t('Plan', 'Plan') },
+    { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'setup', label: t('Inställningar', 'Setup') },
     { key: 'log', label: t('Logg', 'Log') },
   ];
   const setupSections: Array<{ key: SetupSection; label: string }> = [
-    { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'data', label: t('Fakturor och data', 'Bills and data') },
     { key: 'changes', label: t('Förändringar i huset', 'Changes to the home') },
@@ -182,7 +182,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
           <SetupRecords customerId={resolvedCustomerId} isStaffView={isStaffView} section={setupSection} />
         ) : (
           <PlanWorkspace
-            section={tab === 'setup' && setupSection !== 'data' && setupSection !== 'changes' ? setupSection : 'plan'}
+            section={tab === 'devices' ? 'devices' : tab === 'setup' && setupSection !== 'data' && setupSection !== 'changes' ? setupSection : 'plan'}
             customerId={resolvedCustomerId}
             homeId={selectedHomeId}
             accountPath={isStaffView ? `/portal/customers/${resolvedCustomerId}/account` : '/portal/account'}

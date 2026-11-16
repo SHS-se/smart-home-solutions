@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Check,
   Clock3,
@@ -25,6 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import ComfortTargetsCard from './ComfortTargetsCard';
+import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 import {
   COMFORT_MODES,
@@ -35,6 +38,33 @@ import {
   type ComfortMode,
   type ZoneComfortSchedule,
 } from '../../../../supabase/functions/_shared/comfort-schedule';
+
+function ComfortRoomModel({ customerId, homeId, roomId }: { customerId: string; homeId: string; roomId: string }) {
+  const { t } = useLanguage();
+  const model = useQuery({
+    queryKey: ['room-comfort-model', customerId, homeId, roomId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('energy_optimisation_zone_models')
+        .select('trained, sample_count, rejection_reason')
+        .eq('customer_id', customerId).eq('home_id', homeId).eq('room_key', roomId).maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const rejection = model.data?.rejection_reason;
+  return <div className="space-y-2 rounded-md border bg-muted/25 p-4 text-sm">
+    <h3 className="font-semibold">{t('Rummets värmemodell', 'Room heating model')}</h3>
+    <p>{model.isPending ? t('Laddar modell…', 'Loading model…') : model.isError
+      ? t('Modellen kunde inte läsas.', 'The model could not be loaded.') : model.data?.trained
+        ? t(`Modellen är tränad på ${model.data.sample_count} kvartar.`, `The model was trained on ${model.data.sample_count} quarters.`)
+        : rejection && THERMAL_REJECTION_EN[rejection]
+          ? t(THERMAL_REJECTION_SV[rejection], THERMAL_REJECTION_EN[rejection])
+          : t('Ingen tränad modell har publicerats för rummet ännu.', 'A trained model has yet to be published for this room.')}</p>
+    <Link className="inline-flex min-h-11 items-center font-medium text-primary" to="?tab=setup&section=thermal">
+      {t('Visa temperaturhistorik', 'View temperature history')}
+    </Link>
+  </div>;
+}
 
 interface ComfortZone {
   id: string;
@@ -84,7 +114,10 @@ const ComfortSchedulesTab: React.FC<{
   const [zones, setZones] = useState<ComfortZone[]>([]);
   const [stored, setStored] = useState<Record<string, StoredComfortSchedule>>({});
   const [drafts, setDrafts] = useState<Record<string, ZoneComfortSchedule>>({});
+  const [params] = useSearchParams();
+  const roomFromLink = params.get('room');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<'schedule' | 'model'>('schedule');
   const [brush, setBrush] = useState<ComfortMode>('high-temp');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -193,7 +226,8 @@ const ComfortSchedulesTab: React.FC<{
     setStored(nextStored);
     setDrafts(nextDrafts);
     setSelectedId(current => (
-      current && nextDrafts[current] ? current : nextZones.find(zone => nextDrafts[zone.id])?.id ?? null
+      roomFromLink && nextZones.some(zone => zone.id === roomFromLink) ? roomFromLink
+        : current && nextDrafts[current] ? current : nextZones.find(zone => nextDrafts[zone.id])?.id ?? null
     ));
     if (missing.length > 0) {
       setError(t(
@@ -202,7 +236,7 @@ const ComfortSchedulesTab: React.FC<{
       ));
     }
     setLoading(false);
-  }, [customerId, homeId, t]);
+  }, [customerId, homeId, roomFromLink, t]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -346,17 +380,18 @@ const ComfortSchedulesTab: React.FC<{
               </p>
             </div>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-[230px_minmax(0,1fr)]">
-              <div className="space-y-1">
+            <div className="grid min-w-0 overflow-hidden rounded-lg border md:grid-cols-[minmax(10rem,13rem)_minmax(0,1fr)]">
+              <nav aria-label={t('Rum', 'Rooms')} className="space-y-1 border-b bg-muted/25 p-3 md:border-b-0 md:border-r">
                 <p className="mb-2 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Rum', 'Rooms')}</p>
-                <div className="flex gap-1 overflow-x-auto pb-2 lg:block lg:space-y-1 lg:overflow-visible">
+                <div className="flex gap-1 overflow-x-auto pb-2 md:block md:space-y-1 md:overflow-visible">
                   {zones.map(zone => (
                     <Button
                       key={zone.id}
                       type="button"
                       variant={selectedId === zone.id ? 'secondary' : 'ghost'}
-                      className="h-auto min-w-max justify-start px-3 py-2 lg:w-full"
-                      onClick={() => setSelectedId(zone.id)}
+                      className="h-auto min-h-11 min-w-max justify-start px-3 py-2 md:w-full md:min-w-0"
+                      aria-current={selectedId === zone.id ? 'true' : undefined}
+                      onClick={() => { setSelectedId(zone.id); setView('schedule'); }}
                     >
                       <span className="truncate">{zone.name}</span>
                       {!sameSchedule(drafts[zone.id], stored[zone.id])
@@ -365,19 +400,28 @@ const ComfortSchedulesTab: React.FC<{
                     </Button>
                   ))}
                 </div>
-              </div>
-
-              {selectedZone && !canEdit && (
+              </nav>
+              <section className="min-w-0 space-y-4 p-4 sm:p-6" aria-label={t('Valt rum', 'Selected room')}>
+              {selectedZone && <>
+                <h2 className="text-xl font-semibold">{selectedZone.name}</h2>
+                <div className="flex gap-2 border-b" aria-label={t('Rumsvyer', 'Room views')}>
+                  <Button type="button" variant={view === 'schedule' ? 'secondary' : 'ghost'} aria-pressed={view === 'schedule'}
+                    onClick={() => setView('schedule')}>{t('Komfortschema', 'Comfort schedule')}</Button>
+                  <Button type="button" variant={view === 'model' ? 'secondary' : 'ghost'} aria-pressed={view === 'model'}
+                    onClick={() => setView('model')}>{t('Modell', 'Model')}</Button>
+                </div>
+                {view === 'model' && homeId && <ComfortRoomModel customerId={customerId} homeId={homeId} roomId={selectedZone.id} />}
+              </>}
+              {view === 'schedule' && selectedZone && !canEdit && (
                 <p className="mb-3 text-sm text-muted-foreground">
                   {t('Schemat är sparat. En planerad värmare behöver vara klar innan du kan ändra det.',
                     'This schedule is saved. A planned heater must be ready before you can edit it.')}
                 </p>
               )}
-              {selectedZone && draft && saved && (
+              {view === 'schedule' && selectedZone && draft && saved && (
                 <div className="min-w-0 space-y-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-xl font-medium">{selectedZone.name}</h2>
                       <p className="text-xs text-muted-foreground">
                         {saved.source === 'node_red_seed'
                           ? t('Startvärden från det befintliga Node-RED-schemat', 'Initial values from the existing Node-RED schedule')
@@ -550,6 +594,7 @@ const ComfortSchedulesTab: React.FC<{
                   })}
                 </div>
               )}
+              </section>
             </div>
           )}
         </CardContent>

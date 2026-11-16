@@ -449,21 +449,28 @@ test.describe('staff navigation shell', () => {
       await route.fulfill({ json: device ?? battery });
     });
     const toggle = (i: number) => page.getByRole('switch', { name: `Planera Device ${i}`, exact: true });
-    const deviceRow = (i: number) => page.getByRole('row').filter({ has: toggle(i) });
+    const devicePanel = (i: number) => page.getByRole('region', { name: `Device ${i}`, exact: true });
+    const selectDevice = (i: number) => page.getByRole('navigation', { name: 'Enheter', exact: true })
+      .getByRole('button', { name: new RegExp(`^Device ${i}(?: |$)`) }).click();
+    const selectBattery = () => page.getByRole('navigation', { name: 'Enheter', exact: true })
+      .getByRole('button', { name: 'Husbatteri', exact: true }).click();
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < methods.length; i++) {
-        await expect(deviceRow(i).getByText('Termostat / driftcykel', { exact: true })).toHaveCount(0);
-        await expect(deviceRow(i).getByRole('combobox')).toHaveCount(0);
+        await selectDevice(i);
+        await expect(devicePanel(i).getByText('Termostat / driftcykel', { exact: true })).toHaveCount(0);
+        await expect(devicePanel(i).getByRole('combobox')).toHaveCount(0);
         await expect(toggle(i)).toBeChecked({ checked: i > 0 });
       }
+      await selectBattery();
       await expect(page.getByRole('switch', { name: 'Planera husbatteriet', exact: true })).not.toBeChecked();
       expect(writes).toEqual([]);
       if (pass === 0) await page.reload();
     }
     // Every existing method survives off → reload → on.
     for (let i = 1; i < methods.length; i++) {
+      await selectDevice(i);
       await toggle(i).click();
       await expect(toggle(i)).not.toBeChecked();
       await page.reload();
@@ -477,12 +484,18 @@ test.describe('staff navigation shell', () => {
       ]);
     }
     // The website waits for the app to provide a method.
+    await selectDevice(0);
     await expect(toggle(0)).toBeDisabled();
     devices[0].control_type_override = 'setpoint';
     devices[1].mapping_status = 'invalid';
     devices[1].mapping_summary = { setup_fields: ['temperature_entity_id'] };
     await page.reload();
-    await expect(deviceRow(1).getByText(/Kontrollera Rumstemperatur/)).toBeVisible();
+    await selectDevice(1);
+    await expect(devicePanel(1).getByRole('heading', { name: 'Utanför planen' })).toBeVisible();
+    await expect(devicePanel(1).getByText(/Kontrollera Rumstemperatur/)).toBeVisible();
+    await devicePanel(1).getByRole('tab', { name: 'Modell' }).click();
+    await expect(devicePanel(1).getByText('1.00 kW', { exact: true })).toBeVisible();
+    await selectDevice(0);
     await expect(toggle(0)).toBeEnabled();
     await expect(toggle(0)).not.toBeChecked();
     // Keyboard operation and failed-save state are both truthful.
@@ -491,6 +504,7 @@ test.describe('staff navigation shell', () => {
     await page.keyboard.press('Space');
     await expect(page.getByText('Save failed').first()).toBeVisible();
     await expect(toggle(0)).not.toBeChecked();
+    await selectBattery();
     await page.getByRole('switch', { name: 'Planera husbatteriet', exact: true }).click();
     await expect(page.getByRole('switch', { name: 'Planera husbatteriet', exact: true })).toBeChecked();
     expect(writes.at(-1)).toEqual({ p_home_id: PRIMARY_HOME_ID, p_included: true });
@@ -787,17 +801,16 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/savings-home-changes.png', fullPage: true });
   });
 
-  test('setup gathers devices, thermal, bills and home changes; old links land in the right section', async ({ page }) => {
+  test('devices has its own view and old setup links still land in the right section', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=data`);
     const sections = page.getByTestId('energy-setup-sections');
-    for (const name of ['Enheter', 'Termik', 'Fakturor och data', 'Förändringar i huset']) {
+    for (const name of ['Termik', 'Fakturor och data', 'Förändringar i huset']) {
       await expect(sections.getByRole('button', { name, exact: true })).toBeVisible();
     }
-    for (const name of ['Besparing', 'Plan', 'Komfort', 'Inställningar']) {
+    for (const name of ['Besparing', 'Plan', 'Enheter', 'Komfort', 'Inställningar']) {
       await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
     }
-    await expect(page.getByRole('tab', { name: 'Enheter' })).toHaveCount(0);
     await expect(page.getByTestId('energy-data-upload')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
     await page.screenshot({ path: 'test-results/energy-setup-data.png', fullPage: true });
@@ -819,6 +832,8 @@ test.describe('staff navigation shell', () => {
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=thermal`);
     await expect(sections.getByRole('button', { name: 'Termik' })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('tab', { name: 'Inställningar' })).toHaveAttribute('data-state', 'active');
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=devices`);
+    await expect(page.getByRole('tab', { name: 'Enheter' })).toHaveAttribute('data-state', 'active');
   });
 
   test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {

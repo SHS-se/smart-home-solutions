@@ -346,6 +346,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       content = (
         <EmpiricalDeviceModelsCard
           devices={empiricalDevices}
+          plan={current?.plan ?? null}
+          now={clock}
           refreshing={refreshing}
           homeId={homeId}
           onChanged={() => load(true)}
