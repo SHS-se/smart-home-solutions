@@ -218,6 +218,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       pending_replan_request_id: pending,
       replan_recommendations: current?.replan_recommendations ?? [],
       subscription_active: auth.subscriptionActive,
+      room_observations: true,
       subscription_expires_at: auth.subscriptionExpiresAt,
       customer_name: auth.customerName,
       home_id: auth.homeId,

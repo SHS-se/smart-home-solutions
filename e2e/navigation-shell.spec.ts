@@ -631,6 +631,60 @@ test.describe('staff navigation shell', () => {
     await page.waitForURL('**/portal/customers');
   });
 
+  test('staff can open the paired home, see probe data and add, edit and remove a doorway', async ({ page, context }) => {
+    const rooms = [{ key: 'hall', name: 'Example hall', has_probe: true,
+      latest: { start: '2026-11-17T08:00:00Z', temperature_c: 19.5 } },
+    { key: 'office', name: 'Example office', has_probe: false, latest: null }];
+    const writes: unknown[] = [];
+    let connections: unknown[] = [];
+    await context.route('**/rest/v1/homes*', route => route.fulfill({
+      json: [{ id: PRIMARY_HOME_ID, name: 'Example home', customer_id: CUSTOMER_ID }],
+    }));
+    await context.route('**/rest/v1/rpc/get_energy_room_profile', route => route.fulfill({
+      json: { revision: writes.length, rooms, connections },
+    }));
+    await context.route('**/rest/v1/rpc/set_energy_room_connections', route => {
+      const request = route.request().postDataJSON();
+      writes.push(request);
+      connections = request.p_connections;
+      return route.fulfill({ json: 1 });
+    });
+    await login(page);
+    await page.goto(`/portal/home-profile?home=${PRIMARY_HOME_ID}&section=room-connections&room=hall`);
+    const editor = page.locator('#room-connections');
+    await expect(editor.getByText(/19,5 °C/)).toBeVisible();
+    await editor.getByLabel('Anslutet rum').selectOption('office');
+    await editor.getByRole('combobox', { name: 'Dörröppning', exact: true }).selectOption('varies');
+    await editor.getByRole('button', { name: 'Lägg till dörröppning' }).click();
+    expect(writes).toEqual([]);
+    await editor.getByRole('button', { name: 'Spara', exact: true }).click();
+    await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
+    expect(writes).toEqual([{ p_home_id: PRIMARY_HOME_ID, p_expected_revision: 0,
+      p_connections: [{ rooms: ['hall', 'office'], mode: 'varies' }] }]);
+    await page.reload();
+    await editor.getByLabel('Rum', { exact: true }).selectOption('office');
+    await expect(editor.getByRole('listitem').getByText('Example hall', { exact: true })).toBeVisible();
+    const doorway = editor.getByRole('listitem').getByRole('combobox');
+    await expect(doorway).toHaveValue('varies');
+    await doorway.selectOption('usually_open');
+    await editor.getByRole('button', { name: 'Spara', exact: true }).click();
+    await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
+    await page.reload();
+    await expect(doorway).toHaveValue('usually_open');
+    await editor.getByRole('button', { name: 'Ta bort', exact: true }).click();
+    await editor.getByRole('button', { name: 'Spara', exact: true }).click();
+    await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
+    await page.reload();
+    await expect(doorway).toHaveCount(0);
+    await editor.getByLabel('Rum', { exact: true }).selectOption('office');
+    await expect(doorway).toHaveCount(0);
+    expect(writes.slice(1)).toEqual([
+      { p_home_id: PRIMARY_HOME_ID, p_expected_revision: 1,
+        p_connections: [{ rooms: ['hall', 'office'], mode: 'usually_open' }] },
+      { p_home_id: PRIMARY_HOME_ID, p_expected_revision: 2, p_connections: [] },
+    ]);
+  });
+
   test('the home profile fills in the grid limit under the chosen main fuse and lets it be lowered, not raised', async ({ page, context }) => {
     const FUSE_ID = '60000000-0000-4000-8000-000000000001';
     const LIMIT_ID = '60000000-0000-4000-8000-000000000002';

@@ -5337,6 +5337,14 @@ export type Database = {
         }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }
+      get_energy_room_profile: {
+        Args: { p_home_id: string }
+        Returns: Json
+      }
+      set_energy_room_connections: {
+        Args: { p_home_id: string; p_expected_revision: number; p_connections: Json }
+        Returns: number
+      }
       set_energy_room_comfort_schedule: {
         Args: {
           p_home_id: string
