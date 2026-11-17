@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 export type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import DeviceName from './DeviceName';
+import DeviceHeatingPowerModel from './DeviceHeatingPowerModel';
 
 const PlanningToggle: React.FC<{
   name: string; included: boolean; disabled: boolean; onChange: (included: boolean) => void;
@@ -245,12 +246,14 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 </div>
               </TabsContent>
               <TabsContent value="model">
-                {device ? <dl className="grid gap-4 rounded-md border p-4 text-sm sm:grid-cols-2">
-                  <div><dt className="text-muted-foreground">{t('Aktiv effekt', 'Active power')}</dt>
-                    <dd>{device.active_power_w == null ? '—' : `${(device.active_power_w / 1_000).toFixed(2)} kW`}</dd></div>
-                  <div><dt className="text-muted-foreground">{t('Historik', 'History')}</dt>
-                    <dd>{device.profile_sample_count > 0 ? `${device.profile_sample_count} × 15 min` : t('Samlas in', 'Collecting')}</dd></div>
-                </dl> : <p className="rounded-md border p-4 text-sm">{t('Batteriets modell och prognos visas i energiplanen.', 'The energy plan shows the battery model and forecast.')}</p>}
+                {device ? <DeviceHeatingPowerModel homeId={homeId} deviceKey={device.device_key}>
+                  <dl className="grid gap-4 rounded-md border p-4 text-sm sm:grid-cols-2">
+                    <div><dt className="text-muted-foreground">{t('Aktiv effekt', 'Active power')}</dt>
+                      <dd>{device.active_power_w == null ? '—' : `${(device.active_power_w / 1_000).toFixed(2)} kW`}</dd></div>
+                    <div><dt className="text-muted-foreground">{t('Historik', 'History')}</dt>
+                      <dd>{device.profile_sample_count > 0 ? `${device.profile_sample_count} × 15 min` : t('Samlas in', 'Collecting')}</dd></div>
+                  </dl>
+                </DeviceHeatingPowerModel> : <p className="rounded-md border p-4 text-sm">{t('Batteriets modell och prognos visas i energiplanen.', 'The energy plan shows the battery model and forecast.')}</p>}
               </TabsContent>
             </Tabs>
           </section>

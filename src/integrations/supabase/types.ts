@@ -2408,6 +2408,54 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_device_operating_points: {
+        Row: {
+          customer_id: string
+          device_key: string
+          fitted_at: string | null
+          home_id: string
+          last_attempted_at: string | null
+          last_fit_attempt: Json | null
+          model_revision: number
+          operating_points: Json | null
+        }
+        Insert: {
+          customer_id: string
+          device_key: string
+          fitted_at?: string | null
+          home_id: string
+          last_attempted_at?: string | null
+          last_fit_attempt?: Json | null
+          model_revision?: number
+          operating_points?: Json | null
+        }
+        Update: {
+          customer_id?: string
+          device_key?: string
+          fitted_at?: string | null
+          home_id?: string
+          last_attempted_at?: string | null
+          last_fit_attempt?: Json | null
+          model_revision?: number
+          operating_points?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_device_operating_points_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_device_operating_points_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_devices: {
         Row: {
           app_setup: Json | null

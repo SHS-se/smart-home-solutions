@@ -1018,6 +1018,43 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('estimated-counter-interval.png') });
   });
 
+  test('device Model shows the learned outdoor bands and their heating evidence', async ({ page, context }) => {
+    const key = 'synthetic-weather-aircon';
+    replan.devices = [{
+      id: key, device_key: key, statistic_id: key, name: 'Test air conditioner', category: 'cooling',
+      planning_role_override: 'controllable', control_type_override: 'setpoint', load_type_override: 'variable_power',
+      mapping_status: 'ready', mapped_control_type: 'setpoint', mapping_summary: {}, profile_sample_count: 0,
+    }];
+    await context.route('**/rest/v1/energy_optimisation_device_operating_points*', async route => {
+      const filters = new URL(route.request().url()).searchParams;
+      expect(filters.get('home_id')).toBe(`eq.${HOME_ID}`);
+      expect(filters.get('device_key')).toBe(`eq.${key}`);
+      expect(filters.get('operating_points->>method')).toBe('eq.weather_heating_draw_v1');
+      await route.fulfill({ json: [{ operating_points: { method: 'weather_heating_draw_v1', points: [
+        { min_c: -5, max_c: -3, outdoor_c: -4, watts: 1100, spread_w: 120, days: 4, hours: 15.5 },
+        { min_c: 3, max_c: 5, outdoor_c: 4, watts: 640, spread_w: 95, days: 12, hours: 41.25 },
+      ] } }] });
+    });
+
+    await page.goto(`/portal/energy-modeling?tab=devices&device=${key}`);
+    await page.getByRole('tab', { name: /^(Modell|Model)$/ }).click();
+    const model = page.getByRole('tabpanel', { name: /^(Modell|Model)$/ });
+    const chart = model.getByRole('img', { name: /utomhustemperatur|outdoor temperature/i });
+    await expect(chart).toBeVisible();
+    await expect(chart.locator('.recharts-reference-area path')).toHaveCount(2);
+    await expect(chart.locator('.recharts-line-curve[stroke-dasharray="4 4"]')).toBeVisible();
+    await expect(model.getByText(/^1[,.]1 kW$/)).toBeVisible();
+    await expect(model.getByText(/^±0[,.]12 kW$/)).toBeVisible();
+    await expect(model.getByText(/^15[,.]5$/)).toBeVisible();
+    await model.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i }).selectOption('1');
+    await expect(model.getByText(/^0[,.]64 kW$/)).toBeVisible();
+    await expect(model.getByText(/^±0[,.]095 kW$/)).toBeVisible();
+    await expect(model.getByText('12', { exact: true })).toBeVisible();
+    await expect(model.getByText(/^41[,.]25$/)).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+
   test('device colours match every reference and survive refresh, reorder, configuration changes and additions', async ({ page, context }, testInfo) => {
     const rgb = (colour: string) => `rgb(${[1, 3, 5].map(at => parseInt(colour.slice(at, at + 2), 16)).join(', ')})`;
     const guestColour = rgb(TEST_DEVICE_COLOURS[2]), poolColour = rgb(TEST_DEVICE_COLOURS[10]);
