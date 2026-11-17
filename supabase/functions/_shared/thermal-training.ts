@@ -83,6 +83,17 @@ export interface ThermalQuarterRow {
 const reading = (value: unknown): number | null =>
   value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
 
+/** Canonical recorder observation shared by the baseline and neighbour learners. */
+export const thermalQuarter = (row: ThermalQuarterRow): RoomMeanQuarter => ({
+  start_ms: Date.parse(row.start_ts),
+  room_c: reading(row.room_temperature_c),
+  outdoor_c: reading(row.outdoor_temperature_c),
+  house_c: reading(row.house_temperature_c),
+  solar_w_per_m2: reading(row.solar_w_per_m2),
+  heat_w: reading(row.heat_w),
+  cooling: row.cooling === true,
+});
+
 /** Recorder temperatures are interval means; select each room by held-out transitions. */
 export function fitRoomsFromQuarters(
   rows: ThermalQuarterRow[],
@@ -94,10 +105,7 @@ export function fitRoomsFromQuarters(
     if (!Number.isFinite(start)) continue;
     const room = rooms.get(row.room_key) ??
       { name: row.room_name, power: reading(row.active_power_w), quarters: [] };
-    room.quarters.push({ start_ms: start, room_c: reading(row.room_temperature_c),
-      outdoor_c: reading(row.outdoor_temperature_c), house_c: reading(row.house_temperature_c),
-      solar_w_per_m2: reading(row.solar_w_per_m2), heat_w: reading(row.heat_w),
-      cooling: row.cooling === true });
+    room.quarters.push(thermalQuarter(row));
     rooms.set(row.room_key, room);
   }
   return [...rooms].map(([key, room]) => {

@@ -1,3 +1,5 @@
+import { readDoorwayProbes, type DoorwayProbeRow } from "./room-doorway-probes.ts";
+import { doorwayBoundary, readRoomDoorwayModel, type RoomDoorwayModel } from "./planner/models/room/doorway-boundary.ts";
 import { heatingWatts, isWeatherHeatingBinding, readWeatherHeating } from "./planner/weather-heating.ts";
 /** Joins current room evidence with one model capture; never learns or schedules. */
 import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning-contracts.ts";
@@ -23,6 +25,8 @@ type RoomEvidenceDatabase = Pick<SupabaseClient, "rpc" | "from">;
 /** A day of recorded heat supplies the existing delayed-heat initial condition. */
 const RECENT_HEAT_QUARTERS = 24 * 4;
 
+type CapturedRoom = PreparedRoom & { doorway?: RoomDoorwayModel };
+
 interface RoomPlanningHistory {
   room_key: string;
   temperature_starts: number[];
@@ -35,7 +39,7 @@ const recentQuarterStarts = (end: number): number[] => Array.from(
 
 export interface PreparedThermalPlanning {
   snapshot: OptimisationSnapshot;
-  rooms: PreparedRoom[];
+  rooms: CapturedRoom[];
 }
 
 
@@ -159,7 +163,7 @@ export function prepareRoomModels(
 
   // Current equipment joins the atomically captured model bundle. No device
   // capability or calibration is selected by the weather/price cache.
-  const prepared: PreparedRoom[] = [];
+  const prepared: CapturedRoom[] = [];
   for (const room of rooms.values()) {
     const fitted = trainedByRoom.get(room.key);
     const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
@@ -194,8 +198,11 @@ export function prepareRoomModels(
     if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
+    const model = readThermalModel(fitted);
+    const doorway = readRoomDoorwayModel(fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
-      model: readThermalModel(fitted), rated_power_w: ratedPowerW,
+      model, rated_power_w: ratedPowerW,
+      ...(doorway ? { doorway } : {}),
       ...(passive ? { passive_heat: passive } : {}),
       maximum_power_w_by_slot: summerLockout.map((locked, i) => locked ? 0 : Math.max(baselineCapW, weather?.[i] ?? 0)) });
   }
@@ -209,7 +216,7 @@ export function prepareRoomModels(
  */
 export async function captureRoomPlanningState(
   supabase: RoomEvidenceDatabase, customerId: string, homeId: string,
-  snapshot: OptimisationSnapshot, rooms: PreparedRoom[],
+  snapshot: OptimisationSnapshot, rooms: CapturedRoom[],
 ): Promise<OptimisationSnapshot> {
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
   const recentEnd = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
@@ -219,7 +226,8 @@ export async function captureRoomPlanningState(
   const passiveEnd = Math.floor(captured / SLOT_MS) * SLOT_MS;
   const passiveQuarters = recentQuarterStarts(passiveEnd);
   const passiveRooms = rooms.filter(room => room.passive_heat);
-  const [latestResult, scheduleResult, recentResult, passiveSources] = await Promise.all([
+  const doorwayRooms = rooms.filter(room => room.doorway);
+  const [latestResult, scheduleResult, recentResult, passiveSources, doorwayProbes] = await Promise.all([
     // Available observations remain evidence independently of their report age.
     supabase.rpc("get_energy_latest_room_temperatures", {
       p_customer_id: customerId, p_home_id: homeId, p_from: "1970-01-01T00:00:00.000Z",
@@ -243,6 +251,12 @@ export async function captureRoomPlanningState(
           return null;
         })
       : null,
+    doorwayRooms.length
+      ? readDoorwayProbes(supabase, homeId, doorwayRooms.map(room => room.key), null, new Date(passiveEnd).toISOString()).catch(error => {
+          console.error("[ENERGY-OPTIMISATION] doorway probe evidence unavailable", error);
+          return null;
+        })
+      : Promise.resolve<DoorwayProbeRow[]>([]),
   ]);
   for (const result of [latestResult, scheduleResult, recentResult]) {
     if (result.error) {
@@ -297,8 +311,22 @@ export async function captureRoomPlanningState(
     passiveRates.set(room.key, passiveHeatRates(model, passiveQuarters.map(start => source.watts.get(start) ?? 0),
       passiveEnd, captured, snapshot.slots.map(slot => slot.start)));
   }
+  const doorwayBoundaries = new Map<string, number[]>();
+  const houseForecast = snapshot.house_temperature_c;
+  if (houseForecast?.length === snapshot.slots.length &&
+      houseForecast.every((c): c is number => typeof c === "number" && Number.isFinite(c))) {
+    const slots = snapshot.slots.map(slot => Date.parse(slot.start));
+    for (const room of doorwayRooms) {
+      const result = doorwayProbes && doorwayBoundary(room.doorway!, room.model!.house_coupling_per_h!,
+        doorwayProbes.filter(probe => probe.room_key === room.key), houseForecast, slots, captured);
+      if (result && result.temperatures) doorwayBoundaries.set(room.key, result.temperatures);
+      if (!result || result.incomplete) historyWarnings.push(planningWarning("room_evidence_unavailable", room.key,
+        `Some connected-room measurements for ${room.name} are unavailable.`,
+        "The forecast estimates exchange from the available room and house temperatures."));
+    }
+  }
   const { zones, warnings } = roomPlanningZones(snapshot, rooms, {
-    schedules, temperature_c: temperature, recent_heat_w: recent, passive_heat_c_per_h: passiveRates,
+    schedules, temperature_c: temperature, recent_heat_w: recent, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
   });
   // Silent degradation is worse than none, so what was skipped is said out loud.
   if (warnings.length > 0) {

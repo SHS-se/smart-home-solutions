@@ -213,3 +213,46 @@ Deno.test("weather draw is pinned only for the matching device in Verification",
   device.weather_heating_binding = "replaced";
   assertEquals(read(prepareRoomModels(snapshot, mappings, bundle).snapshot), undefined);
 });
+
+Deno.test("room preparation uses connected probe evidence without requiring the neighbour to be planned", async () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const [mapping] = mappings;
+  const key = mapping.room!.key;
+  const fitted = bundle.rooms.find(room => room.room_key === key)!;
+  fitted.house_coupling_per_h = .2;
+  fitted.doorway_exchange = { source: "receiver", peers: [
+    { key: "observed-only", source: "probe", weight: .1, usual: 1, persistence: .95 },
+  ] };
+  snapshot.device_models = snapshot.device_models.filter(device => device.key === mapping.key);
+  snapshot.slots = snapshot.slots.slice(0, 8);
+  snapshot.house_temperature_c = snapshot.slots.map(() => 20);
+  snapshot.outdoor_temperature_c = snapshot.outdoor_temperature_c!.slice(0, 8);
+  snapshot.solar_irradiance_w_per_m2 = snapshot.solar_irradiance_w_per_m2?.slice(0, 8);
+  snapshot.device_models[0].forecast_w_by_slot = snapshot.device_models[0].forecast_w_by_slot.slice(0, 8);
+  snapshot.captured_at = snapshot.slots[0].start;
+  const prepared = prepareRoomModels(snapshot, [mapping], bundle);
+  const start = Date.parse(snapshot.captured_at) - 900_000;
+  const capture = (links: unknown[]) => captureRoomPlanningState(createClient(
+    "http://localhost:54321", "synthetic-service", {
+      auth: { persistSession: false }, global: { fetch: url => {
+        switch (new URL(String(url)).pathname.split("/").at(-1)) {
+          case "get_energy_latest_room_temperatures": return Promise.resolve(Response.json([{ room_key: key, room_temperature_c: 19 }]));
+          case "energy_optimisation_comfort_schedules": return Promise.resolve(Response.json([{ room_key: key,
+            weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
+            off_temperature_c: 16, low_temperature_c: 18, high_temperature_c: 21 }]));
+          case "get_energy_room_planning_history": return Promise.resolve(Response.json([]));
+          case "get_energy_doorway_probes": return Promise.resolve(Response.json(links));
+          default: throw new Error("Unexpected capture endpoint");
+        }
+      } },
+    }), "customer", "home", structuredClone(prepared.snapshot), prepared.rooms);
+  const measured = await capture([{ room_key: key, other_key: "observed-only", room_source: "receiver",
+    other_source: "probe", quarters: [[start, 28]] }]);
+  const deleted = await capture([]);
+  assert(measured.thermal_zones![0].doorway_boundary_c!.every(c => c > 20));
+  assertEquals(deleted.thermal_zones![0].doorway_boundary_c, undefined);
+  const shifted = prepareRoomServices(measured);
+  const baseline = prepareRoomServices(deleted);
+  assertEquals(Object.keys(shifted.commands), [mapping.key]);
+  assert(shifted.temperature[key].some((thermal, index) => thermal !== baseline.temperature[key][index]));
+});

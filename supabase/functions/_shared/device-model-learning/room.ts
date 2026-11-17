@@ -1,5 +1,7 @@
+import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
+import { readDoorwayProbes } from "../room-doorway-probes.ts";
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
-import { fitRoomsFromQuarters, TRAINING_WINDOW_DAYS, zoneModelRows, type ThermalQuarterRow } from "../thermal-training.ts";
+import { fitRoomsFromQuarters, TRAINING_WINDOW_DAYS, thermalQuarter, zoneModelRows, type ThermalQuarterRow } from "../thermal-training.ts";
 import { fitRoomMeans } from "../device-learning/room/mean-observations.ts";
 import { readRoomPassiveHeat } from "../room-passive-heat-evidence.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
@@ -44,8 +46,29 @@ export async function fitStoredRoom(
       result: fitRoomMeans([], null) }],
     { homeId, customerId, trainingFrom, trainingTo })[0];
   }
-  const passive = await readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo);
+  const [passive, doorways] = await Promise.all([
+    readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo),
+    readDoorwayProbes(db, homeId, [roomKey], trainingFrom, trainingTo),
+  ]);
   const fits = fitRoomsFromQuarters(quarters, passive);
   if (fits.length !== 1 || fits[0].room_key !== roomKey) throw new Error("Room observations crossed owner boundary");
-  return zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
+  const row = zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
+  const fit = fits[0];
+  if (fit.result.ok) {
+    row.doorway_exchange = null;
+    if (!fit.passive && doorways.length) {
+      const observations = quarters.map(thermalQuarter).sort((a, b) => a.start_ms - b.start_ms);
+      const local = new Map(observations.map(q => [q.start_ms, q.room_c]));
+      const peers = doorways.map(doorway => ({
+        key: doorway.other_key,
+        source: doorway.other_source,
+        observed: new Map(doorway.quarters.flatMap(([time, peer, receiver]) =>
+          receiver !== undefined && Math.abs((local.get(time) ?? Infinity) - receiver) < 0.0001
+            ? [[time, peer] as const] : [])),
+      }));
+      const responses = selectDoorwayExchange(observations, peers, fit.result.model);
+      if (responses.length) row.doorway_exchange = { source: doorways[0].room_source, peers: responses };
+    }
+  }
+  return row;
 }

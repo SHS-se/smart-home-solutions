@@ -97,6 +97,7 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
     house_temperature_c: original.house_temperature_c?.slice(offset),
     thermal_zones: original.thermal_zones?.map(z => ({ ...z,
       ...(z.passive_heat_c_per_h ? { passive_heat_c_per_h: series(z.passive_heat_c_per_h) } : {}),
+      ...(z.doorway_boundary_c ? { doorway_boundary_c: series(z.doorway_boundary_c) } : {}),
       comfort_min_c: series(z.comfort_min_c), target_c: series(z.target_c), comfort_max_c: series(z.comfort_max_c),
       maximum_power_w_by_slot: series(z.maximum_power_w_by_slot), unplanned_power_w: series(z.unplanned_power_w) })),
     device_models: original.device_models.map(m => ({ ...m, forecast_w_by_slot: series(m.forecast_w_by_slot) })),

@@ -278,6 +278,8 @@ export interface ThermalZonePlanningInput {
   start_delivered_w?: number | null;
   /** Remaining observed appliance heat, separate from heater power and base electricity. */
   passive_heat_c_per_h?: number[];
+  /** Per-room indoor boundary estimated from connected room observations. */
+  doorway_boundary_c?: number[];
   rated_power_w: number;
   comfort_min_c: number[];
   target_c: number[];

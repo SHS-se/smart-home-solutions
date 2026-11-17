@@ -198,7 +198,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
     const steps = Math.ceil(hours * 60);
-    const conditions = { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!, house_c: snapshot.house_temperature_c?.[i],
+    const conditions = { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!, house_c: (zone.doorway_boundary_c ?? snapshot.house_temperature_c)?.[i],
       background_c_per_h: backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2, zone.passive_heat_c_per_h) };
     const maximum_w = Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i]));
     const thermostatPower = weather ? actuators.map((actuator, j) => {
