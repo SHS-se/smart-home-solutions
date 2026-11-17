@@ -631,7 +631,7 @@ test.describe('staff navigation shell', () => {
     await page.waitForURL('**/portal/customers');
   });
 
-  test('staff can open the paired home, see probe data and add, edit and remove a doorway', async ({ page, context }) => {
+  test('staff can open the paired home, see probe data and add and remove a doorway', async ({ page, context }) => {
     const rooms = [{ key: 'hall', name: 'Example hall', has_probe: true,
       latest: { start: '2026-11-17T08:00:00Z', temperature_c: 19.5 } },
     { key: 'office', name: 'Example office', has_probe: false, latest: null }];
@@ -654,34 +654,25 @@ test.describe('staff navigation shell', () => {
     const editor = page.locator('#room-connections');
     await expect(editor.getByText(/19,5 °C/)).toBeVisible();
     await editor.getByLabel('Anslutet rum').selectOption('office');
-    await editor.getByRole('combobox', { name: 'Dörröppning', exact: true }).selectOption('varies');
     await editor.getByRole('button', { name: 'Lägg till dörröppning' }).click();
     expect(writes).toEqual([]);
     await editor.getByRole('button', { name: 'Spara', exact: true }).click();
     await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
     expect(writes).toEqual([{ p_home_id: PRIMARY_HOME_ID, p_expected_revision: 0,
-      p_connections: [{ rooms: ['hall', 'office'], mode: 'varies' }] }]);
+      p_connections: [{ rooms: ['hall', 'office'], mode: 'usually_open' }] }]);
     await page.reload();
     await editor.getByLabel('Rum', { exact: true }).selectOption('office');
     await expect(editor.getByRole('listitem').getByText('Example hall', { exact: true })).toBeVisible();
-    const doorway = editor.getByRole('listitem').getByRole('combobox');
-    await expect(doorway).toHaveValue('varies');
-    await doorway.selectOption('usually_open');
-    await editor.getByRole('button', { name: 'Spara', exact: true }).click();
-    await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
-    await page.reload();
-    await expect(doorway).toHaveValue('usually_open');
+    await expect(editor.getByRole('listitem').getByRole('combobox')).toHaveCount(0);
     await editor.getByRole('button', { name: 'Ta bort', exact: true }).click();
     await editor.getByRole('button', { name: 'Spara', exact: true }).click();
     await expect(editor.getByText('Rumsanslutningar sparade.')).toBeVisible();
     await page.reload();
-    await expect(doorway).toHaveCount(0);
+    await expect(editor.getByRole('listitem')).toHaveCount(0);
     await editor.getByLabel('Rum', { exact: true }).selectOption('office');
-    await expect(doorway).toHaveCount(0);
+    await expect(editor.getByRole('listitem')).toHaveCount(0);
     expect(writes.slice(1)).toEqual([
-      { p_home_id: PRIMARY_HOME_ID, p_expected_revision: 1,
-        p_connections: [{ rooms: ['hall', 'office'], mode: 'usually_open' }] },
-      { p_home_id: PRIMARY_HOME_ID, p_expected_revision: 2, p_connections: [] },
+      { p_home_id: PRIMARY_HOME_ID, p_expected_revision: 1, p_connections: [] },
     ]);
   });
 

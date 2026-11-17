@@ -26,7 +26,6 @@ export default function RoomConnections({ homeId, linkedRoom, linked }: {
   const id = useId();
   const [selected, setSelected] = useState(linkedRoom ?? '');
   const [other, setOther] = useState('');
-  const [mode, setMode] = useState<DoorwayMode>('usually_open');
   const [draft, setDraft] = useState<{ revision: number; connections: Connection[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -60,8 +59,6 @@ export default function RoomConnections({ homeId, linkedRoom, linked }: {
   const available = room ? rooms.filter(candidate => candidate.key !== room.key &&
     !incident.some(edge => edge.rooms.includes(candidate.key))) : [];
   const roomName = (key: string) => rooms.find(room => room.key === key)?.name ?? key;
-  const modeLabel = (value: DoorwayMode) => value === 'usually_open'
-    ? t('Vanligtvis öppen', 'Usually open') : t('Dörren varierar', 'Door varies');
   const edit = (next: Connection[]) => {
     if (!data) return;
     setSaved(false);
@@ -130,28 +127,14 @@ export default function RoomConnections({ homeId, linkedRoom, linked }: {
       {incident.length + orphaned.length > 0 && <ul className="divide-y">
         {[...incident, ...orphaned].map(edge => <li key={JSON.stringify(edge.rooms)} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <p className="font-medium">{room && edge.rooms.includes(room.key) ? roomName(edge.rooms.find(key => key !== room.key)!) : edge.rooms.map(roomName).join(' ↔ ')}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <label>
-              <span className="sr-only">{t('Dörröppning mellan', 'Doorway between')} {edge.rooms.map(roomName).join(' ↔ ')}</span>
-              <select className={selectStyle} value={edge.mode}
-                disabled={saving || edge.rooms.some(key => !rooms.some(item => item.key === key))}
-                onChange={event => {
-                  const nextMode = event.target.value === 'varies' ? 'varies' : 'usually_open';
-                  edit(connections.map(connection => connection === edge ? { ...connection, mode: nextMode } : connection));
-                }}>
-                <option value="usually_open">{modeLabel('usually_open')}</option>
-                <option value="varies">{modeLabel('varies')}</option>
-              </select>
-            </label>
-            <Button variant="ghost" className="min-h-11" disabled={saving}
-              onClick={() => edit(connections.filter(connection => connection !== edge))}>
-              {t('Ta bort', 'Remove')}
-            </Button>
-          </div>
+          <Button variant="ghost" className="min-h-11" disabled={saving}
+            onClick={() => edit(connections.filter(connection => connection !== edge))}>
+            {t('Ta bort', 'Remove')}
+          </Button>
         </li>)}
       </ul>}
       {room && !incident.length && <p>{t('Inga dörröppningar tillagda.', 'No doorways added.')}</p>}
-      {available.length > 0 && room && <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+      {available.length > 0 && room && <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <label className="space-y-1">{t('Anslutet rum', 'Connected room')}
           <select className={selectStyle} value={available.some(item => item.key === other) ? other : ''}
             onChange={event => setOther(event.target.value)}>
@@ -159,14 +142,8 @@ export default function RoomConnections({ homeId, linkedRoom, linked }: {
             {available.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}
           </select>
         </label>
-        <label className="space-y-1">{t('Dörröppning', 'Doorway')}
-          <select className={selectStyle} value={mode} onChange={event => setMode(event.target.value === 'varies' ? 'varies' : 'usually_open')}>
-            <option value="usually_open">{modeLabel('usually_open')}</option>
-            <option value="varies">{modeLabel('varies')}</option>
-          </select>
-        </label>
         <Button variant="outline" className="min-h-11" disabled={saving || !available.some(item => item.key === other)}
-          onClick={() => { edit([...connections, { rooms: [room.key, other], mode }]); setOther(''); }}>
+          onClick={() => { edit([...connections, { rooms: [room.key, other], mode: 'usually_open' }]); setOther(''); }}>
           {t('Lägg till dörröppning', 'Add doorway')}
         </Button>
       </div>}
