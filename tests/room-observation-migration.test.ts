@@ -9,7 +9,7 @@ Deno.test("room probe uploads preserve saved doorways and isolate each home", as
       CREATE TABLE public.homes(id uuid PRIMARY KEY, customer_id uuid);
       CREATE FUNCTION public.can_access_energy_billing_customer(uuid) RETURNS boolean LANGUAGE sql
         AS $$ SELECT $1 = current_setting('app.customer', true)::uuid $$;
-      CREATE TABLE public.energy_optimisation_zone_models(home_id uuid, room_key text);
+      CREATE TABLE public.energy_optimisation_zone_models(home_id uuid, room_key text, trained boolean, passive_heat jsonb);
       CREATE SCHEMA private;
       CREATE TABLE private.energy_learning_jobs(id uuid);
       CREATE SCHEMA cron;
@@ -17,6 +17,7 @@ Deno.test("room probe uploads preserve saved doorways and isolate each home", as
     `);
     await db.exec(await Deno.readTextFile(new URL("../supabase/migrations/20261117010000_save_room_connections_and_probe_observations.sql", import.meta.url)));
     await db.exec(await Deno.readTextFile(new URL("../supabase/migrations/20261117110000_learn_room_doorway_exchange.sql", import.meta.url)));
+    await db.exec(await Deno.readTextFile(new URL("../supabase/migrations/20261117135500_read_room_model_scenario.sql", import.meta.url)));
 
     const home = "00000000-0000-4000-8000-000000000001";
     const customer = "00000000-0000-4000-8000-000000000002";
@@ -73,12 +74,31 @@ Deno.test("room probe uploads preserve saved doorways and isolate each home", as
     assertEquals((await connected(null, "2026-11-17T08:15:00Z")).rows, [{ quarters: [[stamp, 23]] }]);
     assertEquals((await connected("2026-11-17T08:00:00Z", "2026-11-17T08:15:00Z")).rows,
       [{ quarters: [[stamp, 23, 20]] }]);
+    await db.exec("RESET ROLE");
+    await db.query("INSERT INTO energy_optimisation_zone_models(home_id,room_key,trained,doorway_exchange) VALUES ($1,'hall',true,$2),($1,'office',true,NULL)",
+      [home, JSON.stringify({ source: rooms.hall.source_key, peers: [
+        { key: "office", source: rooms.office.source_key, weight: .08, usual: 1, persistence: .9 },
+      ] })]);
+    const scenario = async (key: string, homeId = home) => (await db.query<{
+      value: { room: unknown; connections: { key: string; name: string; model: unknown; doorway: unknown }[] };
+    }>("SELECT get_energy_room_model_scenario($1,$2) AS value", [homeId, key])).rows[0].value;
+    await db.exec("SET ROLE authenticated");
+    await assertRejects(() => scenario("office", otherHome), Error, "access denied");
+    const impact = (await scenario("office")).connections[0];
+    assertEquals(impact, {
+      key: "hall", name: "Hall", doorway: { weight: .08, usual: 1 },
+      model: { home_id: home, room_key: "hall", trained: true },
+    });
+    assertEquals((await scenario("hall")).connections[0].doorway, null);
+    await db.exec("SET ROLE service_role");
     rooms.office.source_key = "c".repeat(64);
     await record([]);
     assertEquals((await connected(null, "2026-11-17T08:15:00Z")).rows, [{ quarters: [] }]);
     await db.exec("SET ROLE authenticated");
+    assertEquals((await scenario("office")).connections[0].doorway, null);
     assertEquals(await save(1, [{ ...pair, mode: "usually_open" }]), 2);
     assertEquals(await save(2, []), 3);
+    assertEquals((await scenario("office")).connections, []);
     await assertRejects(() => save(1, [pair]), Error, "changed");
     await db.exec("SET ROLE service_role");
     assertEquals((await record([])).connections, []);

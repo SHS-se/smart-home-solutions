@@ -1018,6 +1018,50 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('estimated-counter-interval.png') });
   });
 
+  test('room Model recomputes its heating cycle and directional doorway effects when the outdoor temperature changes', async ({ page, context }) => {
+    // Synthetic coefficients and room names exercise the published fit contract.
+    const key = 'synthetic-studio';
+    const fit = {
+      trained: true, rejection_reason: null, sample_count: 812,
+      gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
+      background_gain_c_per_h: .1, thermal_capacity_wh_per_c: 1000, heat_loss_w_per_c: 200, time_constant_h: 5,
+      heating_rate_c_per_h: 1.4, heat_lag_h: .45, r2: .8, residual_std_c: .1,
+    };
+    await context.route('**/rest/v1/energy_optimisation_comfort_schedules?**', route => route.fulfill({ json: [{
+      id: key, room_key: key, room_name: 'Test studio', source: 'portal',
+      weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('high-temp'),
+      off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21, updated_at: CAPTURED_AT,
+    }] }));
+    await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => {
+      expect(route.request().postDataJSON()).toEqual({ p_home_id: HOME_ID, p_room_key: key });
+      return route.fulfill({ json: { room: fit, connections: [
+        { key: 'synthetic-corridor', name: 'Test corridor', model: fit, doorway: { weight: .065, usual: -1 } },
+        { key: 'synthetic-landing', name: 'Test landing', model: null, doorway: null },
+      ] } });
+    });
+    await page.goto(`/portal/energy-modeling?tab=comfort&room=${key}`);
+    await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
+    const cycle = page.getByRole('img', { name: /uppskattad uppvärmning och avsvalning|warm-up and cool-down/i });
+    const doorway = page.getByRole('img', { name: /uppskattad påverkan på anslutna rum|estimated effect on connected rooms/i });
+    await expect(cycle.locator('.recharts-line-curve')).toHaveCount(2);
+    await expect(doorway.locator('.recharts-line-curve')).toHaveCount(1);
+    await expect(page.getByLabel(/värmarens effekt|heater power/i)).toHaveValue('1.4');
+    const summary = page.locator('p[aria-live="polite"]').filter({ hasText: /efter 6 h|after 6 h/ });
+    const corridor = page.getByRole('listitem').filter({ hasText: /^Test corridor ·/ });
+    const selectedCurve = cycle.locator('.recharts-line-curve').first();
+    const initialCurve = (await selectedCurve.getAttribute('d'))!;
+    const initialImpact = await corridor.innerText();
+    await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
+    await expect(summary).toContainText('12 °C');
+    await expect(selectedCurve).not.toHaveAttribute('d', initialCurve);
+    await expect(corridor).not.toHaveText(initialImpact);
+    await expect(page.getByRole('listitem').filter({ hasText: 'Test landing' }))
+      .toContainText(/ingen inlärd påverkan|no learned effect/i);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await cycle.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    expect(await doorway.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+
   test('device Model shows the learned outdoor bands and their heating evidence', async ({ page, context }) => {
     const key = 'synthetic-weather-aircon';
     replan.devices = [{

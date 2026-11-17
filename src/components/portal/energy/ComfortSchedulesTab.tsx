@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   Check,
   Clock3,
@@ -27,7 +26,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import ComfortTargetsCard from './ComfortTargetsCard';
-import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
+import ComfortRoomModel from './ComfortRoomModel';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 import {
   COMFORT_MODES,
@@ -38,33 +37,6 @@ import {
   type ComfortMode,
   type ZoneComfortSchedule,
 } from '../../../../supabase/functions/_shared/comfort-schedule';
-
-function ComfortRoomModel({ customerId, homeId, roomId }: { customerId: string; homeId: string; roomId: string }) {
-  const { t } = useLanguage();
-  const model = useQuery({
-    queryKey: ['room-comfort-model', customerId, homeId, roomId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('energy_optimisation_zone_models')
-        .select('trained, sample_count, rejection_reason')
-        .eq('customer_id', customerId).eq('home_id', homeId).eq('room_key', roomId).maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-  });
-  const rejection = model.data?.rejection_reason;
-  return <div className="space-y-2 rounded-md border bg-muted/25 p-4 text-sm">
-    <h3 className="font-semibold">{t('Rummets värmemodell', 'Room heating model')}</h3>
-    <p>{model.isPending ? t('Laddar modell…', 'Loading model…') : model.isError
-      ? t('Modellen kunde inte läsas.', 'The model could not be loaded.') : model.data?.trained
-        ? t(`Modellen är tränad på ${model.data.sample_count} kvartar.`, `The model was trained on ${model.data.sample_count} quarters.`)
-        : rejection && THERMAL_REJECTION_EN[rejection]
-          ? t(THERMAL_REJECTION_SV[rejection], THERMAL_REJECTION_EN[rejection])
-          : t('Ingen tränad modell har publicerats för rummet ännu.', 'A trained model has yet to be published for this room.')}</p>
-    <Link className="inline-flex min-h-11 items-center font-medium text-primary" to="?tab=setup&section=thermal">
-      {t('Visa temperaturhistorik', 'View temperature history')}
-    </Link>
-  </div>;
-}
 
 interface ComfortZone {
   id: string;
@@ -416,7 +388,7 @@ const ComfortSchedulesTab: React.FC<{
                   <Button type="button" variant={view === 'model' ? 'secondary' : 'ghost'} aria-pressed={view === 'model'}
                     onClick={() => setView('model')}>{t('Modell', 'Model')}</Button>
                 </div>
-                {view === 'model' && homeId && <ComfortRoomModel customerId={customerId} homeId={homeId} roomId={selectedZone.id} />}
+                {view === 'model' && homeId && <ComfortRoomModel homeId={homeId} roomId={selectedZone.id} />}
               </>}
               {view === 'schedule' && selectedZone && !canEdit && (
                 <p className="mb-3 text-sm text-muted-foreground">
