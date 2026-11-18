@@ -96,6 +96,7 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
     solar_irradiance_w_per_m2: original.solar_irradiance_w_per_m2?.slice(offset),
     house_temperature_c: original.house_temperature_c?.slice(offset),
     thermal_zones: original.thermal_zones?.map(z => ({ ...z,
+      ...(z.heating_bands ? { heating_bands: { ...z.heating_bands, by_quarter: z.heating_bands.by_quarter.slice(offset) } } : {}),
       ...(z.passive_heat_c_per_h ? { passive_heat_c_per_h: series(z.passive_heat_c_per_h) } : {}),
       ...(z.doorway_boundary_c ? { doorway_boundary_c: series(z.doorway_boundary_c) } : {}),
       comfort_min_c: series(z.comfort_min_c), target_c: series(z.target_c), comfort_max_c: series(z.comfort_max_c),
@@ -766,7 +767,9 @@ export function assembleRulesPlan(solved: SolvedRulesInput, trace?: PlanningTrac
   const result: OptimisationResult = { plan, battery_projection: { status: "unsupported", reasons: [
     !p.battery ? "no_battery" : plan.battery_execution
       ? "replaced_by_plan_execution_contract" : "rules_objective_has_no_conditional_money_projection",
-  ] } };
+  ] }, ...(input.rooms.heating_model_use ? { heating_model_use: {
+    starts_at: snapshot.slots[0].start, rooms: input.rooms.heating_model_use,
+  } } : {}) };
   assembled?.();
   return result;
 }

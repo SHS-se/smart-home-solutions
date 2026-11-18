@@ -183,6 +183,7 @@ export function buildComfortForecast(
   heatingLockout: boolean[],
   solarWPerM2?: (number | null)[] | null,
   context: RoomProjectionContext = {},
+  ratedPowerByQuarter?: number[],
 ): ComfortForecast {
   if (
     starts.length === 0 || starts.length !== outdoorTemperatureC.length ||
@@ -214,10 +215,13 @@ export function buildComfortForecast(
   const comfortMin = [...target];
   const comfortMax = target.map(() => schedule.high_temperature_c + 0.5);
 
-  const transitions = starts.map((_start, index) => roomTransition(model, {
-    hours: SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
-    background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2, context.passive_heat_c_per_h),
-  }));
+  const transitions = starts.map((_start, index) => {
+    const physics = context.model_by_quarter?.[index] ?? model;
+    return roomTransition(physics, {
+      hours: SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
+      background_c_per_h: backgroundRateForSlot(physics, index, solarWPerM2, context.passive_heat_c_per_h),
+    });
+  });
 
   // Required temperature at the start of each quarter. Looking backwards
   // allows a high-mass floor to start recovery before the comfort period,
@@ -227,7 +231,8 @@ export function buildComfortForecast(
     const step = transitions[index];
     if (!(step.decay > 0)) throw new Error("thermal cooling constant is unstable");
     // The most a quarter can add is with the heater, and its delay, at full.
-    const maximumNextGain = step.offset_c + (step.delivered_gain_c_per_w + step.gain_c_per_w) * ratedPowerW;
+    const maximumNextGain = step.offset_c + (step.delivered_gain_c_per_w + step.gain_c_per_w) *
+      (ratedPowerByQuarter?.[index] ?? ratedPowerW);
     const neededNow = (required[index + 1] - maximumNextGain) / step.decay;
     required[index] = Math.min(
       schedule.high_temperature_c,
@@ -238,13 +243,14 @@ export function buildComfortForecast(
   const power: number[] = [];
   let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
   for (let index = 0; index < starts.length; index += 1) {
+    const rated = ratedPowerByQuarter?.[index] ?? ratedPowerW;
     const step = transitions[index];
     const desiredNext = required[Math.min(index + 1, required.length - 1)];
     const passiveNext = stepRoom(step, state, 0).temperature_c;
-    const desiredPower = step.gain_c_per_w > 0 ? (desiredNext - passiveNext) / step.gain_c_per_w : ratedPowerW;
+    const desiredPower = step.gain_c_per_w > 0 ? (desiredNext - passiveNext) / step.gain_c_per_w : rated;
     const watts = heatingLockout[index]
       ? 0
-      : Math.max(0, Math.min(ratedPowerW, desiredPower));
+      : Math.max(0, Math.min(rated, desiredPower));
     power.push(Math.round(watts * 100) / 100);
     state = stepRoom(step, state, watts);
   }

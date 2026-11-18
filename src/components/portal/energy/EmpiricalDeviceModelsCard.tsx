@@ -248,7 +248,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
               <TabsContent value="model">
                 {device ? <DeviceHeatingPowerModel homeId={homeId} deviceKey={device.device_key}>
                   <dl className="grid gap-4 rounded-md border p-4 text-sm sm:grid-cols-2">
-                    <div><dt className="text-muted-foreground">{t('Aktiv effekt', 'Active power')}</dt>
+                    <div><dt className="text-muted-foreground">{device.category === 'heating'
+                      ? t('Effekt vid uppvärmning', 'Running power while heating') : t('Aktiv effekt', 'Active power')}</dt>
                       <dd>{device.active_power_w == null ? '—' : `${(device.active_power_w / 1_000).toFixed(2)} kW`}</dd></div>
                     <div><dt className="text-muted-foreground">{t('Historik', 'History')}</dt>
                       <dd>{device.profile_sample_count > 0 ? `${device.profile_sample_count} × 15 min` : t('Samlas in', 'Collecting')}</dd></div>

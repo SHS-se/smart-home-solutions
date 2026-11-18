@@ -10,19 +10,23 @@ async function database() {
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA private; CREATE SCHEMA net; CREATE SCHEMA cron; CREATE SCHEMA extensions;
     CREATE FUNCTION extensions.gen_random_bytes(integer) RETURNS bytea LANGUAGE sql AS $$ SELECT decode(repeat('ab',$1),'hex') $$;
-    CREATE TABLE homes(id uuid PRIMARY KEY); CREATE TABLE customers(id uuid PRIMARY KEY);
+    CREATE TABLE homes(id uuid PRIMARY KEY,customer_id uuid); CREATE TABLE customers(id uuid PRIMARY KEY);
     INSERT INTO homes VALUES('${home}'); INSERT INTO customers VALUES('${home}');
     CREATE FUNCTION energy_home_matches_customer(uuid,uuid) RETURNS boolean LANGUAGE sql AS $$SELECT $1=$2$$;
+    CREATE FUNCTION can_access_energy_billing_customer(uuid) RETURNS boolean LANGUAGE sql AS $$SELECT true$$;
     CREATE TABLE net.wakes(url text,headers jsonb,body jsonb,timeout_milliseconds integer);
     CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$
       INSERT INTO net.wakes VALUES($1,$2,$3,$4); SELECT 1::bigint; $$;
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
     CREATE TABLE energy_optimisation_devices(id uuid PRIMARY KEY,home_id uuid,customer_id uuid,
-      device_key text,planning_role_override text,retired_at timestamptz,UNIQUE(id,home_id,customer_id));
+      device_key text,planning_role_override text,retired_at timestamptz,category text,statistic_id text,
+      first_seen_at timestamptz DEFAULT now(),mapping_status text,mapped_control_type text,control_type_override text,mapping_summary jsonb,
+      UNIQUE(id,home_id,customer_id));
     CREATE TABLE energy_optimisation_device_slots(device_id uuid,home_id uuid,customer_id uuid,
       start_ts timestamptz,energy_kwh numeric);
     ALTER TABLE energy_optimisation_device_slots ADD COLUMN quality jsonb;
     CREATE TABLE energy_optimisation_outdoor_slots(home_id uuid,customer_id uuid,start_ts timestamptz,temperature_c numeric);
+    CREATE TABLE energy_optimisation_thermal_slots(home_id uuid,room_key text,start_ts timestamptz,room_temperature_c numeric);
     CREATE TABLE energy_optimisation_zone_models(
       home_id uuid,customer_id uuid,room_key text,room_name text,trained boolean,last_attempted_at timestamptz,
       last_fit_attempt jsonb,gain_c_per_wh numeric,sample_count integer DEFAULT 0,
@@ -33,6 +37,9 @@ async function database() {
     CREATE TABLE energy_optimisation_device_operating_points(home_id uuid,customer_id uuid,device_key text,fitted_at timestamptz,
       operating_points jsonb,last_attempted_at timestamptz,last_fit_attempt jsonb,model_revision bigint NOT NULL DEFAULT 1,
       PRIMARY KEY(home_id,device_key));
+    CREATE TABLE energy_room_profiles(home_id uuid PRIMARY KEY,rooms jsonb,connections jsonb DEFAULT '[]');
+    CREATE TABLE energy_room_probe_slots(home_id uuid,room_key text,source_key text,start_ts timestamptz,temperature_c numeric);
+    CREATE TABLE energy_history_notes(home_id uuid,event_type text,note_date date);
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
@@ -41,6 +48,8 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261109110000_learn_monitored_room_heat.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261112150000_learn_weather_heating_draw.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261113161000_learn_from_hourly_heating_history.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261117110000_learn_room_doorway_exchange.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261118120000_version_heating_bands.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -64,6 +73,36 @@ function fitted(key = "synthetic-room") {
     gain_c_per_wh: .002, sample_count: 300, last_attempted_at: new Date().toISOString(),
     last_fit_attempt: { learning: { method, family: ROOM_EXCHANGE_FAMILY }, issues: [] } };
 }
+Deno.test("heating calibration publications keep old revisions and expose only compatible active bands", async () => {
+  const db = await database();
+  try {
+    await db.query(`INSERT INTO energy_optimisation_devices(id,home_id,customer_id,device_key,
+      category,statistic_id,planning_role_override,mapping_status,mapped_control_type,control_type_override,mapping_summary)
+      VALUES(gen_random_uuid(),$1,$1,'synthetic-heater','heating','synthetic-meter','controllable',
+        'ready','setpoint','setpoint','{"room_key":"synthetic-room"}')`, [home]);
+    await db.query(`INSERT INTO energy_room_profiles(home_id,rooms)
+      VALUES($1,'{"synthetic-room":{"source_key":"synthetic-probe"}}')`, [home]);
+    const binding = (await db.query<{ binding: string }>("SELECT binding FROM private.energy_room_heating_contexts($1)", [home])).rows[0].binding;
+    const general = crypto.randomUUID(), cold = crypto.randomUUID(), mild = crypto.randomUUID();
+    const state = { binding, since: "2026-01-01", reference_revision: general, attempted: {}, candidates: [],
+      active: [{ band_c: -10, revision: cold }, { band_c: 0, revision: mild }] };
+    await request(db);
+    assert(await publish(db, await claim(db), 0, { ...fitted(), heating_bands: state }));
+    const replacement = crypto.randomUUID();
+    await db.exec("UPDATE energy_optimisation_zone_models SET last_attempted_at=now()-interval '2 days'");
+    await request(db);
+    assert(await publish(db, await claim(db), 2, { home_id: home, customer_id: home, room_key: "synthetic-room",
+      last_attempted_at: new Date().toISOString(),
+      heating_bands: { ...state, active: [state.active[0], { band_c: 0, revision: replacement }] } }));
+    const archived = (await db.query<{ revision: string }>("SELECT revision FROM private.energy_heating_calibration_revisions")).rows;
+    assertEquals(new Set(archived.map(row => row.revision)), new Set([general, cold, mild, replacement]));
+    const view = async () => (await db.query<{ view: { room: { temperature_bands: { revision: string }[] } } }>(
+      "SELECT get_energy_room_model_scenario($1,'synthetic-room') AS view", [home])).rows[0].view;
+    assertEquals((await view()).room.temperature_bands.map(band => band.revision), [cold, replacement]);
+    await db.exec("UPDATE energy_optimisation_devices SET category='cooling'");
+    assertEquals((await view()).room.temperature_bands, []);
+  } finally { await db.close(); }
+});
 Deno.test("learning coalesces each owner and captures model revisions atomically", async () => {
   const db = await database();
   try {

@@ -1,6 +1,6 @@
 import { heatingWatts, readWeatherHeating } from "../planner/weather-heating.ts";
 import { assertEquals, assertAlmostEquals } from "@std/assert";
-import { fitWeatherHeating } from "./weather-heating.ts";
+import { advanceWeatherHeatingBands, fitWeatherHeating } from "./weather-heating.ts";
 
 Deno.test("weather heating keeps cold evidence and limits support to observed temperatures", () => {
   const cold = [{ day: "2025-12-01", outdoor_c: -6, watts: 950, hours: 3 },
@@ -26,4 +26,24 @@ Deno.test("weather heating retains bounded deterministic summaries without using
   assertAlmostEquals(profile.points.reduce((sum, p) => sum + p.hours, 0), 90);
   assertEquals(heatingWatts(profile, 70), null);
   assertEquals(readWeatherHeating(fitWeatherHeating("meter", samples.slice(0, 1)), "meter"), null);
+});
+
+Deno.test("a new-season electrical fit replaces only its own band on independent measured days", () => {
+  const days = (start: number, end: number, outdoor_c: number, watts: number) =>
+    Array.from({ length: end - start + 1 }, (_, index) => ({
+      day: new Date(Date.UTC(2026, 9, start + index)).toISOString().slice(0, 10), outdoor_c, watts, hours: 2,
+    }));
+  const cold = days(1, 2, -7, 1100);
+  const mild = days(3, 4, 6, 650);
+  let profile = advanceWeatherHeatingBands("meter", null, cold, "2026-10-03");
+  profile = advanceWeatherHeatingBands("meter", profile, [...cold, ...mild], "2026-10-05");
+  const [oldCold, oldMild] = profile.points;
+  const refit = days(8, 11, 6, 450);
+  profile = advanceWeatherHeatingBands("meter", profile, [...cold, ...mild, ...refit], "2026-10-12");
+  assertEquals(profile.points, [oldCold, oldMild]);
+  assertEquals(profile.versioned?.candidates[0]?.watts, 450);
+  const later = days(12, 15, 6, 450);
+  profile = advanceWeatherHeatingBands("meter", profile, [...cold, ...mild, ...refit, ...later], "2026-10-16");
+  assertEquals(profile.points.map(point => point.watts), [1100, 450]);
+  assertEquals(profile.points[0], oldCold);
 });

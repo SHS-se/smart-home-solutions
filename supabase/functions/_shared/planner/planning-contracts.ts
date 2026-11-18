@@ -273,6 +273,7 @@ export interface ThermalZonePlanningInput {
   name: string;
   device_keys: string[];
   model: ThermalZoneModel | null;
+  heating_bands?: import("./heating-bands.ts").RoomHeatingBasis;
   start_temperature_c: number | null;
   /** Heater heat still on its way through the room's delay at the start, W. */
   start_delivered_w?: number | null;
@@ -887,6 +888,7 @@ export interface StoreDiagnostic {
 export interface OptimisationResult {
   plan: OptimisationPlan;
   battery_projection: BatteryProjection;
+  heating_model_use?: { starts_at: string; rooms: Record<string, import("./heating-bands.ts").RoomHeatingModelUse> };
 }
 
 export interface EnergyPlanningInput {

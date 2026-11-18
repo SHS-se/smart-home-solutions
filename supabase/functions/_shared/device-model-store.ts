@@ -20,6 +20,11 @@ export interface DeviceModelBundle {
   /** Learned operating points and weather-dependent heating profiles. */
   devices: StoredDeviceModel[];
   revisions: { rooms: Record<string, number>; pool: number | null };
+  roomHeating?: Record<string, RoomHeatingContext>;
+}
+export interface RoomHeatingContext {
+  binding: string;
+  observed_since: string | null;
 }
 export async function captureDeviceModels(db: ModelDatabase, homeId: string): Promise<DeviceModelBundle> {
   const { data, error } = await db.rpc("capture_energy_device_models", { p_home_id: homeId });
@@ -33,7 +38,8 @@ export async function captureDeviceModels(db: ModelDatabase, homeId: string): Pr
   for (const model of [...rooms, ...(pool ? [pool] : []), ...devices]) {
     if (!Number.isSafeInteger(model.model_revision) || model.model_revision < 1) throw new Error("Missing device model revision");
   }
-  return { rooms, pool, devices, revisions: {
+  const roomHeating = data.room_heating && typeof data.room_heating === "object" ? data.room_heating : undefined;
+  return { rooms, pool, devices, roomHeating, revisions: {
     rooms: Object.fromEntries(rooms.map(model => [String(model.room_key), model.model_revision])),
     pool: pool?.model_revision ?? null,
   } };
@@ -76,6 +82,7 @@ export function weatherHeatingOwners(snapshot: OptimisationSnapshot): LearningOw
   return snapshot.device_models.flatMap(model =>
     model.control_type === "setpoint" && model.planning_service !== "pool" &&
     isWeatherHeatingBinding(model.weather_heating_binding)
-      ? [{ kind: "device", key: model.key, input: { weather_heating_binding: model.weather_heating_binding } }]
+      ? [{ kind: "device", key: model.key, input: { weather_heating_binding: model.weather_heating_binding,
+        ...(model.category === "heating" ? { banded_heating: true } : {}) } }]
       : []);
 }

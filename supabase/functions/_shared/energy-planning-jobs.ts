@@ -222,7 +222,8 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         // Which devices SHS was actually controlling when this plan was made. The
         // savings track record counts only months under control; nothing else records it.
-        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, model_revisions: loaded.context.model_revisions, model_capture_status: loaded.context.model_capture_status, operating_modes: snapshot.operating_scope?.modes ?? null },
+        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, model_revisions: loaded.context.model_revisions, model_capture_status: loaded.context.model_capture_status, operating_modes: snapshot.operating_scope?.modes ?? null,
+          ...(planned.heating_model_use ? { heating_model_use: planned.heating_model_use } : {}) },
         validation_errors: generated.validation_errors };
       for (const warning of generated.planning_warnings ?? []) {
         const evidence = {job_id:job.id,plan_id:generated.plan_id,...warning};

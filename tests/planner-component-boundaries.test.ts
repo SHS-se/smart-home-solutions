@@ -19,9 +19,9 @@ Deno.test("production planning and captured state cannot reach device learning",
 });
 
 Deno.test("each device learner sees only its own learning, pure numerical helpers and pure models", () => {
-  const pure = new Set(["models/room/thermal.ts", "device-models.ts", "pool-response.ts", "battery-conversion.ts"]
+  const pure = new Set(["models/room/thermal.ts", "models/room/read-model.ts", "heating-bands.ts", "device-models.ts", "pool-response.ts", "battery-conversion.ts"]
     .map(p => `${shared}planner/${p}`));
-  const sharedMath = new Set(["linear-algebra.ts", "temperature-evidence.ts"].map(p => learning + p));
+  const sharedMath = new Set(["linear-algebra.ts", "temperature-evidence.ts", "heating-comparison.ts"].map(p => learning + p));
   for (const path of sharedMath) assertEquals(specifiers(tree.read(path) ?? ""), []);
   for (const family of ["room", "pool"]) {
     const entries = files(`${learning}${family}/`).filter(p => p.endsWith(".ts") && !p.endsWith(".test.ts"));

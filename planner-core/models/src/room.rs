@@ -15,6 +15,8 @@ pub struct Thermostat {
     pub maximum_c: f64,
     pub step_c: f64,
     pub power_w: f64,
+    #[serde(default)]
+    pub reservation_w: Option<f64>,
     pub sensor_offset_c: f64,
     pub hvac_action: String,
     #[serde(default)]
@@ -221,6 +223,7 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
     for _ in 0..q.steps {
         let mut mask = 0;
         let mut watts = relay;
+        let mut reserved = relay;
         let mut relay_calls = 0;
         for (j, t) in thermostats.clone().into_iter().enumerate() {
             let own = out.state.temperature + t.sensor_offset_c;
@@ -231,7 +234,9 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
             }
             if ROOM_RELAYS && t.relay && targets[j] != f64::MAX {
                 if SINGLE {
-                    if watts + t.power_w > q.relay_budget_w.unwrap() + 1e-6 {
+                    if reserved + t.reservation_w.unwrap_or(t.power_w).max(t.power_w)
+                        > q.relay_budget_w.unwrap() + 1e-6
+                    {
                         continue;
                     }
                 } else {
@@ -244,6 +249,7 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
             if on {
                 mask += 1 << j;
                 watts += t.power_w;
+                reserved += t.reservation_w.unwrap_or(t.power_w).max(t.power_w);
                 out.power[j] += t.power_w * hours;
             }
         }
@@ -256,15 +262,17 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
                     continue;
                 }
                 for (j, t) in thermostats.clone().into_iter().enumerate() {
-                    if calls & (1 << j) != 0 && watts + t.power_w <= budget + 1e-6 {
+                    let bound = t.reservation_w.unwrap_or(t.power_w).max(t.power_w);
+                    if calls & (1 << j) != 0 && reserved + bound <= budget + 1e-6 {
                         mask |= 1 << j;
                         watts += t.power_w;
+                        reserved += bound;
                         out.power[j] += t.power_w * hours;
                     }
                 }
             }
         }
-        out.peak = out.peak.max(watts);
+        out.peak = out.peak.max(reserved);
         out.state.temperature = temperature(q.step, out.state, watts);
         out.state.delivered = q.step.carry * out.state.delivered + (1. - q.step.carry) * watts;
         out.state.mask = mask;
@@ -277,6 +285,48 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temperature_band_draw_does_not_reduce_the_running_reservation() {
+        let thermostat = Thermostat {
+            minimum_c: 5.,
+            maximum_c: 35.,
+            step_c: 1.,
+            power_w: 500.,
+            reservation_w: Some(800.),
+            sensor_offset_c: 0.,
+            hvac_action: "idle".into(),
+            relay: false,
+        };
+        let interval = Interval {
+            hours: 0.25,
+            steps: 1,
+            step: Transition {
+                decay: 1.,
+                offset_c: 0.,
+                delivered_gain_c_per_w: 0.,
+                gain_c_per_w: 0.001,
+                carry: 0.,
+            },
+            relay_budget_w: None,
+        };
+        let mut out = Projection::new(1);
+        project(
+            &interval,
+            &[thermostat],
+            State {
+                temperature: 19.,
+                delivered: 0.,
+                mask: 0,
+            },
+            &[21.],
+            0.,
+            &mut out,
+        );
+        assert_eq!(out.peak, 800.);
+        assert_eq!(out.power, vec![500.]);
+        assert_eq!(out.state.temperature, 19.5);
+    }
 
     fn original_latch(own: f64, target: f64, previous: bool) -> bool {
         if own >= target - 1e-9 {
@@ -321,6 +371,7 @@ mod tests {
                 maximum_c: 35.,
                 step_c: 0.5,
                 power_w: 800.,
+                reservation_w: None,
                 sensor_offset_c: 0.,
                 hvac_action: "idle".into(),
                 relay: false,
@@ -330,6 +381,7 @@ mod tests {
                 maximum_c: 35.,
                 step_c: 0.5,
                 power_w: 400.,
+                reservation_w: None,
                 sensor_offset_c: 0.5,
                 hvac_action: "idle".into(),
                 relay: false,

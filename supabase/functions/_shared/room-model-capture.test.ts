@@ -5,6 +5,8 @@ import { prepareRoomModels, captureRoomPlanningState, type RoomDeviceMapping } f
 import { prepareRoomServices } from "./rules-room-services.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";
 import { actionablePlanningWarnings } from "./planner/planning-warnings.ts";
+import { roomPlanningZones } from "./room-planning-zones.ts";
+import { readThermalModel } from "./planner/models/room/read-model.ts";
 
 function syntheticCapture() {
   const snapshot = cpuPlanningSource(true).snapshot;
@@ -212,6 +214,57 @@ Deno.test("weather draw is pinned only for the matching device in Verification",
   snapshot.operating_scope.modes[device.key] = "control_verification";
   device.weather_heating_binding = "replaced";
   assertEquals(read(prepareRoomModels(snapshot, mappings, bundle).snapshot), undefined);
+});
+
+Deno.test("a forecast crosses heating bands and publishes the actual thermal and electrical revisions", () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const [mapping] = mappings;
+  const key = mapping.room!.key;
+  const fitted = bundle.rooms.find(room => room.room_key === key)!;
+  const reference = readThermalModel(fitted)!;
+  const fit = (band: number, revision: string, outdoor: number, gain: number) => ({
+    revision, band_c: band, observed_min_c: outdoor, observed_max_c: outdoor,
+    training_from: "2025-01-01", training_to: "2025-01-08",
+    model: { ...reference, gain_c_per_wh: gain },
+  });
+  fitted.heating_bands = { binding: "synthetic-configuration", since: "2025-01-01", reference_revision: "general",
+    attempted: {}, candidates: [], active: [fit(-10, "cold", -7, reference.gain_c_per_wh), fit(5, "mild", 6, reference.gain_c_per_wh)] };
+  bundle.roomHeating = { [key]: { binding: "synthetic-configuration", observed_since: "2025-01-01" } };
+  snapshot.slots = snapshot.slots.slice(0, 3);
+  snapshot.outdoor_temperature_c = [-7, 6, 11];
+  snapshot.house_temperature_c = [20, 20, 20];
+  const device = snapshot.device_models.find(member => member.key === mapping.key)!;
+  device.category = "heating";
+  device.forecast_w_by_slot = [600, 600, 600];
+  device.weather_heating_binding = "meter-binding";
+  snapshot.device_models = [device];
+  snapshot.operating_scope = { modes: { [device.key]: "controlling" }, device_owners: { [device.key]: device.key }, external_demands: {} };
+  bundle.devices = [{ device_key: device.key, model_revision: 14, operating_points: {
+    method: "weather_heating_draw_v1", binding: "meter-binding", versioned: { candidates: [], attempted: {} },
+    points: [{ band_c: -10, revision: "draw-cold", outdoor_c: -7, min_c: -8, max_c: -6, watts: 600, spread_w: 10, hours: 5, days: 3,
+      training_from: "2025-01-01", training_to: "2025-01-08" }],
+  } }];
+  const prepared = prepareRoomModels(snapshot, [mapping], bundle);
+  const evidence = roomPlanningZones(prepared.snapshot, prepared.rooms, { schedules: new Map([[key, {
+    weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
+    off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21,
+  }]]), temperature_c: new Map([[key, 19]]), recent_heat_w: new Map() });
+  const result = prepareRoomServices({ ...prepared.snapshot, thermal_zones: evidence.zones });
+  const used = result.heating_model_use?.[key];
+  assertEquals(used?.thermal.map(run => run.source), [
+    { kind: "band", band_c: -10, revision: "cold" },
+    { kind: "band", band_c: 5, revision: "mild" },
+    { kind: "general", revision: "general" },
+  ]);
+  assertEquals(used?.electrical[device.key], [
+    { from: 0, through: 0, source: { kind: "band", band_c: -10, revision: "draw-cold" } },
+    { from: 1, through: 2, source: { kind: "running_power", watts: device.active_power_w! } },
+  ]);
+  assertEquals(result.power[device.key].length, 3);
+  bundle.roomHeating[key].binding = "new heater";
+  const replacement = prepareRoomModels(snapshot, [mapping], bundle);
+  assert(replacement.rooms[0].model);
+  assertEquals(replacement.rooms[0].heating_bands, { reference_revision: "general", active: [] });
 });
 
 Deno.test("room preparation uses connected probe evidence without requiring the neighbour to be planned", async () => {

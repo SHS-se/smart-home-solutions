@@ -12,6 +12,7 @@ export interface ThermostatInput {
 }
 
 export interface RoomThermostat extends ThermostatInput {
+  reservation_w?: number;
   power_w: number;
   sensor_offset_c: number;
 }

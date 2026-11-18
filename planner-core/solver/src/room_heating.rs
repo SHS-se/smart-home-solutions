@@ -986,6 +986,7 @@ mod tests {
             maximum_c: 2.0000000005,
             step_c: 0.5,
             power_w: 800.,
+            reservation_w: None,
             sensor_offset_c: 0.,
             hvac_action: "idle".into(),
             relay: false,

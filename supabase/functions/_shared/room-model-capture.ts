@@ -14,6 +14,7 @@ import { roomPlanningZones } from "./room-planning-zones.ts";
 import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
 import { classifyOutdoorSeries } from "./outdoor-forecast.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
+import { matchingRoomHeatingCoordinates, readRoomHeatingBands } from "./planner/heating-bands.ts";
 
 /** Mapping has already been parsed at the transport boundary. */
 export interface RoomDeviceMapping {
@@ -78,12 +79,16 @@ export function prepareRoomModels(
     // Only server-owned, versioned calibration can enter the planner.
     const { weather_heating: _supplied, ...device } = model;
     const binding = device.weather_heating_binding;
-    if (device.control_type !== "setpoint" || device.planning_service === "pool" ||
-      scope?.modes[scope.device_owners[device.key]] !== "control_verification" ||
-      !isWeatherHeatingBinding(binding)) return device;
+    if (device.control_type !== "setpoint" || device.planning_service === "pool" || !isWeatherHeatingBinding(binding)) return device;
+    const mode = scope?.modes[scope.device_owners[device.key]];
     const row = weatherByDevice.get(device.key);
     const profile = row && readWeatherHeating(row.operating_points, binding);
-    return profile && row ? { ...device, weather_heating: { ...profile, revision: row.model_revision } } : device;
+    if (profile?.versioned && device.category !== "heating") return device;
+    const useBand = device.category === "heating" && profile?.versioned && mode === "controlling";
+    return profile && row && (useBand || mode === "control_verification")
+      ? { ...device, weather_heating: { method: profile.method, binding: profile.binding, points: profile.points,
+        ...(profile.reference ? { reference: profile.reference } : {}),
+        ...(profile.versioned ? { banded: true } : {}), revision: row.model_revision } } : device;
   }) };
   const roomModels = snapshot.device_models.filter((model) => {
     if (model.planning_role !== "controllable" || model.planning_service === "pool") return false;
@@ -185,7 +190,7 @@ export function prepareRoomModels(
       if (profile && outdoor?.some(temperature => heatingWatts(profile, temperature) === null)) {
         snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
           "weather_heating_draw_estimated", member.key, `${member.name}: forecast temperatures extend beyond observed heating draw.`,
-          "Verification uses the existing running-power estimate for quarters outside the learned temperature range.")]);
+        "The plan uses the running-power estimate for quarters outside the learned temperature range.")]);
       }
     }
     const attempt = fitted?.last_fit_attempt as { issues?: string[]; passive_heat?: { status?: string } } | undefined;
@@ -198,10 +203,20 @@ export function prepareRoomModels(
     if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
+    const heatingContext = bundle?.roomHeating?.[room.key];
+    const library = readRoomHeatingBands(fitted?.heating_bands);
+    const compatible = library?.binding === heatingContext?.binding && library?.reference_revision != null;
     const model = readThermalModel(fitted);
+    if (heatingContext && model && library && !compatible) {
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        "room_heating_band_estimated", room.key, `${room.name}: heating sources changed.`,
+        "The general room response is used while the new heating setup is measured.")]);
+    }
     const doorway = readRoomDoorwayModel(fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
+      ...(heatingContext ? { heating_bands: { reference_revision: library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null,
+        active: compatible && model ? library!.active.filter(band => matchingRoomHeatingCoordinates(band, model)) : [] } } : {}),
       ...(doorway ? { doorway } : {}),
       ...(passive ? { passive_heat: passive } : {}),
       maximum_power_w_by_slot: summerLockout.map((locked, i) => locked ? 0 : Math.max(baselineCapW, weather?.[i] ?? 0)) });

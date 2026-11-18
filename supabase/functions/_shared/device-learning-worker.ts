@@ -1,5 +1,5 @@
 import { captureDeviceModels } from "./device-model-store.ts";
-import { fitStoredRoom } from "./device-model-learning/room.ts";
+import { fitStoredRoom, fitStoredRoomHeating } from "./device-model-learning/room.ts";
 import { fitStoredPool } from "./device-model-learning/pool.ts";
 import { fitStoredWeatherHeating } from "./device-model-learning/weather-heating.ts";
 import { fitStoredDevice } from "./device-model-learning/device.ts";
@@ -8,7 +8,7 @@ import { describeThrown } from "./ha-api-contract.ts";
 interface LearningClaim {
   id: string; home_id: string; customer_id: string; owner_kind: "room" | "pool" | "device"; owner_key: string;
   generation: number; fence: number;
-  input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string };
+  input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string; banded_heating?: boolean };
 }
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
@@ -32,12 +32,24 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     const models = await captureDeviceModels(db, claim.home_id);
     const previous = claim.owner_kind === "room" ? models.rooms.find(row => row.room_key === claim!.owner_key)
       : claim.owner_kind === "device" ? models.devices.find(row => row.device_key === claim!.owner_key) : models.pool;
+    let roomHeating = models.roomHeating?.[claim.owner_key];
+    if (claim.owner_kind === "room" && roomHeating) {
+      const history = await db.rpc("get_energy_room_heating_context", {
+        p_home_id: claim.home_id, p_room_key: claim.owner_key,
+      });
+      if (history.error) throw new Error(history.error.message);
+      roomHeating = history.data ?? roomHeating;
+    }
     const row = claim.owner_kind === "room"
-      ? await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
+      ? roomHeating
+        ? await fitStoredRoomHeating(db, claim.home_id, claim.customer_id, claim.owner_key, roomHeating,
+          previous ?? undefined, claim.input.location ?? null, now())
+        : { ...await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now()),
+          ...(previous?.heating_bands ? { heating_bands: null } : {}) }
       : claim.owner_kind === "device"
       ? claim.input.weather_heating_binding
         ? await fitStoredWeatherHeating(db, claim.home_id, claim.customer_id, claim.owner_key,
-          claim.input.weather_heating_binding, previous?.operating_points, now())
+          claim.input.weather_heating_binding, previous?.operating_points, now(), claim.input.banded_heating)
         : await fitStoredDevice(db, claim.customer_id, claim.home_id, claim.owner_key, now())
       : await fitStoredPool(db, claim.customer_id, claim.home_id, claim.input.volume_m3!, claim.input.device_keys!, now(), claim.input.auxiliary_keys ?? []);
     if (!row) throw new Error("Learning did not produce an attempt");

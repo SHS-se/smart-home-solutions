@@ -159,6 +159,7 @@ export interface RoomProjectionContext {
   house_c?: (number | null)[] | null;
   start_delivered_w?: number | null;
   passive_heat_c_per_h?: readonly number[];
+  model_by_quarter?: readonly ThermalZoneModel[];
 }
 
 export function backgroundRateForSlot(
@@ -191,10 +192,11 @@ export function projectZoneTemperature(
   const projection: number[] = [];
   let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
   for (let index = 0; index < outdoorC.length; index += 1) {
+    const physics = context.model_by_quarter?.[index] ?? model;
     projection.push(Math.round(state.temperature_c * 1000) / 1000);
-    state = stepRoom(roomTransition(model, {
+    state = stepRoom(roomTransition(physics, {
       hours: durationHours?.[index] ?? SLOT_HOURS, outdoor_c: outdoorC[index],
-      house_c: context.house_c?.[index], background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2, context.passive_heat_c_per_h),
+      house_c: context.house_c?.[index], background_c_per_h: backgroundRateForSlot(physics, index, solarWPerM2, context.passive_heat_c_per_h),
     }), state, heatInputW[index] ?? 0);
   }
   return projection;

@@ -20,6 +20,7 @@ export interface RoomMeanQuarter {
   /** Measured mean electrical input; null means unobserved, never OFF. */
   heat_w: number | null;
   cooling: boolean;
+  band_forcing_c_per_h?: number | null;
 }
 export const ROOM_MEAN_LEARNING_METHOD = "interval_mean_transition_holdout_v1" as const;
 export const ROOM_EXCHANGE_FAMILY = "house_outdoor_solar_v1" as const;
@@ -67,7 +68,13 @@ interface Design { terms: Term[]; op: ReturnType<typeof roomMeanObservation> }
 interface Fit { k: number; lag: number; solar: boolean; beta: number[];
   initial: Map<number, number>; mse: number; n: number; design: Design }
 
-function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean): Design {
+interface BandFit {
+  outdoor: (outdoorC: number) => boolean;
+  house: number;
+  gain: number | null;
+}
+
+function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean, band?: BandFit): Design {
   const op = roomMeanObservation(k, lag), { a, effect, E, V, C, B, U } = op;
   const L = E * effect - a * V;
   const deliveredCoefficient = E * B - a * U + U * C;
@@ -80,14 +87,17 @@ function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean)
     if (powerKnown && contiguous && finite(next.heat_w) && next.heat_w >= 0 &&
       finite(q.room_c) && finite(next.room_c) && !q.cooling && !next.cooling &&
       finite(q.house_c) && finite(next.house_c) && finite(q.outdoor_c) && finite(next.outdoor_c) &&
-      (!solar || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2)))) {
+      (!solar || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2))) &&
+      (!band || (band.outdoor(q.outdoor_c!) && band.outdoor(next.outdoor_c!) &&
+        q.band_forcing_c_per_h !== null && next.band_forcing_c_per_h !== null))) {
       const heat = roomMeanHeat(op, delivered, q.heat_w!, next.heat_w!);
       terms.push({ index: i, segment, delivered, z: deliveredCoefficient * initialShare,
         // k = house + outdoor exchange. At fixed k, the outdoor share stays
         // linear: k*house + outdoor*(outdoorTemperature-houseTemperature).
         x: [heat, effect, L * (q.outdoor_c! - q.house_c!) + V * (next.outdoor_c! - next.house_c!),
           ...(solar ? [L * q.solar_w_per_m2! + V * next.solar_w_per_m2!] : [])],
-        y: next.room_c! - a * q.room_c! - k * (L * q.house_c! + V * next.house_c!) });
+        y: next.room_c! - a * q.room_c! - k * (L * q.house_c! + V * next.house_c!) -
+          (band ? L * (q.band_forcing_c_per_h ?? 0) + V * (next.band_forcing_c_per_h ?? 0) : 0) });
     }
     if (!powerKnown || !contiguous || q.cooling) {
       // Unknown heat breaks memory. Estimate a new segment's initial delayed
@@ -111,13 +121,14 @@ function solveScaled(matrix: number[][], vector: number[]): number[] | null {
 }
 
 /** Exact minimum over the six possible outdoor/solar constraint faces. */
-function exchangeCoefficients(xx: number[][], xy: number[], k: number, solar: boolean): number[] | null {
+function exchangeCoefficients(xx: number[][], xy: number[], k: number, solar: boolean, band?: BandFit): number[] | null {
   // Constraint faces cannot identify a split absent from the observations:
   // this includes solar confounded with exchange or steady background heat.
-  if (!solveScaled(xx, xy)) return null;
+  if (band ? k < band.house : !solveScaled(xx, xy)) return null;
   let best: number[] | null = null, objective = Infinity;
-  for (const outdoor of [null, 0, k]) for (const sun of solar ? [null, 0] : [null]) {
+  for (const outdoor of band ? [k - band.house] : [null, 0, k]) for (const sun of solar ? [null, 0] : [null]) {
     const fixed = new Map<number, number>();
+    if (band?.gain != null) fixed.set(0, band.gain);
     if (outdoor !== null) fixed.set(2, outdoor);
     if (solar && sun !== null) fixed.set(3, sun);
     const free = xy.map((_, j) => j).filter(j => !fixed.has(j));
@@ -133,8 +144,8 @@ function exchangeCoefficients(xx: number[][], xy: number[], k: number, solar: bo
   return best;
 }
 
-function estimate(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean): Fit | null {
-  const d = design(rows, k, lag, solar), size = solar ? 4 : 3;
+function estimate(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean, band?: BandFit): Fit | null {
+  const d = design(rows, k, lag, solar, band), size = solar ? 4 : 3;
   const xx = Array.from({ length: size }, () => Array<number>(size).fill(0)), xy = Array<number>(size).fill(0);
   const nuisance = new Map<number, { xx: number; xy: number; cross: number[] }>();
   for (const t of d.terms) {
@@ -157,7 +168,7 @@ function estimate(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolea
       for (let z = 0; z < size; z++) xx[j][z] -= n.cross[j] * n.cross[z] / n.xx;
     }
   }
-  const beta = exchangeCoefficients(xx, xy, k, solar);
+  const beta = exchangeCoefficients(xx, xy, k, solar, band);
   // Check the optimum, rather than selecting a worse constraint face just
   // because that face happens to give a positive heater response.
   if (!beta || !(beta[0] > 0)) return null;
@@ -171,10 +182,10 @@ function estimate(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolea
 }
 
 /** Expand a numerical bracket; no imposed lower/upper physical coupling. */
-function fitCandidate(rows: RoomMeanQuarter[], lag: number, solar: boolean): Fit | null {
+function fitCandidate(rows: RoomMeanQuarter[], lag: number, solar: boolean, band?: BandFit): Fit | null {
   const at = (logK: number) => {
     const k = Math.exp(logK);
-    return k > 0 && Number.isFinite(k) ? estimate(rows, k, lag, solar) : null;
+    return k > 0 && Number.isFinite(k) ? estimate(rows, k, lag, solar, band) : null;
   };
   let center = 0, best = at(center);
   // Discover a physical least-squares solution before minimising its residual.
@@ -198,6 +209,39 @@ function fitCandidate(rows: RoomMeanQuarter[], lag: number, solar: boolean): Fit
     if ((left?.mse ?? Infinity) < (right?.mse ?? Infinity)) hi = r; else lo = l;
   }
   return best;
+}
+
+/** Learn local exchange on the same state coordinates as the room's general fit. */
+export function fitRoomBand(
+  rows: RoomMeanQuarter[], reference: ThermalZoneModel, outdoor: (outdoorC: number) => boolean,
+  ratedPowerW: number | null,
+): { model: ThermalZoneModel; minC: number; maxC: number } | null {
+  const lag = reference.heat_lag_h ?? 0;
+  const solar = reference.solar_gain_c_per_h_per_wm2 != null;
+  const band = { outdoor, house: reference.house_coupling_per_h ?? 0,
+    gain: lag > 0 ? reference.gain_c_per_wh : null };
+  const fit = fitCandidate(rows, lag, solar, band);
+  if (!fit) return null;
+  const samples = fit.design.terms.flatMap(term => [rows[term.index], rows[term.index + 1]]);
+  // A band without any measured heating cannot be qualified for heating.
+  if (!samples.some(row => row.heat_w! > HEATED_SAMPLE_MIN_W)) return null;
+  const [gain, background, external, sun] = fit.beta;
+  const meanChange = fit.design.terms.reduce((sum, term) =>
+    sum + rows[term.index + 1].room_c! - rows[term.index].room_c!, 0) / fit.n;
+  const variance = fit.design.terms.reduce((sum, term) =>
+    sum + (rows[term.index + 1].room_c! - rows[term.index].room_c! - meanChange) ** 2, 0) / fit.n;
+  return {
+    minC: Math.min(...samples.map(row => row.outdoor_c!)),
+    maxC: Math.max(...samples.map(row => row.outdoor_c!)),
+    model: {
+      ...reference, gain_c_per_wh: gain, cooling_constant_per_h: external,
+      background_gain_c_per_h: background, solar_gain_c_per_h_per_wm2: sun ?? null,
+      thermal_capacity_wh_per_c: 1 / gain, heat_loss_w_per_c: fit.k / gain, time_constant_h: 1 / fit.k,
+      heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
+      sample_count: fit.n, r2: variance ? 1 - fit.mse / variance : 0,
+      residual_std_c: Math.sqrt(fit.mse), prediction_error_c: null,
+    },
+  };
 }
 
 function heldOut(fit: Fit, rows: RoomMeanQuarter[], split: number, comparable: Set<number>) {
