@@ -175,6 +175,13 @@ const EmpiricalDeviceModelsCard: React.FC<{
 
   const device = selectedBattery ? null : selected;
   const status = planStatus(device ?? null);
+  const heatingModel = device?.category === 'heating' && mappingState(device) === 'ready'
+    ? currentPlan?.device_models.find(model => model.key === device.device_key &&
+      model.statistic_id === device.statistic_id && model.category === 'heating' &&
+      model.control_type === device.control_type_override)
+    : undefined;
+  const runningPower = device?.active_power_w ?? heatingModel?.active_power_w;
+  const historyQuarters = device?.profile_sample_count || heatingModel?.profile_sample_count || 0;
   const name = device?.name ?? t('Husbatteri', 'House battery');
   const selectedRoom = device && roomKey(device);
   const roomName = device?.mapping_summary?.room_name;
@@ -250,9 +257,9 @@ const EmpiricalDeviceModelsCard: React.FC<{
                   <dl className="grid gap-4 rounded-md border p-4 text-sm sm:grid-cols-2">
                     <div><dt className="text-muted-foreground">{device.category === 'heating'
                       ? t('Effekt vid uppvärmning', 'Running power while heating') : t('Aktiv effekt', 'Active power')}</dt>
-                      <dd>{device.active_power_w == null ? '—' : `${(device.active_power_w / 1_000).toFixed(2)} kW`}</dd></div>
+                      <dd>{runningPower == null ? '—' : `${(runningPower / 1_000).toFixed(2)} kW`}</dd></div>
                     <div><dt className="text-muted-foreground">{t('Historik', 'History')}</dt>
-                      <dd>{device.profile_sample_count > 0 ? `${device.profile_sample_count} × 15 min` : t('Samlas in', 'Collecting')}</dd></div>
+                      <dd>{historyQuarters > 0 ? `${historyQuarters} × 15 min` : t('Samlas in', 'Collecting')}</dd></div>
                   </dl>
                 </DeviceHeatingPowerModel> : <p className="rounded-md border p-4 text-sm">{t('Batteriets modell och prognos visas i energiplanen.', 'The energy plan shows the battery model and forecast.')}</p>}
               </TabsContent>

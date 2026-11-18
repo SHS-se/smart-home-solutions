@@ -1112,6 +1112,31 @@ test.describe('requesting a replan', () => {
     expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
+  test('device Model shows a matched heating plan estimate when inventory has no running power', async ({ page, context }) => {
+    const key = 'synthetic-floor-heater', meter = 'sensor.synthetic_floor_heater_energy';
+    replan.devices = [{
+      id: key, device_key: key, statistic_id: meter, name: 'Test floor heater', category: 'heating',
+      planning_role_override: 'controllable', control_type_override: 'setpoint', load_type_override: 'duty_cycle',
+      mapping_status: 'ready', mapped_control_type: 'setpoint', mapping_summary: {}, active_power_w: null, profile_sample_count: 0,
+    }];
+    replan.publishedPlan = { ...PLAN, device_models: [{
+      ...mixedModeFixture.plan.device_models[0], key, statistic_id: meter, category: 'heating',
+      control_type: 'setpoint', active_power_w: 503, profile_sample_count: 86,
+    }] };
+    await context.route('**/rest/v1/energy_optimisation_device_operating_points*', route => route.fulfill({ json: [] }));
+    await page.goto(`/portal/energy-modeling?tab=devices&device=${key}`);
+    const openModel = () => page.getByRole('tab', { name: /^(Modell|Model)$/ }).click();
+    await openModel();
+    const model = page.getByRole('tabpanel', { name: /^(Modell|Model)$/ });
+    await expect(model.getByText('0.50 kW', { exact: true })).toBeVisible();
+    await expect(model.getByText('86 × 15 min', { exact: true })).toBeVisible();
+
+    replan.devices[0].statistic_id = 'sensor.replaced_meter_energy';
+    await page.reload();
+    await openModel();
+    await expect(model.getByText('—', { exact: true })).toBeVisible();
+  });
+
   test('device colours match every reference and survive refresh, reorder, configuration changes and additions', async ({ page, context }, testInfo) => {
     const rgb = (colour: string) => `rgb(${[1, 3, 5].map(at => parseInt(colour.slice(at, at + 2), 16)).join(', ')})`;
     const guestColour = rgb(TEST_DEVICE_COLOURS[2]), poolColour = rgb(TEST_DEVICE_COLOURS[10]);
