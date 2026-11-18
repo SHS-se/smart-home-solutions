@@ -9,6 +9,8 @@ import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
+import { PlanDisplayTrace, planTraceIdentity } from '@/lib/energy-shift/plan-display-trace';
+import { downloadJson } from '@/lib/download-json';
 import { planRefreshError, readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
 import { haRuntimeStatus, planDeliveryStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -82,6 +84,17 @@ interface PlanWorkspaceProps {
 const LOADED_HISTORY_DAYS = 3;
 const testEnvironment = isTestEnvironment();
 
+interface PortalDelta {
+  current: Omit<CurrentRow, 'plan'> | null;
+  plan: CurrentRow['plan'] | null;
+  actuals: HistoryDelta<ActualEnergySlot>;
+  prices: HistoryDelta<PriceSlotRow>;
+  device_actuals: HistoryDelta<EmpiricalDeviceSlotMatrix>;
+  devices: ChangedValue<EmpiricalEnergyDevice[]>;
+  zone_models: ChangedValue<ThermalZoneModelSummary[]>;
+  thermal: ChangedValue<ThermalObservationSummary>;
+}
+
 const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -118,15 +131,18 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     initialized: boolean;
     failures: number;
     current: CurrentRow | null;
+    trace: PlanDisplayTrace;
     known: Record<string, string | Record<string, string>>;
     actuals: HistoryCache<ActualEnergySlot>;
     prices: HistoryCache<PriceSlotRow>;
     deviceActuals: HistoryCache<EmpiricalDeviceSlotMatrix>;
   } | null>(null);
   if (syncRef.current?.scope !== syncScope) {
-    syncRef.current = { scope: syncScope, busy: false, initialized: false, failures: 0, current: null, known: {},
+    syncRef.current = { scope: syncScope, busy: false, initialized: false, failures: 0,
+      current: null, trace: new PlanDisplayTrace(), known: {},
       actuals: new HistoryCache(), prices: new HistoryCache(), deviceActuals: new HistoryCache() };
   }
+  const { trace } = syncRef.current;
 
   const load = useCallback(async (background = false) => {
     const cache = syncRef.current!;
@@ -148,27 +164,30 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     if (!customerId || !homeId) { setLoading(false); return; }
     cache.busy = true;
     if (!background) setLoading(true);
+    let failureStage: 'read' | 'unsupported_plan' = 'read';
     try {
-      const [{ data, error: syncError }, accuracyResult] = await Promise.all([supabase.rpc('get_energy_portal_delta', {
-        p_customer_id: customerId, p_home_id: homeId,
-        p_known: { ...cache.known, actuals: cache.actuals.hashes(),
-          prices: cache.prices.hashes(), device_actuals: cache.deviceActuals.hashes() },
-      }), Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId}))
+      const readPortal = async () => {
+        const readStarted = performance.now();
+        const { data, error: syncError } = await supabase.rpc('get_energy_portal_delta', {
+          p_customer_id: customerId, p_home_id: homeId,
+          p_known: { ...cache.known, actuals: cache.actuals.hashes(),
+            prices: cache.prices.hashes(), device_actuals: cache.deviceActuals.hashes() },
+        });
+        const delta = data as unknown as PortalDelta;
+        // Stamp receipt before the independent accuracy request can finish.
+        if (!syncError && delta && syncRef.current === cache) {
+          cache.trace.record({ event: 'portal_response', ...planTraceIdentity(delta.current), includes_plan_payload: delta.plan != null },
+            performance.now() - readStarted);
+        }
+        return { delta, syncError };
+      };
+      const [{ delta, syncError }, accuracyResult] = await Promise.all([readPortal(),
+        Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId}))
         .catch(() => ({data: null, error: {message: 'Accuracy unavailable'}}))]);
       if (syncRef.current !== cache) return;
       setAccuracyError(accuracyResult.error ? t('Noggrannhet är inte tillgänglig', 'Accuracy unavailable') : null);
       setAccuracy(accuracyResult.data as unknown as AccuracyReport | null);
       if (syncError) throw syncError;
-      const delta = data as unknown as {
-        current: Omit<CurrentRow, 'plan'> | null;
-        plan: CurrentRow['plan'] | null;
-        actuals: HistoryDelta<ActualEnergySlot>;
-        prices: HistoryDelta<PriceSlotRow>;
-        device_actuals: HistoryDelta<EmpiricalDeviceSlotMatrix>;
-        devices: ChangedValue<EmpiricalEnergyDevice[]>;
-        zone_models: ChangedValue<ThermalZoneModelSummary[]>;
-        thermal: ChangedValue<ThermalObservationSummary>;
-      };
       recordPortalSync(delta, !cache.initialized);
       const row = delta.current ? { ...delta.current,
         plan: delta.plan ?? (cache.current?.plan_id === delta.current.plan_id ? cache.current?.plan : null),
@@ -176,6 +195,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       const refreshed = readPlanRefresh(row);
       setLatestRuntime(refreshed.runtime);
       if (refreshed.unsupported && delta.current?.plan_id) {
+        failureStage = 'unsupported_plan';
         throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet.', 'The website cannot display the received plan format.'));
       }
       setCurrent(refreshed.current);
@@ -198,6 +218,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       setError(null);
     } catch (loadError) {
       if (syncRef.current === cache) {
+        cache.trace.record({ event: 'refresh_failed', stage: failureStage, displayed_plan_id: cache.current?.plan.plan_id ?? null });
         cache.failures += 1;
         // Keep the displayed plan through a failed background read and retry
         // promptly. Repeated failures remain visible with a readable message.
@@ -325,7 +346,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
     : undefined;
 
-  const replanControls = <ReplanControls homeId={homeId} replan={current} refreshing={refreshing}
+  const replanControls = <ReplanControls key={syncScope} homeId={homeId} replan={current?.home_id === homeId ? current : null}
+    refreshing={refreshing} trace={trace}
     onBusyChange={setRequestingReplan} onReplanChanged={() => void load(true)} />;
 
   let content: React.ReactNode;
@@ -416,6 +438,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           customerId={customerId}
           homeId={homeId}
           current={current}
+          trace={trace}
           refreshError={error}
           refreshing={refreshing || requestingReplan}
           latestRuntime={latestRuntime}
@@ -485,11 +508,19 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       {content}
       {(
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">{t('Trafikdiagnostik', 'Traffic diagnostics')}</summary>
+          <summary className="cursor-pointer">{t('Diagnostik', 'Diagnostics')}</summary>
           <p className="mt-1">{t('Trafik i denna flik sedan sidan laddades. Datastorlek före komprimering, inte fakturerad trafik.', 'Traffic in this tab since page load. Payload sizes before compression, not billed traffic.')}</p>
-          <Button size="sm" variant="outline" className="mt-2" onClick={downloadTrafficReport}>
+          <Button size="sm" variant="outline" className="mt-2 min-h-11" onClick={downloadTrafficReport}>
             {t('Ladda ned trafikrapport', 'Download traffic report')}
           </Button>
+          {section === 'plan' && <>
+            <p className="mt-2">{t('Visade planer och diagrammets datakällor sedan planvyn öppnades.',
+              'Displayed plans and chart data sources since opening the Plan view.')}</p>
+            <Button size="sm" variant="outline" className="mt-2 min-h-11"
+              onClick={() => downloadJson('shs-plan-display-trace.json', trace.report())}>
+              {t('Ladda ned planens visningslogg', 'Download plan display trace')}
+            </Button>
+          </>}
         </details>
       )}
     </div>
@@ -501,6 +532,7 @@ const PlanView: React.FC<{
   customerId: string | null;
   homeId: string | null;
   current: CurrentRow;
+  trace: PlanDisplayTrace;
   refreshError?: string | null;
   refreshing?: boolean;
   latestRuntime?: HaRuntimeRow | null;
@@ -531,6 +563,7 @@ const PlanView: React.FC<{
   customerId,
   homeId,
   current,
+  trace,
   refreshError = null,
   refreshing = false,
   latestRuntime,
@@ -904,6 +937,8 @@ const PlanView: React.FC<{
           </div>
           <PowerSection
             model={model}
+            trace={current.home_id === homeId ? trace : undefined}
+            reportedRuntime={latestRuntime ?? current}
             rows={timeline}
             range={timelineRange}
             dayWindow={dayWindow}

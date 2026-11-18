@@ -2039,6 +2039,84 @@ test.describe('requesting a replan', () => {
     await expect(button).toBeDisabled();
   });
 
+  test('exports which plan and data sources the chart showed during a replan', async ({ page }) => {
+    const replacementId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const model = mixedModeFixture.plan.device_models[0];
+    const evBattery = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-6-dispatched-ev-plan.json', import.meta.url), 'utf8')).plan.ev_battery;
+    const historyStart = new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString();
+    replan.reportedPlanId = PLAN.plan_id;
+    replan.history = [{ start_ts: historyStart, total_load_kwh: 0.8 }];
+    replan.deviceHistory = [{ start_ts: historyStart, device_energy_kwh: { charger: 0.2 } }];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+
+    const button = page.getByRole('button', { name: replanButton });
+    const requested = page.waitForResponse(response => response.url().includes('/energy-optimisation-replan'));
+    await button.click();
+    await requested;
+    await expect(button).toHaveAttribute('aria-busy', 'true');
+    replan.acknowledgement = { status: 'pending', message: null, version: null };
+    replan.publishedPlan = {
+      ...PLAN, plan_id: replacementId, capabilities: { ...PLAN.capabilities, ev: true }, ev_battery: evBattery,
+      device_models: [
+        { ...model, key: 'charger', name: 'Synthetic car charger', category: 'ev_charging', planning_service: undefined },
+        { ...model, key: 'heater', name: 'Synthetic heater', planning_service: undefined },
+      ],
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({
+        ...slot, load_w: 2500, ev_soc: 0.7, ev_soc_from_charging: 0.75,
+        device_loads_w: { charger: 1500, heater: 500 },
+        device_commands: {
+          charger: { type: 'variable_power', value: 5, unit: 'A' },
+          heater: { type: 'unavailable', reason: 'Synthetic unavailable control' },
+        },
+      })) } },
+    };
+    await expect(page.locator(`code[title="${replacementId}"]`).first()).toBeVisible();
+    replan.reportedPlanId = replacementId;
+    replan.acknowledgement = { status: 'accepted', message: null, version: null };
+    replan.row.replan_completed_request_id = REQUEST_ID;
+    await expect(button).toBeEnabled();
+
+    await page.locator('summary').filter({ hasText: /^(Diagnostik|Diagnostics)$/ }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: /Ladda ned planens visningslogg|Download plan display trace/ }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toBe('shs-plan-display-trace.json');
+    const { events } = JSON.parse(readFileSync((await file.path())!, 'utf8'));
+    const rendered = {
+      event: 'chart_rendered', plan_id: replacementId, replan_request_id: REQUEST_ID,
+      ha_reported_plan_id: PLAN.plan_id, ha_ack_status: 'pending',
+      chart: expect.objectContaining({
+        window: 0,
+        measured_quarters: 1,
+        ev_soc: expect.objectContaining({ includes_estimated_driving: true, max_driving_difference_points: 5 }),
+        power: expect.arrayContaining([
+          expect.objectContaining({ device_key: 'charger', power_by_source: expect.objectContaining({
+            measured: { quarters: 1, chart_kwh: 0.2, peak_w: 800 },
+            scheduled: expect.objectContaining({ peak_w: 1500 }),
+          }) }),
+          expect.objectContaining({ device_key: 'heater', power_by_source: {
+            forecast_without_command: expect.objectContaining({ peak_w: 500 }),
+          } }),
+        ]),
+      }),
+    };
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'replan_clicked', displayed_plan_id: PLAN.plan_id }),
+      expect.objectContaining({ event: 'replan_response', replan_request_id: REQUEST_ID, queued: true }),
+      expect.objectContaining({ event: 'replan_completed', replan_request_id: REQUEST_ID, displayed_plan_id: replacementId }),
+      expect.objectContaining(rendered),
+      expect.objectContaining({ event: 'chart_rendered', plan_id: replacementId,
+        ha_reported_plan_id: replacementId, ha_ack_status: 'accepted' }),
+    ]));
+    const received = events.findIndex((event: { event: string; plan_id?: string }) =>
+      event.event === 'portal_response' && event.plan_id === replacementId);
+    const displayed = events.findIndex((event: { event: string; plan_id?: string }) =>
+      event.event === 'chart_rendered' && event.plan_id === replacementId);
+    expect(received).toBeGreaterThanOrEqual(0);
+    expect(displayed).toBeGreaterThan(received);
+  });
+
   test('a later completed request also releases this browser’s busy button', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=plan');
     const button = page.getByRole('button', { name: replanButton });

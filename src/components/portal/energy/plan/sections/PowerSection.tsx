@@ -19,7 +19,7 @@ import BoilerSlotDetail from '../BoilerSlotDetail';
 // history has no score, and neither has a plan from a planner without rules;
 // the section then holds only its last part, the replay download.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { attributeEnergy, supplySlotsFromTimeline } from '@/lib/energy-shift/energy-attribution';
 import {
@@ -29,6 +29,8 @@ import {
   type TimelineRow,
 } from '@/lib/energy-shift/energy-timeline';
 import { projectPlanChart, type ChartHotWater } from '@/lib/energy-shift/plan-chart-data';
+import { describePlanChart, planTraceIdentity, type PlanDisplayTrace } from '@/lib/energy-shift/plan-display-trace';
+import type { HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import { hotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
@@ -53,6 +55,8 @@ const total = (points: Record<string, number>) => Object.values(points).reduce((
 
 const PowerSection: React.FC<{
   model: PlanModel;
+  trace?: PlanDisplayTrace;
+  reportedRuntime: HaRuntimeRow;
   rows: TimelineRow[];
   range: TimelineRange;
   dayWindow: DayWindow;
@@ -69,6 +73,8 @@ const PowerSection: React.FC<{
   rooms?: readonly ChartRoom[];
 }> = ({
   model,
+  trace,
+  reportedRuntime,
   rows,
   range,
   dayWindow,
@@ -86,13 +92,14 @@ const PowerSection: React.FC<{
   const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
-  const { plan } = model;
+  const { plan, current } = model;
   const deviceNameByKey = useMemo(() => new Map(devices.map(device => [device.device_key, device.name])), [devices]);
+  const poolHeaterKeys = useMemo(() => poolHeaters(plan.device_models).map(device => device.key), [plan.device_models]);
   const colours = useMemo(() => ({
-    pool: ownerColour(devices, poolHeaters(plan.device_models).map(device => device.key), PLAN_COLOURS.pool),
+    pool: ownerColour(devices, poolHeaterKeys, PLAN_COLOURS.pool),
     ev: ownerColour(devices, plan.device_models.filter(device => device.category === 'ev_charging').map(device => device.key), PLAN_COLOURS.ev),
     water: ownerColour(devices, plan.device_models.filter(device => device.category === 'hot_water' && device.control_type === 'permit_inhibit').map(device => device.key), PLAN_COLOURS.water),
-  }), [devices, plan.device_models]);
+  }), [devices, plan.device_models, poolHeaterKeys]);
   const hotWater = useMemo((): ChartHotWater | undefined => {
     if (!plan.capabilities.boiler) return undefined;
     const keys = plan.device_models.filter(device => device.category === 'hot_water' && device.control_type === 'permit_inhibit').map(device => device.key);
@@ -108,7 +115,20 @@ const PowerSection: React.FC<{
     })),
     hotWater, planSlots: model.active.slots,
   }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater, model.active.slots]);
-  const { rows: panelRows, consumption } = chart;
+  const { rows: panelRows, consumption, hotWaterSeriesKey } = chart;
+  useEffect(() => {
+    if (!trace) return;
+    trace.record({
+      event: 'chart_rendered',
+      ...planTraceIdentity(current, reportedRuntime),
+      plan_id: plan.plan_id,
+      issued_at: plan.issued_at,
+      chart: describePlanChart({
+        plan, rows: panelRows, series: consumption.series, baseValues: consumption.baseValues,
+        dayWindow, timeZone: homeTimeZone, poolHeaterKeys: new Set(poolHeaterKeys), hotWaterKey: hotWaterSeriesKey,
+      }),
+    });
+  }, [trace, current, reportedRuntime, plan, panelRows, consumption, dayWindow, homeTimeZone, poolHeaterKeys, hotWaterSeriesKey]);
   // A room is drawn in its heater's band colour, so the line and the energy
   // that moved it read as one thing.
   const roomLines = useMemo((): EnergyRoomLine[] => rooms.map(room => ({
