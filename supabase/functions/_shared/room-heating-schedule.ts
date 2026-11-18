@@ -31,6 +31,6 @@ export interface RoomHeatingPlan {
 
 export const MAX_ROOM_RELAYS = 4;
 /** The search runs in the existing native kernel, including during admission. */
-export function planRoomHeating(startC: number, thermostats: readonly RoomThermostat[], quarters: RoomQuarter[], startDeliveredW = 0, trace?: PlanningTrace): RoomHeatingPlan {
-  return nativePlanner(trace).room({ start_c: startC, start_delivered_w: startDeliveredW, thermostats, quarters }, trace);
+export function planRoomHeating(startC: number, thermostats: readonly RoomThermostat[], quarters: RoomQuarter[], startStoredHeatC = 0, trace?: PlanningTrace): RoomHeatingPlan {
+  return nativePlanner(trace).room({ start_c: startC, start_stored_heat_c: startStoredHeatC, thermostats, quarters }, trace);
 }

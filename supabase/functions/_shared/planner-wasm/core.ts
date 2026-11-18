@@ -260,7 +260,7 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
     }
   }
   return {
-    room(input: { start_c: number; start_delivered_w: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[] }, trace?: PlanningTrace): RoomHeatingPlan {
+    room(input: { start_c: number; start_stored_heat_c: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[] }, trace?: PlanningTrace): RoomHeatingPlan {
       const { outcome } = invoke(input, "planner_room", value => roomOutcome.parse(value), trace);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
       const plan = outcome.plan as RoomHeatingPlan;

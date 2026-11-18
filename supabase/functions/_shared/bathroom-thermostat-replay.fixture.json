@@ -91,7 +91,7 @@
       18
     ],
     "rated_power_w": 834.5999999999999,
-    "start_delivered_w": 0,
+    "start_stored_heat_c": 0,
     "unplanned_power_w": [
       0,
       0,

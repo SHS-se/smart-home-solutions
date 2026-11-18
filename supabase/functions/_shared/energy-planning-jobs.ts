@@ -332,6 +332,7 @@ const compactPlanSummary = (
     planning_role: model.planning_role,
     control_type: model.control_type,
     active_power_w: model.active_power_w,
+    ...(model.running_power_model ? { running_power_model: model.running_power_model } : {}),
     profile_sample_count: model.profile_sample_count,
     forecast_method: model.forecast_method,
   })),

@@ -10,7 +10,7 @@ const model: ThermalZoneModel = { gain_c_per_wh: .001, cooling_constant_per_h: 0
   r2: 1, sample_count: 1000, residual_std_c: 0 };
 const quarter = (hours = .25, thermal = model) => { const steps = Math.ceil(hours * 60); return { hours, steps,
   step: roomTransition(thermal, { hours: hours / steps, outdoor_c: 0, background_c_per_h: thermal.background_gain_c_per_h }) }; };
-const state = (t = 21, mask = 0): ThermostatRoomState => ({ temperature_c: t, delivered_w: 0, heating_mask: mask });
+const state = (t = 21, mask = 0): ThermostatRoomState => ({ temperature_c: t, stored_heat_c: 0, heating_mask: mask });
 
 Deno.test("native rounding preserves nearest supported step and halves up", () => {
   for (const [target, expected] of [[21.46, 21], [21.5, 22], [22.5, 23], [20.4, 20], [20.6, 21]]) {
@@ -44,11 +44,11 @@ Deno.test("cycling power is integrated and short first quarters use their real d
 });
 Deno.test("delayed heat continues after the thermostat stops and rack energy stays separate", () => {
   const thermal = { ...model, heat_lag_h: 2 };
-  const start = { ...state(), delivered_w: 686.3 };
+  const start = { ...state(), stored_heat_c: 686.3 * thermal.gain_c_per_wh * thermal.heat_lag_h };
   const projected = projectThermostatQuarter(quarter(.25, thermal), [thermostat], start, [21], 150);
   assertEquals(projected.thermostat_w, [0]);
   assert(projected.state.temperature_c > 21);
-  assert(projected.state.delivered_w < 686.3 && projected.state.delivered_w > 150);
+  assert(projected.state.stored_heat_c < 686.3 * .002 && projected.state.stored_heat_c > 150 * .002);
 });
 
 Deno.test("native and reference room projections use each quarter's outdoor-conditioned draw", () => {
@@ -68,5 +68,32 @@ Deno.test("native and reference room projections use each quarter's outdoor-cond
     assertAlmostEquals(native.thermostat_w[i][0], reference.thermostat_w[0]);
     assertAlmostEquals(native.temperature_c[i], reference.state.temperature_c);
     previous = reference.state;
+  }
+});
+
+Deno.test("native quarter planning conserves heat through independently fitted gain and lag bands", () => {
+  // Independently generated synthetic bands. No losses: cumulative input plus
+  // initial stored heat must equal room temperature plus remaining stored heat.
+  const bands = [
+    { ...model, heat_lag_h: 2, gain_c_per_wh: .001 },
+    { ...model, heat_lag_h: .3, gain_c_per_wh: .004 },
+    { ...model, heat_lag_h: 0, gain_c_per_wh: .002 },
+    { ...model, heat_lag_h: 1, gain_c_per_wh: .003 },
+  ];
+  const heater = { ...thermostat, power_w: 500 };
+  const quarters: RoomQuarter[] = bands.map(band => ({
+    ...quarter(.25, band), transition: roomTransition(band, { hours: .25, outdoor_c: 0, background_c_per_h: 0 }),
+    required_c: 19, maximum_c: 30, maximum_w: 1000, relay_w: [], fixed_relays: [], fixed_targets_c: [30],
+    import_sek_per_kwh: 1, export_sek_per_kwh: 1, surplus_w: 0,
+  }));
+  const initial = { ...state(19), stored_heat_c: .6 };
+  const native = planRoomHeating(19, [heater], quarters, initial.stored_heat_c);
+  let current = initial, energy = 19.6;
+  for (const [i, q] of quarters.entries()) {
+    current = projectThermostatQuarter(q, [heater], current, [30], 0).state;
+    energy += bands[i].gain_c_per_wh * heater.power_w * .25;
+    assertAlmostEquals(current.temperature_c + current.stored_heat_c, energy, 1e-10);
+    assertAlmostEquals(native.temperature_c[i], current.temperature_c, 1e-10);
+    assertAlmostEquals(native.thermostat_w[i][0], heater.power_w, 1e-10);
   }
 });

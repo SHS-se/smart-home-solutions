@@ -1,3 +1,4 @@
+import { roomMeanObservation } from "./observation.ts";
 /** Room thermal response only. No fitting, electrical capabilities, prices or policy. */
 export const SLOT_HOURS = 0.25;
 
@@ -72,21 +73,16 @@ export interface RoomConditions {
   background_c_per_h: number;
 }
 
-/**
- * One quarter's exact transition under constant heater power P:
- *
- *   next T = decay·T + offset_c + delivered_gain_c_per_w·D + gain_c_per_w·P
- *   next D = carry·D + (1 − carry)·P
- *
- * D is the heat already on its way through the delay, in watts. Without a
- * delay `carry` and `delivered_gain_c_per_w` are zero and D plays no part, so
- * every caller can carry it whether or not the room has one.
- */
+/** Exact constant-input transition. Q is stored temperature-equivalent heat,
+ * independent of the gain or lag chosen for the next forecast interval.
+ * next T = decay*T + offset + stored_heat_release*Q + gain_c_per_w*P
+ * next Q = carry*Q + stored_heat_gain_c_per_w*P */
 export interface RoomTransition {
   decay: number;
   offset_c: number;
-  delivered_gain_c_per_w: number;
+  stored_heat_release: number;
   gain_c_per_w: number;
+  stored_heat_gain_c_per_w: number;
   carry: number;
 }
 
@@ -100,36 +96,39 @@ export function roomTransition(model: ThermalZoneModel, conditions: RoomConditio
     throw new Error("a house-coupled room needs the house temperature");
   }
   const coupling = model.cooling_constant_per_h + house;
-  const decay = Math.exp(-coupling * hours);
-  const effect = coupling > 0 ? -Math.expm1(-coupling * hours) / coupling : hours;
+  const lag = Math.max(0, model.heat_lag_h ?? 0);
+  const op = roomMeanObservation(coupling, lag, hours);
   const offset_c = (model.cooling_constant_per_h * conditions.outdoor_c +
-    (house > 0 ? house * conditions.house_c! : 0) + conditions.background_c_per_h) * effect;
-  const lag = model.heat_lag_h ?? 0;
-  const gain = model.gain_c_per_wh * effect;
-  if (!(lag > 0)) return { decay, offset_c, delivered_gain_c_per_w: 0, gain_c_per_w: gain, carry: 0 };
-  const carry = Math.exp(-hours / lag);
-  // The quarter's mean delivered heat is share·D + (1 − share)·P.
-  const share = hours > 0 ? lag / hours * -Math.expm1(-hours / lag) : 1;
-  return { decay, offset_c, delivered_gain_c_per_w: gain * share, gain_c_per_w: gain * (1 - share), carry };
+    (house > 0 ? house * conditions.house_c! : 0) + conditions.background_c_per_h) * op.effect;
+  const gain = model.gain_c_per_wh;
+  return {
+    decay: op.a, offset_c,
+    // At zero lag existing stored heat is released at the interval's start.
+    // A zero-duration capture is the identity, including at a band boundary.
+    stored_heat_release: hours === 0 ? 0 : lag > 0 ? op.B / lag : op.a,
+    gain_c_per_w: gain * (op.effect - op.B),
+    stored_heat_gain_c_per_w: lag > 0 ? gain * lag * -Math.expm1(-hours / lag) : 0,
+    carry: op.C,
+  };
 }
 
 export interface RoomState {
   temperature_c: number;
-  /** Heat on its way through the delay, W. */
-  delivered_w: number;
+  /** Unreleased temperature-equivalent heat, °C; conserved across model changes. */
+  stored_heat_c: number;
 }
 
 export const stepRoom = (transition: RoomTransition, state: RoomState, watts: number): RoomState => ({
   temperature_c: transition.decay * state.temperature_c + transition.offset_c +
-    transition.delivered_gain_c_per_w * state.delivered_w + transition.gain_c_per_w * watts,
-  delivered_w: transition.carry * state.delivered_w + (1 - transition.carry) * watts,
+    transition.stored_heat_release * state.stored_heat_c + transition.gain_c_per_w * watts,
+  stored_heat_c: transition.carry * state.stored_heat_c + transition.stored_heat_gain_c_per_w * watts,
 });
 
 /** The delayed heat a room's recent power has built up, oldest quarter first. */
-export function deliveredHeat(model: ThermalZoneModel, recentQuarterW: readonly number[]): number {
+export function storedHeat(model: ThermalZoneModel, recentQuarterW: readonly number[]): number {
   const lag = model.heat_lag_h ?? 0;
   if (!(lag > 0)) return 0;
-  return deliveredHeatAtLag(lag, recentQuarterW);
+  return model.gain_c_per_wh * lag * deliveredHeatAtLag(lag, recentQuarterW);
 }
 
 function deliveredHeatAtLag(lag: number, recentQuarterW: readonly number[]): number {
@@ -157,7 +156,7 @@ export function passiveHeatRates(
 
 export interface RoomProjectionContext {
   house_c?: (number | null)[] | null;
-  start_delivered_w?: number | null;
+  start_stored_heat_c?: number | null;
   passive_heat_c_per_h?: readonly number[];
   model_by_quarter?: readonly ThermalZoneModel[];
 }
@@ -190,7 +189,7 @@ export function projectZoneTemperature(
   context: RoomProjectionContext = {},
 ): number[] {
   const projection: number[] = [];
-  let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
+  let state: RoomState = { temperature_c: startTemperatureC, stored_heat_c: context.start_stored_heat_c ?? 0 };
   for (let index = 0; index < outdoorC.length; index += 1) {
     const physics = context.model_by_quarter?.[index] ?? model;
     projection.push(Math.round(state.temperature_c * 1000) / 1000);

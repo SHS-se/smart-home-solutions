@@ -9,6 +9,7 @@ import { fitRoomMeans, type RoomMeanQuarter, type RoomLearningEvidence } from ".
 import { fitRoomWithPassiveHeat, type PassiveHeatScores } from "./device-learning/room/passive-heat.ts";
 import { fitThermalZoneFromMoments, type ThermalFitResult, type ThermalMoments } from "./device-learning/room/regression.ts";
 import { projectZoneTemperature, type PassiveRoomHeat, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import type { ProbeEvidence } from "./device-learning/room/source-freshness.ts";
 
 export const REFIT_INTERVAL_HOURS = 24;
 /**
@@ -73,7 +74,12 @@ export interface ThermalQuarterRow {
   active_power_w: number | null;
   start_ts: string;
   room_temperature_c: number | null;
-  cooling: boolean;
+  cooling: boolean | null;
+  duration_s?: 900 | 3600;
+  source?: string;
+  heat_attributed?: boolean;
+  temperature_source_key?: string | null;
+  probe_evidence?: ProbeEvidence[] | null;
   outdoor_temperature_c: number | null;
   solar_w_per_m2: number | null;
   house_temperature_c: number | null;
@@ -91,7 +97,9 @@ export const thermalQuarter = (row: ThermalQuarterRow): RoomMeanQuarter => ({
   house_c: reading(row.house_temperature_c),
   solar_w_per_m2: reading(row.solar_w_per_m2),
   heat_w: reading(row.heat_w),
-  cooling: row.cooling === true,
+  cooling: row.cooling,
+  duration_s: row.duration_s ?? 900,
+  heat_attributed: row.heat_attributed ?? false,
 });
 
 /** Recorder temperatures are interval means; select each room by held-out transitions. */
@@ -224,7 +232,7 @@ export interface ProjectionZoneInput {
   /** Latest observed room temperature, the trajectory's starting point. */
   start_temperature_c: number;
   /** Heater heat already on its way through the room's delay, W. */
-  start_delivered_w?: number | null;
+  start_stored_heat_c?: number | null;
   rated_power_w: number;
   /** Slot-aligned comfort series from the portal-owned weekly routine. */
   comfort_min_c: number[];
@@ -329,7 +337,7 @@ export function buildThermalProjection(
         planned,
         solar,
         undefined,
-        { house_c: houseC?.slice(0, length), start_delivered_w: zone.start_delivered_w },
+        { house_c: houseC?.slice(0, length), start_stored_heat_c: zone.start_stored_heat_c },
       ),
       unplanned_temperature_c: projectZoneTemperature(
         zone.model,
@@ -338,7 +346,7 @@ export function buildThermalProjection(
         unplanned,
         solar,
         undefined,
-        { house_c: houseC?.slice(0, length), start_delivered_w: zone.start_delivered_w },
+        { house_c: houseC?.slice(0, length), start_stored_heat_c: zone.start_stored_heat_c },
       ),
       planned_power_w: planned,
       unplanned_power_w: unplanned,

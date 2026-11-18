@@ -14,7 +14,7 @@ function room(model = TRUTH, noise = 0.01): RoomTrainingQuarter[] {
   let seed = 7;
   const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5;
   const rows: RoomTrainingQuarter[] = [];
-  let state: RoomState = { temperature_c: 20, delivered_w: 0 };
+  let state: RoomState = { temperature_c: 20, stored_heat_c: 0 };
   for (let k = 0; k < DAYS * 96; k++) {
     const hour = (k % 96) / 4;
     const house = hour >= 22 || hour < 5 ? 21.4 : 22.6;

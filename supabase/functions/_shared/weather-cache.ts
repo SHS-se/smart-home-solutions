@@ -62,6 +62,8 @@ export async function cachedProviderPoints(options: {
    * more, so the request names the home's own point and not a neighbour's.
    */
   decimals?: number;
+  /** A successful archive query can explicitly contain no available points. */
+  cacheEmpty?: boolean;
   fetchPoints: (
     latitude: number,
     longitude: number,
@@ -89,7 +91,7 @@ export async function cachedProviderPoints(options: {
     }
 
     const fresh = await fetchPoints(latitude, longitude);
-    if (!fresh || fresh.points.length === 0) return null;
+    if (!fresh || (fresh.points.length === 0 && !options.cacheEmpty)) return null;
     const { error } = await supabase
       .from("energy_outdoor_forecast_cache")
       .upsert({

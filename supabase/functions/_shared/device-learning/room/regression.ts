@@ -91,6 +91,7 @@ export interface ThermalTrainingSample {
 }
 
 export type ThermalFitRejection =
+  | "response_unresolved"
   | "insufficient_samples"
   | "insufficient_heating"
   | "singular"

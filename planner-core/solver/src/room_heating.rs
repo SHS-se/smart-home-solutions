@@ -52,7 +52,7 @@ fn room_device_target(
 #[derive(Deserialize)]
 pub struct Input {
     start_c: f64,
-    start_delivered_w: f64,
+    start_stored_heat_c: f64,
     thermostats: Vec<Thermostat>,
     quarters: Vec<Quarter>,
 }
@@ -122,14 +122,16 @@ fn physics_key(q: &Quarter) -> Vec<u64> {
         q.physics.steps as u64,
         q.physics.step.decay.to_bits(),
         q.physics.step.offset_c.to_bits(),
-        q.physics.step.delivered_gain_c_per_w.to_bits(),
+        q.physics.step.stored_heat_release.to_bits(),
         q.physics.step.gain_c_per_w.to_bits(),
         q.physics.step.carry.to_bits(),
+        q.physics.step.stored_heat_gain_c_per_w.to_bits(),
         q.transition.decay.to_bits(),
         q.transition.offset_c.to_bits(),
-        q.transition.delivered_gain_c_per_w.to_bits(),
+        q.transition.stored_heat_release.to_bits(),
         q.transition.gain_c_per_w.to_bits(),
         q.transition.carry.to_bits(),
+        q.transition.stored_heat_gain_c_per_w.to_bits(),
     ];
     key.extend(q.relay_w.iter().map(|w| w.to_bits()));
     if let Some(power) = &q.thermostat_power_w {
@@ -207,7 +209,7 @@ struct Grid {
     low: f64,
     step: f64,
     temperatures: usize,
-    delivered_step: f64,
+    stored_heat_step: f64,
     points: usize,
     masks: usize,
 }
@@ -218,7 +220,7 @@ impl Grid {
             .min((self.temperatures - 1) as f64);
         let ti = (tp.floor() as usize).min(self.temperatures - 2);
         let dp = if self.points > 1 {
-            (state.delivered / self.delivered_step)
+            (state.stored_heat / self.stored_heat_step)
                 .max(0.)
                 .min((self.points - 1) as f64)
         } else {
@@ -650,22 +652,24 @@ fn reachable_rows(input: &Input, grid: &Grid, top: f64) -> Option<Vec<Option<(us
         let total = heater_w + before.relay_w.iter().sum::<f64>();
         // Written so that a NaN fails the test.
         if !(s.decay >= 0.
-            && s.delivered_gain_c_per_w >= 0.
+            && s.stored_heat_release >= 0.
             && s.gain_c_per_w >= 0.
             && total >= 0.
-            && top >= total
-            && input.start_delivered_w >= 0.)
+            && s.stored_heat_gain_c_per_w >= 0.
+            && s.carry >= 0.
+            && s.carry <= 1.
+            && input.start_stored_heat_c >= 0.)
         {
             return None;
         }
         let idle = State {
             temperature: coldest,
-            delivered: 0.,
+            stored_heat: 0.,
             mask: 0,
         };
         let heated = State {
             temperature: warmest,
-            delivered: top,
+            stored_heat: top,
             mask: 0,
         };
         let passive = temperature(s, idle, 0.) - SLACK_C;
@@ -693,7 +697,7 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
 fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Option<Plan>, String> {
     let Input {
         start_c,
-        start_delivered_w,
+        start_stored_heat_c,
         thermostats,
         quarters,
     } = input;
@@ -718,23 +722,28 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     low -= 2.;
     let delayed = quarters.iter().any(|q| q.transition.carry > 0.);
     let base_thermostat_w = thermostats.iter().map(|t| t.power_w).sum::<f64>();
-    let thermostat_w = quarters
-        .iter()
-        .filter_map(|q| q.thermostat_power_w.as_ref())
-        .map(|power| power.iter().sum())
-        .fold(base_thermostat_w, f64::max);
-    let top = start_delivered_w.max(
-        thermostat_w
-            + quarters
-                .iter()
-                .map(|q| q.relay_w.iter().sum::<f64>())
-                .fold(0., f64::max),
-    );
+    // The stored-heat coordinate is °C, never watts. Its monotone full-power
+    // envelope bounds every reachable state even when gain/lag change by band.
+    let mut stored_heat = *start_stored_heat_c;
+    let mut top = stored_heat;
+    for q in quarters {
+        let power = q.thermostat_power_w.as_ref()
+            .map_or(base_thermostat_w, |w| w.iter().sum())
+            + q.relay_w.iter().sum::<f64>();
+        stored_heat = q.transition.carry * stored_heat
+            + q.transition.stored_heat_gain_c_per_w * power;
+        top = top.max(stored_heat);
+        // Include each interval's full-power equilibrium so interpolation
+        // at the upper grid point cannot clip the following storage step.
+        if q.transition.carry < 1. {
+            top = top.max(q.transition.stored_heat_gain_c_per_w * power / (1. - q.transition.carry));
+        }
+    }
     let relay_only = !thermostats.is_empty() && thermostats.iter().all(|t| t.relay);
     let points = if !delayed || top == 0. {
         1
     } else if relay_only {
-        // Binary relays use a smaller delivered-heat grid. The forward pass
+        // Binary relays use a smaller stored_heat-heat grid. The forward pass
         // still carries the actual continuous heat and projects each switch.
         4
     } else {
@@ -749,7 +758,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
         low,
         step,
         temperatures: (((high + 2. - low) / step).ceil() as usize + 1).max(2),
-        delivered_step: if points > 1 {
+        stored_heat_step: if points > 1 {
             top / (points - 1) as f64
         } else {
             0.
@@ -811,7 +820,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
                     search.memo.cursor = (t * points + d) * grid.masks + mask;
                     let state = State {
                         temperature: low + t as f64 * step,
-                        delivered: d as f64 * grid.delivered_step,
+                        stored_heat: d as f64 * grid.stored_heat_step,
                         mask,
                     };
                     let q = &quarters[i];
@@ -832,7 +841,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     let mut result = Plan::default();
     let mut state = State {
         temperature: *start_c,
-        delivered: *start_delivered_w,
+        stored_heat: *start_stored_heat_c,
         mask: thermostats
             .iter()
             .enumerate()
@@ -968,7 +977,7 @@ mod tests {
             low: 0.,
             step: 0.1,
             temperatures: 400,
-            delivered_step: 0.,
+            stored_heat_step: 0.,
             points: 1,
             masks: 1,
         };

@@ -23,15 +23,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -52,15 +54,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -81,15 +85,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -110,15 +116,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -139,15 +147,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -168,15 +178,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -197,15 +209,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -226,15 +240,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -255,15 +271,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -284,15 +302,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -313,15 +333,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -342,15 +364,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -371,15 +395,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -400,15 +426,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -429,15 +457,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -458,15 +488,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -487,15 +519,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -516,15 +550,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -545,15 +581,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -574,15 +612,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -603,15 +643,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -632,15 +674,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -661,15 +705,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -690,15 +736,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -719,15 +767,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -748,15 +798,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -777,15 +829,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -806,15 +860,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -835,15 +891,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -864,15 +922,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -893,15 +953,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -922,15 +984,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -946,7 +1010,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -1307,15 +1371,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1340,15 +1406,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1373,15 +1441,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1406,15 +1476,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1439,15 +1511,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1472,15 +1546,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1505,15 +1581,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1538,15 +1616,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1571,15 +1651,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1604,15 +1686,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1637,15 +1721,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1670,15 +1756,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1703,15 +1791,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1736,15 +1826,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1769,15 +1861,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1802,15 +1896,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1835,15 +1931,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1868,15 +1966,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1901,15 +2001,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1934,15 +2036,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -1967,15 +2071,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2000,15 +2106,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2033,15 +2141,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2066,15 +2176,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2099,81 +2211,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
-            "carry": 0
-          },
-          "required_c": 22,
-          "maximum_c": 22.5,
-          "maximum_w": 2000,
-          "relay_w": [
-            150
-          ],
-          "fixed_relays": [
-            null
-          ],
-          "fixed_targets_c": [
-            null
-          ],
-          "import_sek_per_kwh": 1,
-          "export_sek_per_kwh": 0.1,
-          "surplus_w": 0
-        },
-        {
-          "hours": 0.25,
-          "steps": 15,
-          "transition": {
-            "decay": 0.9950124791926823,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.00024937604036588435,
-            "carry": 0
-          },
-          "step": {
-            "decay": 0.9996667222160499,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.000016663889197505147,
-            "carry": 0
-          },
-          "required_c": 22,
-          "maximum_c": 22.5,
-          "maximum_w": 2000,
-          "relay_w": [
-            150
-          ],
-          "fixed_relays": [
-            null
-          ],
-          "fixed_targets_c": [
-            null
-          ],
-          "import_sek_per_kwh": 1,
-          "export_sek_per_kwh": 0.1,
-          "surplus_w": 0
-        },
-        {
-          "hours": 0.25,
-          "steps": 15,
-          "transition": {
-            "decay": 0.9950124791926823,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.00024937604036588435,
-            "carry": 0
-          },
-          "step": {
-            "decay": 0.9996667222160499,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2198,15 +2246,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2231,15 +2281,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2264,15 +2316,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2297,15 +2351,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2330,15 +2386,87 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "required_c": 22,
+          "maximum_c": 22.5,
+          "maximum_w": 2000,
+          "relay_w": [
+            150
+          ],
+          "fixed_relays": [
+            null
+          ],
+          "fixed_targets_c": [
+            null
+          ],
+          "import_sek_per_kwh": 1,
+          "export_sek_per_kwh": 0.1,
+          "surplus_w": 0
+        },
+        {
+          "hours": 0.25,
+          "steps": 15,
+          "transition": {
+            "decay": 0.9950124791926823,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "step": {
+            "decay": 0.9996667222160499,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "required_c": 22,
+          "maximum_c": 22.5,
+          "maximum_w": 2000,
+          "relay_w": [
+            150
+          ],
+          "fixed_relays": [
+            null
+          ],
+          "fixed_targets_c": [
+            null
+          ],
+          "import_sek_per_kwh": 1,
+          "export_sek_per_kwh": 0.1,
+          "surplus_w": 0
+        },
+        {
+          "hours": 0.25,
+          "steps": 15,
+          "transition": {
+            "decay": 0.9950124791926823,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "step": {
+            "decay": 0.9996667222160499,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -2358,7 +2486,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -2783,15 +2911,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2816,15 +2946,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2849,15 +2981,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2882,15 +3016,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2915,15 +3051,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2948,15 +3086,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -2981,15 +3121,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3014,15 +3156,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3047,15 +3191,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3080,15 +3226,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3113,15 +3261,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3146,15 +3296,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3179,15 +3331,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3212,15 +3366,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3245,15 +3401,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3278,15 +3436,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3311,15 +3471,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3344,15 +3506,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3377,15 +3541,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3410,15 +3576,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3443,15 +3611,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3476,15 +3646,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3509,15 +3681,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -3542,15 +3716,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3575,15 +3751,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3608,15 +3786,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3641,15 +3821,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3674,15 +3856,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3707,15 +3891,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3740,15 +3926,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3773,15 +3961,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3806,15 +3996,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -3834,7 +4026,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -4259,15 +4451,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4288,15 +4482,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4317,15 +4513,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4346,15 +4544,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4375,15 +4575,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4404,15 +4606,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4433,15 +4637,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4462,15 +4668,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4491,15 +4699,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4520,15 +4730,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4549,15 +4761,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4578,15 +4792,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4607,15 +4823,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4636,15 +4854,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4665,15 +4885,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4694,15 +4916,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4723,15 +4947,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4752,15 +4978,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4781,15 +5009,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4810,15 +5040,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4839,15 +5071,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4868,15 +5102,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4897,15 +5133,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -4926,15 +5164,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -4955,15 +5195,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -4984,15 +5226,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5013,15 +5257,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5042,15 +5288,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5071,15 +5319,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5100,15 +5350,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5129,15 +5381,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5158,15 +5412,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 22,
@@ -5182,7 +5438,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -5554,15 +5810,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5584,15 +5842,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5614,15 +5874,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5644,15 +5906,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5674,15 +5938,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5704,15 +5970,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5734,15 +6002,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5764,15 +6034,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5794,15 +6066,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5824,15 +6098,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5854,15 +6130,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5884,15 +6162,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5914,15 +6194,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5944,15 +6226,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -5974,15 +6258,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6004,15 +6290,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6034,15 +6322,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6064,15 +6354,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6094,15 +6386,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6124,15 +6418,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6154,15 +6450,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6184,15 +6482,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6214,15 +6514,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6244,15 +6546,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6274,75 +6578,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
-            "carry": 0
-          },
-          "required_c": 22,
-          "maximum_c": 22.5,
-          "maximum_w": 2000,
-          "relay_w": [],
-          "fixed_relays": [],
-          "fixed_targets_c": [
-            null,
-            null
-          ],
-          "import_sek_per_kwh": 1,
-          "export_sek_per_kwh": 0.1,
-          "surplus_w": 0
-        },
-        {
-          "hours": 0.25,
-          "steps": 15,
-          "transition": {
-            "decay": 0.9950124791926823,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.00024937604036588435,
-            "carry": 0
-          },
-          "step": {
-            "decay": 0.9996667222160499,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.000016663889197505147,
-            "carry": 0
-          },
-          "required_c": 22,
-          "maximum_c": 22.5,
-          "maximum_w": 2000,
-          "relay_w": [],
-          "fixed_relays": [],
-          "fixed_targets_c": [
-            null,
-            null
-          ],
-          "import_sek_per_kwh": 1,
-          "export_sek_per_kwh": 0.1,
-          "surplus_w": 0
-        },
-        {
-          "hours": 0.25,
-          "steps": 15,
-          "transition": {
-            "decay": 0.9950124791926823,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.00024937604036588435,
-            "carry": 0
-          },
-          "step": {
-            "decay": 0.9996667222160499,
-            "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
-            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6364,15 +6610,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6394,15 +6642,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6424,15 +6674,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6454,15 +6706,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6484,15 +6738,81 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "required_c": 22,
+          "maximum_c": 22.5,
+          "maximum_w": 2000,
+          "relay_w": [],
+          "fixed_relays": [],
+          "fixed_targets_c": [
+            null,
+            null
+          ],
+          "import_sek_per_kwh": 1,
+          "export_sek_per_kwh": 0.1,
+          "surplus_w": 0
+        },
+        {
+          "hours": 0.25,
+          "steps": 15,
+          "transition": {
+            "decay": 0.9950124791926823,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "step": {
+            "decay": 0.9996667222160499,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "required_c": 22,
+          "maximum_c": 22.5,
+          "maximum_w": 2000,
+          "relay_w": [],
+          "fixed_relays": [],
+          "fixed_targets_c": [
+            null,
+            null
+          ],
+          "import_sek_per_kwh": 1,
+          "export_sek_per_kwh": 0.1,
+          "surplus_w": 0
+        },
+        {
+          "hours": 0.25,
+          "steps": 15,
+          "transition": {
+            "decay": 0.9950124791926823,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
+            "carry": 0
+          },
+          "step": {
+            "decay": 0.9996667222160499,
+            "offset_c": 0,
+            "stored_heat_release": 0.0,
+            "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -6509,7 +6829,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -6934,15 +7254,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6963,15 +7285,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -6992,15 +7316,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7021,15 +7347,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7050,15 +7378,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7079,15 +7409,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7108,15 +7440,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7137,15 +7471,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7166,15 +7502,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7195,15 +7533,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7224,15 +7564,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7253,15 +7595,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7282,15 +7626,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7311,15 +7657,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7340,15 +7688,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7369,15 +7719,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7398,15 +7750,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7427,15 +7781,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7456,15 +7812,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7485,15 +7843,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7514,15 +7874,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7543,15 +7905,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7572,15 +7936,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 18,
@@ -7601,15 +7967,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7630,15 +7998,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7659,15 +8029,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7688,15 +8060,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7717,15 +8091,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7746,15 +8122,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7775,15 +8153,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7804,15 +8184,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7833,15 +8215,17 @@
           "transition": {
             "decay": 0.9950124791926823,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.00024937604036588435,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "step": {
             "decay": 0.9996667222160499,
             "offset_c": 0,
-            "delivered_gain_c_per_w": 0,
+            "stored_heat_release": 0.0,
             "gain_c_per_w": 0.000016663889197505147,
+            "stored_heat_gain_c_per_w": 0,
             "carry": 0
           },
           "required_c": 22,
@@ -7857,7 +8241,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 0
+      "start_stored_heat_c": 0.0
     },
     "plan": {
       "power_w": [
@@ -8229,15 +8613,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3950414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026644456784981136,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8265,15 +8651,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3960414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026711123451647802,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8301,15 +8689,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.3970414075466773,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.02677779011831447,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8337,15 +8727,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.39804140754667733,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.026844456784981135,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8373,15 +8765,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.39904140754667733,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.0269111234516478,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8409,15 +8803,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.40004140754667733,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.02697779011831447,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8445,15 +8841,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.40104140754667733,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.027044456784981137,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8481,15 +8879,17 @@
           "transition": {
             "decay": 0.9753099120283326,
             "offset_c": 0.40204140754667733,
-            "delivered_gain_c_per_w": 0.0002320929449703789,
+            "stored_heat_release": 0.237663175649668,
             "gain_c_per_w": 0.00001480793474629445,
+            "stored_heat_gain_c_per_w": 0.000114749118569731,
             "carry": 0.8824969025845955
           },
           "step": {
             "decay": 0.9983347214509387,
             "offset_c": 0.027111123451647803,
-            "delivered_gain_c_per_w": 0.00001658359122410058,
+            "stored_heat_release": 0.016981597413478995,
             "gain_c_per_w": 6.919426651262907e-8,
+            "stored_heat_gain_c_per_w": 8.104206407347691e-06,
             "carry": 0.991701292638876
           },
           "required_c": 18,
@@ -8512,7 +8912,7 @@
           "surplus_w": 0
         }
       ],
-      "start_delivered_w": 400
+      "start_stored_heat_c": 0.390625
     },
     "plan": {
       "power_w": [

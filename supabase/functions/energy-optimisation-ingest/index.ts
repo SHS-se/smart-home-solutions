@@ -1,3 +1,4 @@
+import { ingestHeatingHistory } from "../_shared/heating-history-ingest.ts";
 import { classifyPlanningFailure, PlanningError } from "../_shared/planning-errors.ts";
 import { recordPlanningActivity } from '../_shared/planning-log.ts';
 import { readPlannerLocation, withPlannerLocation } from "../_shared/home-planning-location.ts";
@@ -375,6 +376,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     let prices: IncomingPriceSlot[] = [];
     let devices: IncomingDevice[] = [];
     let thermals: IncomingThermalSlot[] = [];
+    let nativeHeating: unknown;
+    let heatingProbeObservations: unknown;
     let pools: IncomingPoolSlot[] = [];
     let snapshot: OptimisationSnapshot | null = null;
     let deviceInventoryComplete = false;
@@ -474,6 +477,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       prices = body.price_slots ?? [];
       devices = body.devices ?? [];
       thermals = body.thermal_slots ?? [];
+      nativeHeating = body.heating_observations;
+      heatingProbeObservations = body.heating_probe_observations;
       pools = body.pool_slots ?? [];
       snapshot = body.snapshot ?? null;
       deviceInventoryComplete = body.device_inventory_complete ?? false;
@@ -518,7 +523,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     }
     if (
       actuals.length === 0 && snapshot === null && devices.length === 0 &&
-      thermals.length === 0 && prices.length === 0 && !deviceInventoryComplete
+      thermals.length === 0 && prices.length === 0 && !deviceInventoryComplete &&
+      !(Array.isArray(nativeHeating) && nativeHeating.length) &&
+      !(Array.isArray(heatingProbeObservations) && heatingProbeObservations.length)
     ) {
       return json({ error: "empty_body" }, 400);
     }
@@ -982,6 +989,15 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       }
     }
 
+    const heatingHistory = await ingestHeatingHistory(supabase, {
+      homeId: auth.homeId, customerId: auth.customerId,
+      fromMs: Math.floor((latestCompleteStart + SLOT_MS) / 3_600_000) * 3_600_000 - 400 * 86_400_000,
+      toMs: latestCompleteStart + SLOT_MS, observations: nativeHeating, probes: heatingProbeObservations,
+    });
+    for (const [reason, count] of Object.entries(heatingHistory.ignored)) {
+      for (let i = 0; i < count; i++) ignoreUpload(reason);
+    }
+
     // Pool water temperature: the state the pool is scheduled against, and the
     // training series for its loss coefficient and its heat pump's COP (§8.3).
     const poolRows: Record<string, unknown>[] = [];
@@ -1073,20 +1089,18 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     if (snapshot) {
       const owners = new Map<string, { kind: "room"; key: string; requested: boolean; input: {
         location: OptimisationSnapshot["location"] | null;
-        devices: { key: string; active_power_w: number | null }[];
       } }>();
       for (const device of storedDevices) {
         const room = roomMapping(device);
         if (!room) continue;
         const owner = owners.get(room.key) ?? { kind: "room" as const, key: room.key, requested: false,
-          input: { location: snapshot.location ?? null, devices: [] as { key: string; active_power_w: number | null }[] } };
+          input: { location: snapshot.location ?? null } };
         owner.requested ||= device.planning_role_override === "controllable" &&
           ["setpoint", "switch_schedule"].includes(device.control_type_override ?? "");
-        owner.input.devices.push({ key: device.key, active_power_w: device.active_power_w });
         owners.set(room.key, owner);
       }
       const unique = [...owners.values()].filter(owner => owner.requested).map(owner => ({ kind: owner.kind, key: owner.key,
-        input: { ...owner.input, devices: owner.input.devices.sort((a, b) => a.key.localeCompare(b.key)) } }));
+        input: owner.input }));
       const poolOwner = poolLearningOwner(snapshot.pool, snapshot.device_models);
       const deviceOwners = variablePowerLearningOwners(
         storedDevices.map(device => ({ key: device.key, control_type: device.control_type_override })),
@@ -1320,6 +1334,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
               actual_slots_accepted: actualRows.length,
               actuals_accepted_until: uploadedActuals.accepted_until,
               thermal_slots_accepted: thermalRows.length,
+              ...heatingHistory.exchange,
               thermal_slots_accepted_until: thermalAcceptedUntil,
               price_slots_accepted: priceRows.length,
               home_configuration: { battery: { included: homePlanning.battery_included, choice_at: homePlanning.battery_choice_at } },
@@ -1375,6 +1390,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       actual_slots_accepted: actualRows.length,
       actuals_accepted_until: uploadedActuals.accepted_until,
       thermal_slots_accepted: thermalRows.length,
+              ...heatingHistory.exchange,
       thermal_slots_accepted_until: thermalAcceptedUntil,
       price_slots_accepted: priceRows.length,
       plan_id: null,

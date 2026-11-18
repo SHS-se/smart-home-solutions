@@ -74,7 +74,7 @@ export function thermostatTargets(t: RoomThermostat, lowRoomC: number, highRoomC
  */
 export function projectThermostatQuarter(q: ThermostatQuarter, thermostats: readonly RoomThermostat[],
   initial: ThermostatRoomState, targets: readonly number[], relayW: number) {
-  let temperature = initial.temperature_c, delivered = initial.delivered_w, previousMask = initial.heating_mask;
+  let temperature = initial.temperature_c, delivered = initial.stored_heat_c, previousMask = initial.heating_mask;
   const step = q.step;
   const energy = thermostats.map(() => 0);
   const hours = q.steps > 0 ? q.hours / q.steps : 0;
@@ -94,9 +94,9 @@ export function projectThermostatQuarter(q: ThermostatQuarter, thermostats: read
       }
     }
     peakW = Math.max(peakW, watts);
-    temperature = step.decay * temperature + step.offset_c + step.delivered_gain_c_per_w * delivered + step.gain_c_per_w * watts;
-    delivered = step.carry * delivered + (1 - step.carry) * watts;
+    temperature = step.decay * temperature + step.offset_c + step.stored_heat_release * delivered + step.gain_c_per_w * watts;
+    delivered = step.carry * delivered + step.stored_heat_gain_c_per_w * watts;
     previousMask = mask;
   }
-  return { state: { temperature_c: temperature, delivered_w: delivered, heating_mask: previousMask }, thermostat_w: energy.map(wh => q.hours > 0 ? wh / q.hours : 0), peak_w: peakW };
+  return { state: { temperature_c: temperature, stored_heat_c: delivered, heating_mask: previousMask }, thermostat_w: energy.map(wh => q.hours > 0 ? wh / q.hours : 0), peak_w: peakW };
 }

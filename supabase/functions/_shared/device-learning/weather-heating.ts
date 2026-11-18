@@ -1,25 +1,27 @@
-import { heatingCurveAt, MAX_POINTS, WEATHER_HEATING_METHOD, type HeatingDrawBand, type WeatherHeatingProfile } from "../planner/weather-heating.ts";
+import { MAX_POINTS, WEATHER_HEATING_METHOD, type HeatingDrawBand, type WeatherHeatingProfile } from "../planner/weather-heating.ts";
 import { heatingBand, publishHeatingBand } from "../planner/heating-bands.ts";
-import { addPairedLoss, pairedImprovement, type PairedDay } from "./heating-comparison.ts";
 
 const BAND_C = 3;
 const DAY_MS = 86_400_000;
+export const WEATHER_HEATING_BAND_IMPLEMENTATION = "weather_heating_empirical_bands_v2";
 
 export interface HeatingDay {
   day: string;
   outdoor_c: number;
-  watts: number;
+  watts: number | null;
   hours: number;
+  evidence_updated_at?: string;
 }
 function median(values: number[]): number {
   values.sort((a, b) => a - b);
   const mid = Math.floor(values.length / 2);
   return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
 }
-const validDay = (row: HeatingDay) => Number.isFinite(row.outdoor_c) &&
-  Number.isFinite(row.watts) && row.watts > 0 && Number.isFinite(row.hours) && row.hours > 0;
+type MeasuredHeatingDay = HeatingDay & { watts: number };
+const validDay = (row: HeatingDay): row is MeasuredHeatingDay => Number.isFinite(row.outdoor_c) &&
+  typeof row.watts === "number" && Number.isFinite(row.watts) && row.watts > 0 && Number.isFinite(row.hours) && row.hours > 0;
 
-function heatingPoint(band: readonly HeatingDay[]) {
+function heatingPoint(band: readonly MeasuredHeatingDay[]) {
   const days = new Map<string, { wh: number; hours: number }>();
   let hours = 0, outdoorHours = 0, min = Infinity, max = -Infinity;
   for (const row of band) {
@@ -45,7 +47,7 @@ export function fitWeatherHeating(binding: string, observations: readonly Heatin
   const warmest = valid.reduce((max, row) => Math.max(max, row.outdoor_c), -Infinity);
   const first = Math.floor(coldest / BAND_C) * BAND_C;
   const width = Math.max(BAND_C, (warmest - first) / MAX_POINTS);
-  const bands = new Map<number, HeatingDay[]>();
+  const bands = new Map<number, MeasuredHeatingDay[]>();
   for (const row of valid) {
     const index = Math.min(MAX_POINTS - 1, Math.floor((row.outdoor_c - first) / width));
     const band = bands.get(index) ?? [];
@@ -64,50 +66,42 @@ export function advanceWeatherHeatingBands(
     points: [], versioned: { candidates: [], attempted: {} },
     ...(previous ? { reference: { revision: crypto.randomUUID(), points: previous.points } } : {}) };
   const state = profile.versioned!;
+  // An implementation change reconsiders every observed band without removing
+  // any accepted fit. Input expiry alone never advances a material revision.
+  const revisions = state.implementation === WEATHER_HEATING_BAND_IMPLEMENTATION ? state.evidence_updated_at ?? {} : {};
   const active = profile.points as HeatingDrawBand[];
-  const byBand = new Map<number, HeatingDay[]>();
+  const byBand = new Map<number, { rows: MeasuredHeatingDay[]; updatedAt: string }>();
   for (const row of observations) {
-    if (!validDay(row) || row.day >= completedDay) continue;
-    const key = heatingBand(row.outdoor_c);
-    const days = byBand.get(key) ?? [];
-    days.push(row);
-    byBand.set(key, days);
-  }
-  const next = [...byBand.entries()].map(([band, raw]) => {
-    const rows = raw.sort((a, b) => a.day.localeCompare(b.day));
-    return { band, rows, latest: rows.at(-1)!.day, previousAttempt: state.attempted[band] ?? "" };
-  }).filter(entry => entry.latest > entry.previousAttempt)
-    .sort((a, b) => a.previousAttempt.localeCompare(b.previousAttempt) || b.latest.localeCompare(a.latest))[0];
-  if (!next) return profile;
-  const { band, rows, latest } = next;
-  const attempted = { ...state.attempted, [band]: latest };
-  const incumbent = active.find(point => point.band_c === band);
-  const pending = state.candidates.find(point => point.band_c === band);
-  const others = state.candidates.filter(point => point !== pending);
-  if (pending) {
-    const losses = new Map<number, PairedDay>();
-    for (const row of rows) {
-      if (row.day < pending.training_to.slice(0, 10) ||
-        row.outdoor_c < pending.min_c || row.outdoor_c > pending.max_c) continue;
-      const existing = active.find(point => point.band_c === band && row.outdoor_c >= point.min_c && row.outdoor_c <= point.max_c)?.watts
-        ?? (profile.reference && heatingCurveAt(profile.reference.points, row.outdoor_c)?.watts);
-      if (existing != null) addPairedLoss(losses, Date.parse(row.day),
-        (row.watts - pending.watts) ** 2, (row.watts - existing) ** 2);
+    if (!Number.isFinite(row.outdoor_c) || !Number.isFinite(Date.parse(row.day)) || row.day >= completedDay) continue;
+    if (!row.evidence_updated_at || !Number.isFinite(Date.parse(row.evidence_updated_at))) {
+      throw new Error("Banded electrical evidence requires its material update timestamp");
     }
-    const result = pairedImprovement(losses);
-    const points = result === "better" ? publishHeatingBand(active, pending) : active;
-    return { ...profile, points, versioned: { attempted, candidates: result === "undecided" ? state.candidates : others } };
+    const key = heatingBand(row.outdoor_c);
+    const evidence = byBand.get(key) ?? { rows: [], updatedAt: row.evidence_updated_at };
+    if (validDay(row)) evidence.rows.push(row);
+    if (Date.parse(row.evidence_updated_at) > Date.parse(evidence.updatedAt)) evidence.updatedAt = row.evidence_updated_at;
+    byBand.set(key, evidence);
   }
-  const days = [...new Set(rows.map(row => row.day))];
-  const firstDay = days[incumbent ? Math.floor(days.length / 2) : 0];
-  const training = rows.filter(row => row.day >= firstDay);
-  const point = heatingPoint(training);
-  if (point.days < 2) return { ...profile, versioned: { ...state, attempted } };
+  const pending = [...byBand.entries()].filter(([band, evidence]) =>
+    Date.parse(evidence.updatedAt) > Date.parse(revisions[band] ?? "1970-01-01"))
+    .sort(([a, evidenceA], [b, evidenceB]) => Number(revisions[a] !== undefined) - Number(revisions[b] !== undefined) ||
+      Date.parse(revisions[a] ?? "1970-01-01") - Date.parse(revisions[b] ?? "1970-01-01") ||
+      Date.parse(evidenceB.updatedAt) - Date.parse(evidenceA.updatedAt) || a - b);
+  const versioned = { ...state, candidates: [], implementation: WEATHER_HEATING_BAND_IMPLEMENTATION,
+    evidence_updated_at: revisions, pending_bands: pending.length };
+  if (!pending.length) return { ...profile, versioned };
+  const [band, evidence] = pending[0];
+  const rows = evidence.rows.sort((a, b) => a.day.localeCompare(b.day));
+  const latest = rows.at(-1)?.day;
+  const attempted = { ...state.attempted, ...(latest ? { [band]: latest } : {}) };
+  const updated = { ...versioned, attempted, evidence_updated_at: { ...revisions, [band]: evidence.updatedAt },
+    pending_bands: pending.length - 1 };
+  // A withdrawn/missing input is not zero draw. Keep the published response
+  // when the measured running evidence cannot identify a replacement.
+  if (new Set(rows.map(row => row.day)).size < 2) return { ...profile, versioned: updated };
+  const point = heatingPoint(rows);
   const revision: HeatingDrawBand = { ...point, revision: crypto.randomUUID(), band_c: band,
-    observed_min_c: point.min_c, observed_max_c: point.max_c, training_from: new Date(firstDay).toISOString(),
-    training_to: new Date(Date.parse(latest) + DAY_MS).toISOString() };
-  const overlapsReference = profile.reference && point.max_c >= profile.reference.points[0].min_c &&
-    point.min_c <= profile.reference.points.at(-1)!.max_c;
-  return incumbent || overlapsReference ? { ...profile, versioned: { attempted, candidates: [...others, revision] } }
-    : { ...profile, points: [...active, revision].sort((a, b) => a.band_c - b.band_c), versioned: { ...state, attempted } };
+    observed_min_c: point.min_c, observed_max_c: point.max_c, training_from: new Date(rows[0].day).toISOString(),
+    training_to: new Date(Date.parse(latest!) + DAY_MS).toISOString() };
+  return { ...profile, points: publishHeatingBand(active, revision), versioned: updated };
 }

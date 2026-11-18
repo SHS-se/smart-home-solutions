@@ -23,7 +23,8 @@ export interface WeatherHeatingProfile {
   points: HeatingPoint[];
   banded?: true;
   reference?: { revision: string; points: HeatingPoint[] };
-  versioned?: { candidates: HeatingDrawBand[]; attempted: Record<string, string> };
+  versioned?: { candidates: HeatingDrawBand[]; attempted: Record<string, string>;
+    implementation?: string; evidence_updated_at?: Record<string, string>; pending_bands?: number };
 }
 
 export function readWeatherHeating(value: unknown, binding: string, allowEmpty = false): WeatherHeatingProfile | null {

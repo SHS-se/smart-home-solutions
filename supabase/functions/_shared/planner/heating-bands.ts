@@ -16,6 +16,8 @@ export interface HeatingBandRevision {
 
 export interface RoomHeatingBand extends HeatingBandRevision {
   model: ThermalZoneModel;
+  learning_evidence?: unknown;
+  warnings?: string[];
 }
 
 export interface RoomHeatingBands {
@@ -28,10 +30,21 @@ export interface RoomHeatingBands {
   // Frozen candidates are private learning state, never used for planning.
   candidates: RoomHeatingBand[];
   attempted: Record<string, string>;
+  window_attempts?: Record<string, string>;
+  window_last_attempted_at?: Record<string, string>;
+  window_solar_pending?: Record<string, boolean>;
+  window_evidence_updated_at?: Record<string, string>;
+  window_solar_progress?: Record<string, { from_at: string; through_at: string; to_at: string }>;
+  general_attempt?: { implementation: string; evidence_updated_at: string; from_at: string; to_at: string };
+  general_solar_pending?: boolean;
+  pending_windows?: number;
+  diagnostics?: Record<string, unknown>;
 }
 
 export interface RoomHeatingReference {
   model: ThermalZoneModel;
+  training_to?: string;
+  scope?: { kind: "general" } | { kind: "band"; band_c: number };
   passive_heat?: unknown;
   doorway_exchange?: unknown;
 }
@@ -46,7 +59,7 @@ export type HeatingModelSource =
   | { kind: "band"; band_c: number; revision: string }
   | { kind: "general"; revision: string | number | null }
   | { kind: "weather_curve"; revision: string | number | null; anchors_c: number[] }
-  | { kind: "running_power"; watts: number }
+  | { kind: "running_power"; watts: number; revision?: string; binding?: string }
   | { kind: "empirical" };
 
 export type HeatingModelRun = { from: number; through: number; source: HeatingModelSource };
@@ -76,9 +89,12 @@ export function roomHeatingBandAt(bands: readonly RoomHeatingBand[], outdoorC: n
 /** New fits take precedence in their measured range. Keep older evidence
  * for temperatures the new revision did not observe. */
 export function publishHeatingBand<T extends HeatingBandRevision>(active: readonly T[], candidate: T): T[] {
-  return [candidate, ...active.filter(point => point.band_c !== candidate.band_c ||
-    point.observed_min_c < candidate.observed_min_c || point.observed_max_c > candidate.observed_max_c)]
-    .sort((a, b) => a.band_c - b.band_c);
+  const ordered = [candidate, ...active.filter(point => point.revision !== candidate.revision)]
+    .sort((a, b) => a.band_c - b.band_c || Date.parse(b.training_to) - Date.parse(a.training_to) ||
+      Date.parse(b.training_from) - Date.parse(a.training_from));
+  return ordered.filter((point, index) => !ordered.slice(0, index).some(newer =>
+    newer.band_c === point.band_c && newer.observed_min_c <= point.observed_min_c &&
+    newer.observed_max_c >= point.observed_max_c));
 }
 
 export function formatHeatingRange(min: number, max: number, format: (value: number) => string) {
@@ -107,12 +123,4 @@ function readFits(points: RoomHeatingBand[]): RoomHeatingBand[] {
     const model = readThermalModel(point.model);
     return model ? [{ ...point, model }] : [];
   });
-}
-
-export function matchingRoomHeatingCoordinates(band: RoomHeatingBand, reference: ThermalZoneModel): boolean {
-  const lag = reference.heat_lag_h ?? 0;
-  const model = band.model;
-  return (model.heat_lag_h ?? 0) === lag &&
-    (model.house_coupling_per_h ?? 0) === (reference.house_coupling_per_h ?? 0) &&
-    (lag === 0 || model.gain_c_per_wh === reference.gain_c_per_wh);
 }

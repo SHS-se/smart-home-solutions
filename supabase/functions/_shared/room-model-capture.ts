@@ -6,7 +6,7 @@ import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning
 import type { DeviceModelBundle } from "./device-model-store.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { passiveHeatRates } from "./planner/models/room/thermal.ts";
+import { passiveHeatRates, roomTransition } from "./planner/models/room/thermal.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "./room-passive-heat-evidence.ts";
 import { ROOM_HISTORY_QUARTER_MS as SLOT_MS, roomHistoryWarning } from "./room-history-warnings.ts";
 import { readThermalModel } from "./planner/models/room/read-model.ts";
@@ -14,7 +14,7 @@ import { roomPlanningZones } from "./room-planning-zones.ts";
 import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
 import { classifyOutdoorSeries } from "./outdoor-forecast.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
-import { matchingRoomHeatingCoordinates, readRoomHeatingBands } from "./planner/heating-bands.ts";
+import { readRoomHeatingBands, roomHeatingBandAt } from "./planner/heating-bands.ts";
 
 /** Mapping has already been parsed at the transport boundary. */
 export interface RoomDeviceMapping {
@@ -32,6 +32,7 @@ interface RoomPlanningHistory {
   room_key: string;
   temperature_starts: number[];
   heater_quarters: [start: number, watts: number][];
+  outdoor_quarters?: [start: number, temperature_c: number][];
 }
 
 const recentQuarterStarts = (end: number): number[] => Array.from(
@@ -163,14 +164,14 @@ export function prepareRoomModels(
     "outdoor_estimate", "rooms", "Outdoor forecast coverage is incomplete.",
     "Room comfort commands remain active; electrical demand uses observed history where thermal projection is unavailable.")]);
 
-  const trainedByRoom = new Map((bundle?.rooms ?? []).filter(model => model.trained)
+  const fittedByRoom = new Map((bundle?.rooms ?? [])
     .map(model => [String(model.room_key), model]));
 
   // Current equipment joins the atomically captured model bundle. No device
   // capability or calibration is selected by the weather/price cache.
   const prepared: CapturedRoom[] = [];
   for (const room of rooms.values()) {
-    const fitted = trainedByRoom.get(room.key);
+    const fitted = fittedByRoom.get(room.key);
     const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
     const historical = starts.map((_start, i) => room.models.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
     const baselineCapW = Math.max(ratedPowerW, ...historical);
@@ -196,8 +197,11 @@ export function prepareRoomModels(
     const attempt = fitted?.last_fit_attempt as { issues?: string[]; passive_heat?: { status?: string } } | undefined;
     const heatingContext = bundle?.roomHeating?.[room.key];
     const library = readRoomHeatingBands(fitted?.heating_bands);
-    const compatible = library?.binding === heatingContext?.binding && library?.reference_revision != null;
-    const boundary = heatingContext ? library?.reference : undefined;
+    const compatible = !!heatingContext && library?.binding === heatingContext.binding;
+    // Independently fitted bands do not require an identified general response.
+    // A historical narrow reference must never become a general extrapolation.
+    const narrowReference = library?.reference?.scope?.kind === "band";
+    const boundary = heatingContext && !narrowReference ? library?.reference : undefined;
     const passive = readPassiveHeatModel(boundary ? boundary.passive_heat : fitted?.passive_heat);
     if (!passive && attempt?.passive_heat?.status === "awaiting_validation") {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
@@ -207,7 +211,8 @@ export function prepareRoomModels(
     if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
-    const model = readThermalModel(boundary?.model ?? fitted) ?? readThermalModel(fitted);
+    const model = readThermalModel(boundary?.model) ??
+      (fitted?.trained && !narrowReference ? readThermalModel(fitted) : null);
     if (heatingContext && model && library && !compatible) {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
         "room_heating_band_estimated", room.key, `${room.name}: heating sources changed.`,
@@ -216,8 +221,8 @@ export function prepareRoomModels(
     const doorway = readRoomDoorwayModel(boundary ? boundary.doorway_exchange : fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
-      ...(heatingContext ? { heating_bands: { reference_revision: library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null,
-        active: compatible && model ? library!.active.filter(band => matchingRoomHeatingCoordinates(band, model)) : [] } } : {}),
+      ...(heatingContext ? { heating_bands: { reference_revision: model ? library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null : null,
+        active: compatible ? library!.active : [] } } : {}),
       ...(doorway ? { doorway } : {}),
       ...(passive ? { passive_heat: passive } : {}),
       maximum_power_w_by_slot: summerLockout.map((locked, i) => locked ? 0 : Math.max(baselineCapW, weather?.[i] ?? 0)) });
@@ -237,7 +242,8 @@ export async function captureRoomPlanningState(
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
   const recentEnd = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
   const quarters = recentQuarterStarts(recentEnd);
-  const delayedRooms = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0);
+  const delayedRooms = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0 ||
+    room.heating_bands?.active.some(band => (band.model.heat_lag_h ?? 0) > 0));
   const captured = Date.parse(snapshot.captured_at);
   const passiveEnd = Math.floor(captured / SLOT_MS) * SLOT_MS;
   const passiveQuarters = recentQuarterStarts(passiveEnd);
@@ -295,18 +301,45 @@ export async function captureRoomPlanningState(
   const history = (recentResult.data ?? []) as RoomPlanningHistory[];
   const historyByRoom = new Map(history.map(row => [row.room_key, row]));
   const recent = new Map<string, number[]>();
+  const stored = new Map<string, number>();
   const historyWarnings: ReturnType<typeof planningWarning>[] = [];
   for (const room of delayedRooms) {
     const readings = historyByRoom.get(room.key);
-    if (!readings) continue;
-    const temperatureStarts = new Set(readings.temperature_starts);
-    const heaterWatts = new Map(readings.heater_quarters);
+    // A failed read already has its database warning; an empty successful read
+    // is missing observation coverage and still needs the room-specific note.
+    if (!readings && recentResult.error) continue;
+    const temperatureStarts = new Set(readings?.temperature_starts ?? []);
+    const heaterWatts = new Map(readings?.heater_quarters ?? []);
     // Missing pairs contribute the lower bound on heat still on its way into the room.
     recent.set(room.key, quarters.map(start => temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0));
+    const outdoor = new Map(readings?.outdoor_quarters ?? []);
+    const models = [...(room.model ? [room.model] : []), ...(room.heating_bands?.active.map(band => band.model) ?? [])];
+    const supportedOutdoor = new Map([...outdoor].filter(([, c]) => room.model ||
+      roomHeatingBandAt(room.heating_bands?.active ?? [], c)));
+    let heat = 0;
+    for (const start of quarters) {
+      const watts = temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0;
+      const c = outdoor.get(start);
+      const selected = c == null ? null : roomHeatingBandAt(room.heating_bands?.active ?? [], c)?.model ?? room.model;
+      // Without a general response, an uncovered historical interval has no
+      // identified storage dynamics. Nonnegative heat has the lower bound zero;
+      // subsequent covered intervals rebuild it without extrapolating a band.
+      if (!selected && !room.model) { heat = 0; continue; }
+      // Missing historical weather cannot manufacture warmth: the minimum
+      // across compatible responses is a lower bound, not a measured state.
+      heat = Math.min(...(selected ? [selected] : models).map(model => {
+        const step = roomTransition(model, { hours: SLOT_MS / 3_600_000, outdoor_c: 0,
+          house_c: 0, background_c_per_h: 0 });
+        return step.carry * heat + step.stored_heat_gain_c_per_w * watts;
+      }));
+    }
+    stored.set(room.key, heat);
+
     const warning = roomHistoryWarning(room, "room_heat_history_missing", quarters, [
       { label: "Room temperature", observed: temperatureStarts },
       { label: "Heater energy", observed: heaterWatts },
-    ], "The forecast estimates remaining warmth from quarters with both readings.", snapshot.timezone);
+      ...(room.heating_bands?.active.length ? [{ label: "Outdoor temperature with a supported response", observed: supportedOutdoor }] : []),
+    ], "The forecast counts measured heater energy and bounds remaining warmth where room or weather readings are missing.", snapshot.timezone);
     if (warning) historyWarnings.push(warning);
   }
   const passiveRates = new Map<string, number[]>();
@@ -342,7 +375,7 @@ export async function captureRoomPlanningState(
     }
   }
   const { zones, warnings } = roomPlanningZones(snapshot, rooms, {
-    schedules, temperature_c: temperature, recent_heat_w: recent, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
+    schedules, temperature_c: temperature, recent_heat_w: recent, stored_heat_c: stored, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
   });
   // Silent degradation is worse than none, so what was skipped is said out loud.
   if (warnings.length > 0) {

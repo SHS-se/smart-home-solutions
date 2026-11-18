@@ -17,7 +17,7 @@ export function projectRoomCycle(model: ThermalZoneModel, { startC, outdoorC, ho
     hours: SLOT_HOURS, outdoor_c: outdoorC, house_c: houseC,
     background_c_per_h: backgroundRateForSlot(model, 0, [0]),
   });
-  let state = { temperature_c: startC, delivered_w: 0 };
+  let state = { temperature_c: startC, stored_heat_c: 0 };
   const temperatures = [startC];
   for (let hour = 0; hour < SCENARIO_HOURS; hour += SLOT_HOURS) {
     state = stepRoom(transition, state, hour < HEATING_HOURS ? heaterW : 0);

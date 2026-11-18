@@ -222,7 +222,7 @@ Deno.test("cheap hours never park heat in the floor above the ceiling", () => {
 Deno.test("heat already in the floor at the start is counted", () => {
   const s = delayedBathroom(2);
   const cold = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1))).temperature.bathroom as number[];
-  s.thermal_zones![0].start_delivered_w = 2000;
+  s.thermal_zones![0].start_stored_heat_c = 2000 * s.thermal_zones![0].model!.gain_c_per_wh * 2;
   const warm = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1))).temperature.bathroom as number[];
   assert(warm[3] > cold[3] + .1, "a floor that was just heated keeps warming the room");
 });

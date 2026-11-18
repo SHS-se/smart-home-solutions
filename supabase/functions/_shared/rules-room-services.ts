@@ -191,7 +191,8 @@ function electricalSource(member: Member, draw: ReturnType<typeof heatingDraw>):
   const point = draw?.band;
   return point ? { kind: "band", band_c: point.band_c, revision: point.revision }
     : draw?.anchors_c ? { kind: "weather_curve", revision: draw.reference ?? member.weather_heating?.revision ?? null, anchors_c: draw.anchors_c }
-    : member.active_power_w != null ? { kind: "running_power", watts: member.active_power_w } : { kind: "empirical" };
+    : member.active_power_w != null ? { kind: "running_power", watts: member.active_power_w,
+      ...member.running_power_model } : { kind: "empirical" };
 }
 
 function retainedRoomTarget(slot: Retained[number] | undefined, zone: Zone): number | null {
@@ -276,9 +277,9 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
     thermal: heatingModelRuns(thermalUse),
     electrical: Object.fromEntries(controlled.map((member, i) => [member.key, heatingModelRuns(electricalUse[i])])),
   };
-  const plan = planRoomHeating(zone.start_temperature_c!, actuators, quarters, zone.start_delivered_w ?? 0, trace);
+  const plan = planRoomHeating(zone.start_temperature_c!, actuators, quarters, zone.start_stored_heat_c ?? 0, trace);
   let misses = 0, previousC = zone.start_temperature_c!;
-  let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, delivered_w: zone.start_delivered_w ?? 0, heating_mask: heatingMask(thermostats) };
+  let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, stored_heat_c: zone.start_stored_heat_c ?? 0, heating_mask: heatingMask(thermostats) };
   const debts = relays.map(() => 0);
   for (let i = 0; i < n; i++) {
     const q = quarters[i];

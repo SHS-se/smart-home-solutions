@@ -1021,6 +1021,7 @@ test.describe('requesting a replan', () => {
   test('room Model recomputes its heating cycle and directional doorway effects when the outdoor temperature changes', async ({ page, context }) => {
     // Synthetic coefficients and room names exercise the published fit contract.
     const key = 'synthetic-studio';
+    let generalAvailable = true;
     const fit = {
       trained: true, rejection_reason: null, sample_count: 812,
       gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
@@ -1034,7 +1035,7 @@ test.describe('requesting a replan', () => {
     }] }));
     await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => {
       expect(route.request().postDataJSON()).toEqual({ p_home_id: HOME_ID, p_room_key: key });
-      return route.fulfill({ json: { room: { ...fit, temperature_bands: [{
+      return route.fulfill({ json: { room: { ...fit, trained: generalAvailable, temperature_bands: [{
         revision: '11111111-1111-4111-8111-111111111111', band_c: -10, observed_min_c: -9, observed_max_c: -6,
         training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z',
         model: { ...fit, sample_count: 427, time_constant_h: 7 },
@@ -1068,6 +1069,17 @@ test.describe('requesting a replan', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await cycle.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     expect(await doorway.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    // Independently fitted bands remain inspectable without a general model.
+    generalAvailable = false;
+    await page.reload();
+    await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
+    await expect(page.getByText('427', { exact: true })).toBeVisible();
+    await expect(page.getByText('7 h', { exact: true })).toBeVisible();
+    await expect(page.locator('option[value="general"]')).toHaveCount(0);
+    await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
+    await expect(page.getByText(/utanför observerat intervall|outside observed range/i)).toBeVisible();
+    await expect(page.getByText('7 h', { exact: true })).toBeVisible();
+
   });
 
   test('device Model shows the learned outdoor bands and their heating evidence', async ({ page, context }) => {

@@ -13,8 +13,9 @@ import { readThermalModel } from '../../../../supabase/functions/_shared/planner
 import { SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
-import { formatHeatingRange, HEATING_BAND_WIDTH_C, roomHeatingBandAt, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
+import { formatHeatingRange, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
 
+const learningEvidence = z.object({ observation_hours: z.number().optional(), observation_intervals: z.number().optional() }).passthrough();
 const roomRow = z.object({
   trained: z.boolean(),
   rejection_reason: z.string().nullable(),
@@ -22,6 +23,8 @@ const roomRow = z.object({
     revision: z.uuid(), band_c: z.number(), observed_min_c: z.number(), observed_max_c: z.number(),
     training_from: z.iso.datetime({ offset: true }), training_to: z.iso.datetime({ offset: true }),
     model: z.record(z.string(), z.unknown()),
+    learning_evidence: learningEvidence.optional(),
+    warnings: z.array(z.string()).optional(),
   })).optional(),
 }).catchall(z.unknown());
 const scenarioResponse = z.object({
@@ -81,23 +84,22 @@ function ProjectionChart({ series, label, cycle = false }: { series: Series[]; l
   </ChartContainer>;
 }
 
-function RoomScenario({ model, connections, initialOutdoor = -5, bands = [] }: {
-  model: ThermalZoneModel; connections: Connection[]; initialOutdoor?: number; bands?: RoomHeatingBand[];
+function RoomScenario({ model, connections, initialOutdoor = -5, band }: {
+  model: ThermalZoneModel; connections: Connection[]; initialOutdoor?: number; band?: RoomHeatingBand;
 }) {
   const { language, t } = useLanguage();
   const [outdoor, setOutdoor] = useState(String(initialOutdoor));
   const [start, setStart] = useState('19');
   const [house, setHouse] = useState('20');
   const [powerOverride, setPower] = useState<string | null>(null);
-  const outdoorBand = roomHeatingBandAt(bands, Number(outdoor));
-  const physics = outdoorBand?.model ?? model;
+  const physics = model;
   const fitPower = physics.heating_rate_c_per_h && physics.heating_rate_c_per_h > 0
     ? String(Math.round(physics.heating_rate_c_per_h / physics.gain_c_per_wh) / 1000) : '';
   const power = powerOverride ?? fitPower;
   const controls = [outdoor, start, house, power];
   const scenario = { startC: Number(start), outdoorC: Number(outdoor), houseC: Number(house), heaterW: Number(power) * 1000 };
   const valid = controls.every(value => value.trim()) && Object.values(scenario).every(Number.isFinite) && scenario.heaterW >= 0;
-  const referencePhysics = roomHeatingBandAt(bands, referenceOutdoorC)?.model ?? model;
+  const referencePhysics = model;
   const temperatures = valid ? projectRoomCycle(physics, scenario) : null;
   const reference = valid ? projectRoomCycle(referencePhysics, { ...scenario, outdoorC: referenceOutdoorC }) : null;
   const format = (value: number, digits = 1) => value.toLocaleString(language, { maximumFractionDigits: digits });
@@ -115,7 +117,8 @@ function RoomScenario({ model, connections, initialOutdoor = -5, bands = [] }: {
     return { key: connection.key, name, values };
   });
   const peerSeries = receivingRooms.flatMap(room => room.values ? [{ name: room.name, values: room.values }] : []);
-  const showComparison = scenario.outdoorC !== referenceOutdoorC;
+  const showComparison = scenario.outdoorC !== referenceOutdoorC &&
+    (!band || (referenceOutdoorC >= band.observed_min_c && referenceOutdoorC <= band.observed_max_c));
   const cycleTitle = t('Uppskattad uppvärmning och avsvalning', 'Warm-up and cool-down estimate');
   const doorwayTitle = t('Uppskattad påverkan på anslutna rum', 'Estimated effect on connected rooms');
   return <div className="space-y-4">
@@ -129,10 +132,11 @@ function RoomScenario({ model, connections, initialOutdoor = -5, bands = [] }: {
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="min-w-0 space-y-1">
           <h4 className="font-semibold">{cycleTitle}</h4>
-          {bands.length > 0 && <p className="text-xs text-muted-foreground">
-            {t('Temperaturrespons i förhandsvisningen', 'Temperature response in this preview')}{' '}
-            {outdoorBand ? formatHeatingRange(outdoorBand.band_c, outdoorBand.band_c + HEATING_BAND_WIDTH_C, format)
-              : t('Allmän respons', 'General response')}
+          {band && <p className="text-xs text-muted-foreground">
+            {t('Vald anpassad respons', 'Selected fitted response')}{' '}
+            {formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format)}
+            {(scenario.outdoorC < band.observed_min_c || scenario.outdoorC > band.observed_max_c) &&
+              ` · ${t('Utanför observerat intervall', 'Outside observed range')}`}
           </p>}
           <p className="text-xs text-muted-foreground">{t(
             'Värmaren går i 2 timmar (skuggat), sedan är den av i 4. Fast utetemperatur, utan sol eller lagrad värme vid start.',
@@ -173,30 +177,34 @@ function RoomScenario({ model, connections, initialOutdoor = -5, bands = [] }: {
 }
 
 function RoomFits({ model, connections, bands }: {
-  model: ThermalZoneModel; connections: Connection[]; bands: RoomHeatingBand[];
+  model: ThermalZoneModel | null; connections: Connection[]; bands: RoomHeatingBand[];
 }) {
   const { language, t } = useLanguage();
   const [selection, setSelection] = useState('');
-  const selected = selection === 'general' ? undefined : bands.find(band => band.revision === selection) ?? bands[0];
+  const selected = selection === 'general' && model ? undefined : bands.find(band => band.revision === selection) ?? bands[0];
   const fitted = selected?.model ?? model;
+  const evidence = learningEvidence.safeParse(selected?.learning_evidence);
   const format = (value: number) => value.toLocaleString(language, { maximumFractionDigits: 2 });
   const observed = (band: RoomHeatingBand) => formatHeatingRange(band.observed_min_c, band.observed_max_c, format);
+  if (!fitted) return null;
   return <>
     {bands.length > 0 && <HeatingBandSelect options={[...bands.map(band => ({ key: band.revision,
       label: bands.some(other => other !== band && other.band_c === band.band_c) ? observed(band)
         : formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format) })),
-    { key: 'general', label: t('Allmän respons', 'General response') }]}
+    ...(model ? [{ key: 'general', label: t('Allmän respons', 'General response') }] : [])]}
       selected={selected?.revision ?? 'general'} onSelect={setSelection} />}
     <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" aria-live="polite">
       {selected && <div><dt>{t('Observerat intervall', 'Observed range')}</dt><dd className="font-medium">{observed(selected)}</dd></div>}
       <div><dt>{t('Värmerespons', 'Heating response')}</dt><dd className="font-medium">{format(fitted.gain_c_per_wh * 1000)} °C/kWh</dd></div>
       <div><dt>{t('Termisk tidskonstant', 'Thermal time constant')}</dt><dd className="font-medium">{format(fitted.time_constant_h)} h</dd></div>
-      <div><dt>{t('Träningskvartar', 'Training quarters')}</dt><dd className="font-medium">{fitted.sample_count.toLocaleString(language)}</dd></div>
+      <div><dt>{t('Anpassade övergångar', 'Fitted transitions')}</dt><dd className="font-medium">{fitted.sample_count.toLocaleString(language)}</dd></div>
     </dl>
     {selected && <p className="text-xs text-muted-foreground">
         {t('Träningsdata', 'Training data')} {selected.training_from.slice(0, 10)} – {selected.training_to.slice(0, 10)}
+        {evidence.success && evidence.data.observation_hours !== undefined &&
+          ` · ${format(evidence.data.observation_hours)} ${t('observerade timmar', 'observed hours')}`}
     </p>}
-    <RoomScenario key={selected?.revision ?? 'general'} model={model} connections={connections} bands={selected ? bands : []}
+    <RoomScenario key={selected?.revision ?? 'general'} model={fitted} connections={connections} band={selected}
       initialOutdoor={selected ? (selected.observed_min_c + selected.observed_max_c) / 2 : undefined} />
   </>;
 }
@@ -220,10 +228,10 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
   const rejection = room?.rejection_reason;
   return <div className="min-w-0 space-y-3 rounded-md border p-4 text-sm">
     <h3 className="font-semibold">{t('Rummets värmemodell', 'Room heating model')}</h3>
-    {model && query.data ? <>
+    {(model || bands.length > 0) && query.data ? <>
       <RoomFits key={roomId} model={model} connections={query.data.connections} bands={bands} />
-      {bands.length === 0 && <p className="text-xs text-muted-foreground">{t(
-        `Modellen är tränad på ${model.sample_count} kvartar.`, `The model was trained on ${model.sample_count} quarters.`,
+      {model && bands.length === 0 && <p className="text-xs text-muted-foreground">{t(
+        `Modellen är anpassad till ${model.sample_count} uppmätta temperaturövergångar.`, `The model was fitted to ${model.sample_count} measured temperature transitions.`,
       )}</p>}
     </> : <p role={query.isError ? 'alert' : 'status'} className="text-muted-foreground">
       {query.isPending ? t('Laddar modell…', 'Loading model…') : query.isError || room?.trained

@@ -5,8 +5,9 @@ use serde::Deserialize;
 pub struct Transition {
     pub decay: f64,
     pub offset_c: f64,
-    pub delivered_gain_c_per_w: f64,
+    pub stored_heat_release: f64,
     pub gain_c_per_w: f64,
+    pub stored_heat_gain_c_per_w: f64,
     pub carry: f64,
 }
 #[derive(Clone, Deserialize)]
@@ -32,7 +33,7 @@ pub struct Interval {
 #[derive(Clone, Copy)]
 pub struct State {
     pub temperature: f64,
-    pub delivered: f64,
+    pub stored_heat: f64,
     pub mask: usize,
 }
 pub struct Projection {
@@ -94,7 +95,7 @@ impl Projection {
         Self {
             state: State {
                 temperature: 0.,
-                delivered: 0.,
+                stored_heat: 0.,
                 mask: 0,
             },
             power: vec![0.; count],
@@ -142,7 +143,7 @@ fn heating_on(own: f64, target: f64, previous: bool, relay: bool) -> bool {
 pub fn temperature(s: Transition, state: State, watts: f64) -> f64 {
     s.decay * state.temperature
         + s.offset_c
-        + s.delivered_gain_c_per_w * state.delivered
+        + s.stored_heat_release * state.stored_heat
         + s.gain_c_per_w * watts
 }
 pub fn project(
@@ -274,7 +275,7 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
         }
         out.peak = out.peak.max(reserved);
         out.state.temperature = temperature(q.step, out.state, watts);
-        out.state.delivered = q.step.carry * out.state.delivered + (1. - q.step.carry) * watts;
+        out.state.stored_heat = q.step.carry * out.state.stored_heat + q.step.stored_heat_gain_c_per_w * watts;
         out.state.mask = mask;
     }
     for w in &mut out.power {
@@ -304,7 +305,8 @@ mod tests {
             step: Transition {
                 decay: 1.,
                 offset_c: 0.,
-                delivered_gain_c_per_w: 0.,
+                stored_heat_release: 0.,
+                stored_heat_gain_c_per_w: 0.,
                 gain_c_per_w: 0.001,
                 carry: 0.,
             },
@@ -316,7 +318,7 @@ mod tests {
             &[thermostat],
             State {
                 temperature: 19.,
-                delivered: 0.,
+                stored_heat: 0.,
                 mask: 0,
             },
             &[21.],
@@ -405,14 +407,15 @@ mod tests {
                                 step: Transition {
                                     decay: 0.999,
                                     offset_c: -0.004,
-                                    delivered_gain_c_per_w: if carry > 0. { 0.00001 } else { 0. },
+                                    stored_heat_release: if carry > 0. { 0.00001 } else { 0. },
+                                    stored_heat_gain_c_per_w: 1. - carry,
                                     gain_c_per_w: 0.000015,
                                     carry,
                                 },
                             };
                             let initial = State {
                                 temperature: start,
-                                delivered: 300.,
+                                stored_heat: 300.,
                                 mask,
                             };
                             for target in &actions {
@@ -448,8 +451,8 @@ mod tests {
                                         independent.state.temperature.to_bits()
                                     );
                                     assert_eq!(
-                                        traced.state.delivered.to_bits(),
-                                        independent.state.delivered.to_bits()
+                                        traced.state.stored_heat.to_bits(),
+                                        independent.state.stored_heat.to_bits()
                                     );
                                     assert_eq!(traced.state.mask, independent.state.mask);
                                     assert_eq!(traced.peak.to_bits(), independent.peak.to_bits());

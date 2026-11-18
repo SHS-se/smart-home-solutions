@@ -85,7 +85,7 @@ export function predictionError(model: ThermalZoneModel, quarters: RoomTrainingQ
   for (let start = 0; start + PREDICTION_HORIZON_QUARTERS < rows.length; start += PREDICTION_STRIDE_QUARTERS) {
     const end = rows[start + PREDICTION_HORIZON_QUARTERS].room_c;
     if (!finite(rows[start].room_c) || !finite(end)) continue;
-    let state: RoomState = { temperature_c: rows[start].room_c!, delivered_w: delivered[start] };
+    let state: RoomState = { temperature_c: rows[start].room_c!, stored_heat_c: delivered[start] * model.gain_c_per_wh * (model.heat_lag_h ?? 0) };
     let complete = true;
     for (let k = start; k < start + PREDICTION_HORIZON_QUARTERS && complete; k++) {
       const row = rows[k];

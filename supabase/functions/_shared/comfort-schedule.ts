@@ -231,7 +231,9 @@ export function buildComfortForecast(
     const step = transitions[index];
     if (!(step.decay > 0)) throw new Error("thermal cooling constant is unstable");
     // The most a quarter can add is with the heater, and its delay, at full.
-    const maximumNextGain = step.offset_c + (step.delivered_gain_c_per_w + step.gain_c_per_w) *
+    const physics = context.model_by_quarter?.[index] ?? model;
+    const capacity = physics.gain_c_per_wh * (physics.heat_lag_h ?? 0);
+    const maximumNextGain = step.offset_c + (step.stored_heat_release * capacity + step.gain_c_per_w) *
       (ratedPowerByQuarter?.[index] ?? ratedPowerW);
     const neededNow = (required[index + 1] - maximumNextGain) / step.decay;
     required[index] = Math.min(
@@ -241,7 +243,7 @@ export function buildComfortForecast(
   }
 
   const power: number[] = [];
-  let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
+  let state: RoomState = { temperature_c: startTemperatureC, stored_heat_c: context.start_stored_heat_c ?? 0 };
   for (let index = 0; index < starts.length; index += 1) {
     const rated = ratedPowerByQuarter?.[index] ?? ratedPowerW;
     const step = transitions[index];

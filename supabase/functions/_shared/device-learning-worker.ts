@@ -1,5 +1,6 @@
 import { captureDeviceModels } from "./device-model-store.ts";
-import { fitStoredRoom, fitStoredRoomHeating } from "./device-model-learning/room.ts";
+import { fitStoredRoom } from "./device-model-learning/room.ts";
+import { runRoomHeatingLearning } from "./device-model-learning/room-band-run.ts";
 import { fitStoredPool } from "./device-model-learning/pool.ts";
 import { fitStoredWeatherHeating } from "./device-model-learning/weather-heating.ts";
 import { fitStoredDevice } from "./device-model-learning/device.ts";
@@ -8,6 +9,7 @@ import { describeThrown } from "./ha-api-contract.ts";
 interface LearningClaim {
   id: string; home_id: string; customer_id: string; owner_kind: "room" | "pool" | "device"; owner_key: string;
   generation: number; fence: number;
+  room_fit_progress?: unknown;
   input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string; banded_heating?: boolean };
 }
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
@@ -40,10 +42,11 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
       if (history.error) throw new Error(history.error.message);
       roomHeating = history.data ?? roomHeating;
     }
+    const roomStep = claim.owner_kind === "room" && roomHeating
+      ? await runRoomHeatingLearning(db, claim, roomHeating, previous ?? undefined, now()) : null;
+    if (roomStep?.kind === "handled") return Response.json(roomStep.result);
     const row = claim.owner_kind === "room"
-      ? roomHeating
-        ? await fitStoredRoomHeating(db, claim.home_id, claim.customer_id, claim.owner_key, roomHeating,
-          previous ?? undefined, claim.input.location ?? null, now())
+      ? roomStep?.kind === "model" ? roomStep.model
         : await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
       : claim.owner_kind === "device"
       ? claim.input.weather_heating_binding

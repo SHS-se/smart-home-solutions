@@ -40,7 +40,7 @@ Deno.test("bathroom replay: Comfort recovery uses supported targets and reproduc
   // Counterfactual recovery request on the recorded bathroom physics/state.
   z.comfort_min_c.fill(21); z.target_c.fill(21);
   const result = prepareRoomServices(s, [], undefined, prices);
-  let state: ThermostatRoomState = { temperature_c: z.start_temperature_c!, delivered_w: 0, heating_mask: 0 };
+  let state: ThermostatRoomState = { temperature_c: z.start_temperature_c!, stored_heat_c: 0, heating_mask: 0 };
   let sawHeating = false;
   for (let i = 0; i < s.slots.length; i++) {
     const command = result.commands[floor][i]; assert(command.type === "setpoint");

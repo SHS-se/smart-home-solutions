@@ -40,14 +40,15 @@ export interface CurrentRow {
   replan_error: string | null;
 }
 
-// A refused fit is usually seasonal rather than faulty, so each reason gets
+// Learning outcomes describe what the observations identify, not sensor quality.
 
 export const THERMAL_REJECTION_EN: Record<string, string> = {
   insufficient_samples: 'Not enough history yet. Observations are still accumulating.',
   insufficient_heating:
-    'The heaters have not run enough for the model to learn how fast each room warms. This resolves once the heating season starts; nothing needs changing.',
+    'These observations do not identify the heating response yet. Any previously fitted model is retained.',
   singular: 'The observations so far cannot separate heating from heat loss.',
-  poor_fit: 'The fitted model did not explain the measured temperatures well enough to publish.',
+  response_unresolved: 'The readings do not resolve the room’s warm-up speed at these temperatures. Any previously fitted band is retained.',
+  poor_fit: 'The fitted response does not closely match the observed temperatures.',
   non_physical: 'The fit produced a physically impossible result and was refused.',
   sensor_tracks_outdoor:
     'A zone temperature sensor follows outdoor air too closely to be measuring a room. Check the room sensor mapping.',
@@ -56,8 +57,9 @@ export const THERMAL_REJECTION_EN: Record<string, string> = {
 export const THERMAL_REJECTION_SV: Record<string, string> = {
   insufficient_samples: 'Ännu inte tillräckligt med historik. Observationer samlas fortfarande in.',
   insufficient_heating:
-    'Värmeenheterna har inte gått tillräckligt för att modellen ska lära sig hur snabbt rummen värms upp. Detta löser sig när uppvärmningssäsongen börjar; inget behöver ändras.',
+    'Dessa observationer identifierar ännu inte värmeresponsen. En tidigare anpassad modell behålls.',
   singular: 'Observationerna hittills kan inte skilja uppvärmning från värmeförlust.',
+  response_unresolved: 'Mätningarna avgör ännu inte rummets uppvärmningshastighet vid dessa temperaturer. Ett tidigare anpassat temperaturintervall behålls.',
   poor_fit: 'Den anpassade modellen förklarade inte de uppmätta temperaturerna tillräckligt väl.',
   non_physical: 'Anpassningen gav ett fysiskt omöjligt resultat och avvisades.',
   sensor_tracks_outdoor:

@@ -231,6 +231,8 @@ export interface EmpiricalDeviceModelInput {
    * Null denotes missing operating evidence; native admission owns its separate
    * conservative electrical bound. */
   active_power_w: number | null;
+  /** Source-qualified constant running draw selected by the app. */
+  running_power_model?: { revision: string; binding: string };
   /** Native thermostat sensor, target, HVAC state and supported target grid. */
   thermostat?: ThermostatInput | null;
   /** Meter and actuator identity attached to observed heating quarters. */
@@ -275,8 +277,8 @@ export interface ThermalZonePlanningInput {
   model: ThermalZoneModel | null;
   heating_bands?: import("./heating-bands.ts").RoomHeatingBasis;
   start_temperature_c: number | null;
-  /** Heater heat still on its way through the room's delay at the start, W. */
-  start_delivered_w?: number | null;
+  /** Unreleased heater heat at the start, in temperature-equivalent °C. */
+  start_stored_heat_c?: number | null;
   /** Remaining observed appliance heat, separate from heater power and base electricity. */
   passive_heat_c_per_h?: number[];
   /** Per-room indoor boundary estimated from connected room observations. */
