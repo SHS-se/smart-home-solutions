@@ -275,7 +275,8 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
         }
         out.peak = out.peak.max(reserved);
         out.state.temperature = temperature(q.step, out.state, watts);
-        out.state.stored_heat = q.step.carry * out.state.stored_heat + q.step.stored_heat_gain_c_per_w * watts;
+        out.state.stored_heat =
+            q.step.carry * out.state.stored_heat + q.step.stored_heat_gain_c_per_w * watts;
         out.state.mask = mask;
     }
     for w in &mut out.power {

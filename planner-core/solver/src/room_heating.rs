@@ -727,16 +727,19 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     let mut stored_heat = *start_stored_heat_c;
     let mut top = stored_heat;
     for q in quarters {
-        let power = q.thermostat_power_w.as_ref()
+        let power = q
+            .thermostat_power_w
+            .as_ref()
             .map_or(base_thermostat_w, |w| w.iter().sum())
             + q.relay_w.iter().sum::<f64>();
-        stored_heat = q.transition.carry * stored_heat
-            + q.transition.stored_heat_gain_c_per_w * power;
+        stored_heat =
+            q.transition.carry * stored_heat + q.transition.stored_heat_gain_c_per_w * power;
         top = top.max(stored_heat);
         // Include each interval's full-power equilibrium so interpolation
         // at the upper grid point cannot clip the following storage step.
         if q.transition.carry < 1. {
-            top = top.max(q.transition.stored_heat_gain_c_per_w * power / (1. - q.transition.carry));
+            top =
+                top.max(q.transition.stored_heat_gain_c_per_w * power / (1. - q.transition.carry));
         }
     }
     let relay_only = !thermostats.is_empty() && thermostats.iter().all(|t| t.relay);
