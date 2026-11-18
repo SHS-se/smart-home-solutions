@@ -194,7 +194,11 @@ export function prepareRoomModels(
       }
     }
     const attempt = fitted?.last_fit_attempt as { issues?: string[]; passive_heat?: { status?: string } } | undefined;
-    const passive = readPassiveHeatModel(fitted?.passive_heat);
+    const heatingContext = bundle?.roomHeating?.[room.key];
+    const library = readRoomHeatingBands(fitted?.heating_bands);
+    const compatible = library?.binding === heatingContext?.binding && library?.reference_revision != null;
+    const boundary = heatingContext ? library?.reference : undefined;
+    const passive = readPassiveHeatModel(boundary ? boundary.passive_heat : fitted?.passive_heat);
     if (!passive && attempt?.passive_heat?.status === "awaiting_validation") {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
         "room_passive_heat_learning", room.key, `${room.name}: monitored appliance heat is still being learned.`,
@@ -203,16 +207,13 @@ export function prepareRoomModels(
     if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
-    const heatingContext = bundle?.roomHeating?.[room.key];
-    const library = readRoomHeatingBands(fitted?.heating_bands);
-    const compatible = library?.binding === heatingContext?.binding && library?.reference_revision != null;
-    const model = readThermalModel(fitted);
+    const model = readThermalModel(boundary?.model ?? fitted) ?? readThermalModel(fitted);
     if (heatingContext && model && library && !compatible) {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
         "room_heating_band_estimated", room.key, `${room.name}: heating sources changed.`,
         "The general room response is used while the new heating setup is measured.")]);
     }
-    const doorway = readRoomDoorwayModel(fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
+    const doorway = readRoomDoorwayModel(boundary ? boundary.doorway_exchange : fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
       ...(heatingContext ? { heating_bands: { reference_revision: library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null,

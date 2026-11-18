@@ -26,9 +26,8 @@ const weatherBand = z.object({
 }).refine(band => band.min_c <= band.outdoor_c && band.outdoor_c <= band.max_c);
 
 const weatherProfile = z.object({
-  method: z.literal(WEATHER_HEATING_METHOD),
   points: z.array(weatherBand),
-  reference: z.object({ points: z.array(weatherBand) }).optional(),
+  reference: z.object({ points: z.array(weatherBand) }).nullish(),
 });
 
 type WeatherBand = z.infer<typeof weatherBand>;
@@ -45,7 +44,8 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
     maximumFractionDigits: digits,
   });
   const range = (min: number, max: number) => formatHeatingRange(min, max, value => format(value, 1));
-  const label = (band: WeatherBand) => band.band_c !== undefined
+  const label = (band: WeatherBand) => band.band_c !== undefined &&
+    !bands.some(other => other !== band && other.band_c === band.band_c)
     ? range(band.band_c, band.band_c + HEATING_BAND_WIDTH_C) : range(band.min_c, band.max_c);
   const power = (watts: number) => `${format(watts / 1000, 3)} kW`;
   const data: { temperature: number; typical: number | null; estimate: number }[] = bands.map(band => ({
@@ -60,14 +60,16 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
       role="img" aria-label={title} aria-describedby={`${bandId}-legend`}>
       <ComposedChart data={data} margin={{ top: 12, right: 20, bottom: 22, left: 0 }}>
         <CartesianGrid vertical={false} className="stroke-border" />
-        <XAxis type="number" dataKey="temperature" domain={[Math.floor(first.min_c) - 1, Math.ceil(last.max_c) + 1]}
+        <XAxis type="number" dataKey="temperature" domain={[
+          Math.floor(Math.min(...bands.map(band => band.min_c))) - 1, Math.ceil(Math.max(...bands.map(band => band.max_c))) + 1,
+        ]}
           tickFormatter={value => format(value, 1)} minTickGap={18}
           label={{ value: t('Utomhustemperatur (°C)', 'Outdoor temperature (°C)'), position: 'bottom', fill: 'hsl(var(--muted-foreground))' }} />
         <YAxis width={44} domain={[0, Math.max(...bands.map(band => (band.watts + band.spread_w) / 1000))]}
           tickFormatter={value => format(value, 2)}
           label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))' }} />
         {bands.map(band => (
-          <ReferenceArea key={band.outdoor_c} x1={band.min_c} x2={band.max_c}
+          <ReferenceArea key={keyOf(band)} x1={band.min_c} x2={band.max_c}
             y1={Math.max(0, band.watts - band.spread_w) / 1000} y2={(band.watts + band.spread_w) / 1000}
             fill={color} fillOpacity={band === selected ? 0.26 : 0.13} stroke="none" />
         ))}
@@ -111,11 +113,12 @@ export default function DeviceHeatingPowerModel({ homeId, deviceKey, children }:
     queryKey: ['device-heating-power-model', homeId, deviceKey],
     queryFn: async () => {
       const { data, error } = await supabase.from('energy_optimisation_device_operating_points')
-        .select('operating_points').eq('home_id', homeId).eq('device_key', deviceKey)
+        .select('points:operating_points->points,reference:operating_points->reference' as string)
+        .eq('home_id', homeId).eq('device_key', deviceKey)
         .filter('operating_points->>method', 'eq', WEATHER_HEATING_METHOD).maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      return weatherProfile.parse(data.operating_points);
+      return weatherProfile.parse(data);
     },
   });
   if (model.isPending) return <p className="text-sm text-muted-foreground">{t('Laddar enhetsmodell…', 'Loading device model…')}</p>;

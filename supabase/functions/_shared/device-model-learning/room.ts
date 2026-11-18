@@ -8,10 +8,10 @@ import { readPagedRows } from "../read-paged-rows.ts";
 import { irradiancePoints, irradianceOnto } from "../solar-irradiance.ts";
 import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
 import { advanceRoomHeatingBands } from "../device-learning/room/heating-bands.ts";
-import { readRoomHeatingBands, type RoomHeatingBands } from "../planner/heating-bands.ts";
+import { readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
 import { readThermalModel } from "../planner/models/room/read-model.ts";
 import { SLOT_HOURS, type ThermalZoneModel } from "../planner/models/room/thermal.ts";
-import { readRoomDoorwayModel } from "../planner/models/room/doorway-boundary.ts";
+import { readRoomDoorwayModel, type RoomDoorwayModel } from "../planner/models/room/doorway-boundary.ts";
 
 async function readRoomQuarters(
   // deno-lint-ignore no-explicit-any
@@ -39,37 +39,45 @@ export async function fitStoredRoomHeating(
   };
   // Adopt the installed general fit once. An identified mapping change starts
   // a fresh reference so incompatible coefficients cannot enter a new band.
-  const reference = previous?.trained && (!current || library.reference_revision) ? readThermalModel(previous) : null;
+  const reference = previous?.trained && (!current || library.reference_revision)
+    ? readThermalModel(library.reference?.model ?? previous) : null;
   if (!reference) {
     const row = await fitStoredRoom(db, homeId, customerId, roomKey, location, now, library.since);
-    return { ...row, heating_bands: row.trained ? { ...library, reference_revision: crypto.randomUUID() } : library };
+    const model = readThermalModel(row);
+    return { ...row, heating_bands: model && row.trained ? { ...library, reference_revision: crypto.randomUUID(),
+      reference: roomReference(model, row) } : library };
   }
-  const seeded = library.reference_revision ? library : { ...library, reference_revision: crypto.randomUUID() };
+  const boundary = library.reference ?? roomReference(reference, previous);
+  const seeded = { ...library, reference_revision: library.reference_revision ?? crypto.randomUUID(), reference: boundary };
   const since = new Date(Math.max(Date.parse(seeded.since), now - TRAINING_WINDOW_DAYS * 86_400_000)).toISOString();
-  const { row, quarters, passive, doorways } = await readRoomAttempt(db, homeId, customerId, roomKey, location, now, undefined, reference);
-  const observations = bandObservations(quarters.map(thermalQuarter), previous, reference, passive.get(roomKey), doorways);
-  const { passive_heat, doorway_exchange } = row;
-  const discovered = previous?.passive_heat || previous?.doorway_exchange || seeded.active.length || seeded.candidates.length ? {} : {
-    ...(passive_heat ? { passive_heat } : {}),
-    ...(doorway_exchange ? { doorway_exchange } : {}),
-  };
-  let bands = Object.keys(discovered).length
-    ? { ...seeded, reference_revision: crypto.randomUUID() }
-    : advanceRoomHeatingBands(seeded, observations.filter(quarter => quarter.start_ms >= Date.parse(since)), reference,
-      quarters[0]?.active_power_w ?? null);
+  await repairRoomSolar(db, homeId, location, since, attemptedAt);
+  const { quarters, passive, doorways } = await loadRoomObservations(db, homeId, customerId, roomKey, since, attemptedAt);
+  const discovery = !seeded.active.length && !seeded.candidates.length && !boundary.passive_heat && !boundary.doorway_exchange;
+  const passiveDiscovery = discovery && passive.has(roomKey) ? fitRoomsFromQuarters(quarters, passive)[0] : undefined;
+  const outcome = discovery ? fitOptionalRoomResponses({ passive_heat: passiveDiscovery?.passive }, quarters, doorways, reference) : null;
+  const discovered = outcome?.passive_heat || outcome?.doorway_exchange;
+  const observations = bandObservations(quarters.map(thermalQuarter), boundary, passive.get(roomKey), doorways);
+  let bands = discovered
+    ? { ...seeded, reference_revision: crypto.randomUUID(), reference: roomReference(reference, outcome!) }
+    : advanceRoomHeatingBands(seeded, observations, reference, quarters.at(-1)?.active_power_w ?? null);
   if (bands.reference_revision === seeded.reference_revision && bands.active === seeded.active && bands.candidates === seeded.candidates) {
-    bands = await fitHistoricalBand(db, homeId, customerId, roomKey, bands, previous, reference, now);
+    bands = await fitHistoricalBand(db, homeId, customerId, roomKey, bands, boundary, now);
   }
   return { home_id: homeId, customer_id: customerId, room_key: roomKey, last_attempted_at: attemptedAt,
-    last_fit_attempt: row.last_fit_attempt, ...discovered,
+    ...(discovered ? outcome : {}),
     heating_bands: bands,
   };
+}
+
+function roomReference(model: ThermalZoneModel, row?: Record<string, unknown>): RoomHeatingReference {
+  return { model, ...(row?.passive_heat ? { passive_heat: row.passive_heat } : {}),
+    ...(row?.doorway_exchange ? { doorway_exchange: row.doorway_exchange } : {}) };
 }
 
 async function fitHistoricalBand(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, library: RoomHeatingBands,
-  previous: StoredDeviceModel | undefined, reference: ThermalZoneModel, now: number,
+  reference: RoomHeatingReference, now: number,
 ) {
   const day = 86_400_000;
   const historyStart = Math.max(Date.parse(library.since), now - 400 * day);
@@ -87,12 +95,9 @@ async function fitHistoricalBand(
   const end = Date.parse(next.last_at) + 900_000;
   const from = new Date(Math.max(historyStart, end - TRAINING_WINDOW_DAYS * day)).toISOString();
   const to = new Date(end).toISOString();
-  const quarters = await readRoomQuarters(db, homeId, customerId, roomKey, from, to);
-  const [passive, doorways] = await Promise.all([
-    readRoomPassiveHeat(db, customerId, homeId, [roomKey], from, to), readDoorwayProbes(db, homeId, [roomKey], from, to),
-  ]);
-  const observations = bandObservations(quarters.map(thermalQuarter), previous, reference, passive.get(roomKey), doorways);
-  return advanceRoomHeatingBands(library, observations, reference, quarters[0]?.active_power_w ?? null,
+  const { quarters, passive, doorways } = await loadRoomObservations(db, homeId, customerId, roomKey, from, to);
+  const observations = bandObservations(quarters.map(thermalQuarter), reference, passive.get(roomKey), doorways);
+  return advanceRoomHeatingBands(library, observations, reference.model, quarters.at(-1)?.active_power_w ?? null,
     { band: next.band_c, split: end - 4 * day, lastAt: next.last_at });
 }
 
@@ -103,18 +108,32 @@ export async function fitStoredRoom(
   now: number = Date.now(),
   bindingSince?: string,
 ): Promise<Record<string, unknown>> {
-  return (await readRoomAttempt(db, homeId, customerId, roomKey, location, now, bindingSince)).row;
-}
-
-async function readRoomAttempt(
-  // deno-lint-ignore no-explicit-any
-  db: any, homeId: string, customerId: string, roomKey: string,
-  location: { latitude: number; longitude: number } | null, now: number, bindingSince?: string,
-  reference?: ThermalZoneModel,
-) {
   const trainingTo = new Date(now).toISOString();
   const trainingFrom = new Date(Math.max(now - TRAINING_WINDOW_DAYS * 86_400_000,
     bindingSince ? Date.parse(bindingSince) : -Infinity)).toISOString();
+  await repairRoomSolar(db, homeId, location, trainingFrom, trainingTo);
+  const { quarters, passive, doorways } = await loadRoomObservations(db, homeId, customerId, roomKey, trainingFrom, trainingTo);
+  // A missing series is a statistical observation outcome, not a transport failure.
+  if (!quarters.length) {
+    const { data, error } = await db.from("energy_optimisation_devices").select("mapping_summary")
+      .eq("home_id", homeId).eq("mapping_summary->>room_key", roomKey).is("retired_at", null).limit(1);
+    if (error) throw new Error(error.message);
+    const roomName = data?.[0]?.mapping_summary?.room_name;
+    if (!roomName) throw new Error("Learning room no longer has a mapped device");
+    return zoneModelRows([{ room_key: roomKey, room_name: roomName, result: fitRoomMeans([], null) }],
+      { homeId, customerId, trainingFrom, trainingTo })[0];
+  }
+  const fits = fitRoomsFromQuarters(quarters, passive);
+  if (fits.length !== 1 || fits[0].room_key !== roomKey) throw new Error("Room observations crossed owner boundary");
+  const row = zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
+  if (fits[0].result.ok) Object.assign(row, fitOptionalRoomResponses(row, quarters, doorways, fits[0].result.model));
+  return row;
+}
+
+async function repairRoomSolar(
+  // deno-lint-ignore no-explicit-any
+  db: any, homeId: string, location: { latitude: number; longitude: number } | null, trainingFrom: string, trainingTo: string,
+) {
   if (location) {
     const points = await irradiancePoints({ supabase: db, ...location });
     if (points) {
@@ -132,34 +151,25 @@ async function readRoomAttempt(
       }
     }
   }
+}
+
+async function loadRoomObservations(
+  // deno-lint-ignore no-explicit-any
+  db: any, homeId: string, customerId: string, roomKey: string, trainingFrom: string, trainingTo: string,
+) {
   const quarters = await readRoomQuarters(db, homeId, customerId, roomKey, trainingFrom, trainingTo);
-  // A missing series is a statistical observation outcome, not a transport failure.
-  if (!quarters.length) {
-    const { data, error } = await db.from("energy_optimisation_devices").select("mapping_summary")
-      .eq("home_id", homeId).eq("mapping_summary->>room_key", roomKey).is("retired_at", null).limit(1);
-    if (error) throw new Error(error.message);
-    const roomName = data?.[0]?.mapping_summary?.room_name;
-    if (!roomName) throw new Error("Learning room no longer has a mapped device");
-    const row = zoneModelRows([{ room_key: roomKey, room_name: roomName,
-      result: fitRoomMeans([], null) }],
-    { homeId, customerId, trainingFrom, trainingTo })[0];
-    return { row, quarters, passive: new Map(), doorways: [] };
-  }
+  if (!quarters.length) return { quarters, passive: new Map<string, never>(), doorways: [] };
   const [passive, doorways] = await Promise.all([
     readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo),
     readDoorwayProbes(db, homeId, [roomKey], trainingFrom, trainingTo),
   ]);
-  const fits = fitRoomsFromQuarters(quarters, passive);
-  if (fits.length !== 1 || fits[0].room_key !== roomKey) throw new Error("Room observations crossed owner boundary");
-  const row = zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
-  if (fits[0].result.ok) Object.assign(row, fitOptionalRoomResponses(row, quarters, doorways, reference ?? fits[0].result.model));
-  return { row, quarters, passive, doorways };
+  return { quarters, passive, doorways };
 }
 
 function fitOptionalRoomResponses(row: Record<string, unknown>, quarters: ThermalQuarterRow[],
   doorways: DoorwayProbeRow[], model: ThermalZoneModel) {
     const passive_heat = row.passive_heat;
-    let doorway_exchange = null;
+    let doorway_exchange: RoomDoorwayModel | null = null;
     if (!passive_heat && doorways.length) {
       const observations = quarters.map(thermalQuarter).sort((a, b) => a.start_ms - b.start_ms);
       const local = new Map(observations.map(q => [q.start_ms, q.room_c]));
@@ -176,12 +186,12 @@ function fitOptionalRoomResponses(row: Record<string, unknown>, quarters: Therma
     return { ...(passive_heat !== undefined ? { passive_heat } : {}), doorway_exchange };
 }
 
-function bandObservations(rows: RoomMeanQuarter[], previous: StoredDeviceModel | undefined, model: ThermalZoneModel,
+function bandObservations(rows: RoomMeanQuarter[], reference: RoomHeatingReference,
   source: { device_key: string; watts: ReadonlyMap<number, number> } | undefined, probes: DoorwayProbeRow[]) {
   rows.sort((a, b) => a.start_ms - b.start_ms);
-  const passive = readPassiveHeatModel(previous?.passive_heat);
-  const indoor = model.house_coupling_per_h ?? 0;
-  const doorway = readRoomDoorwayModel(previous?.doorway_exchange, indoor);
+  const passive = readPassiveHeatModel(reference.passive_heat);
+  const indoor = reference.model.house_coupling_per_h ?? 0;
+  const doorway = readRoomDoorwayModel(reference.doorway_exchange, indoor);
   if (!doorway && !passive) return rows;
   const neighbors = doorway?.peers.flatMap(peer => {
     const probe = probes.find(candidate => candidate.room_source === doorway.source &&

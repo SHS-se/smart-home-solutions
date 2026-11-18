@@ -183,7 +183,8 @@ function RoomFits({ model, connections, bands }: {
   const observed = (band: RoomHeatingBand) => formatHeatingRange(band.observed_min_c, band.observed_max_c, format);
   return <>
     {bands.length > 0 && <HeatingBandSelect options={[...bands.map(band => ({ key: band.revision,
-      label: formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format) })),
+      label: bands.some(other => other !== band && other.band_c === band.band_c) ? observed(band)
+        : formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format) })),
     { key: 'general', label: t('Allmän respons', 'General response') }]}
       selected={selected?.revision ?? 'general'} onSelect={setSelection} />}
     <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" aria-live="polite">

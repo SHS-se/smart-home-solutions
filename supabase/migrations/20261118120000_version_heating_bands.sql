@@ -17,7 +17,7 @@ ALTER TABLE private.energy_heating_calibration_revisions ENABLE ROW LEVEL SECURI
 -- presumed to have the same provenance. A later binding change starts a new epoch.
 CREATE FUNCTION private.energy_room_heating_contexts(p_home_id uuid, p_history boolean DEFAULT false)
 RETURNS TABLE(room_key text, binding text, observed_since timestamptz)
-LANGUAGE sql STABLE SET search_path=public AS $$
+LANGUAGE sql STABLE SET search_path=public,private AS $$
   WITH grouped AS (
     SELECT d.mapping_summary->>'room_key' AS room_key,
       max(d.first_seen_at) AS meters_since,
@@ -27,7 +27,7 @@ LANGUAGE sql STABLE SET search_path=public AS $$
       AND d.control_type_override IN ('setpoint','switch_schedule')
       AND jsonb_typeof(d.mapping_summary->'room_key')='string'
     GROUP BY d.mapping_summary->>'room_key'
-    HAVING bool_and(d.category='heating') AND bool_or(d.mapping_status='ready' AND d.mapped_control_type=d.control_type_override)
+    HAVING bool_and(d.category='heating')
   ), changed AS (
     SELECT max(note_date)::timestamptz AS since
     FROM energy_history_notes
@@ -35,18 +35,23 @@ LANGUAGE sql STABLE SET search_path=public AS $$
       AND event_type IN ('renovation','heating_system_change')
   )
   SELECT g.room_key,
-    md5(jsonb_build_array(g.meters,p.rooms->g.room_key->>'source_key',changed.since)::text),
-    CASE WHEN probe.first_at IS NOT NULL THEN greatest(g.meters_since, probe.first_at, prior.last_at, changed.since) END
+    md5(jsonb_build_array(g.meters,p.rooms->g.room_key->>'source_key',changed.since,
+      passive.device_id, neighbors.sources)::text),
+    greatest(g.meters_since, prior.last_at, changed.since)
   FROM grouped g
   CROSS JOIN changed
   LEFT JOIN energy_room_profiles p ON p.home_id=p_home_id
+  LEFT JOIN private.energy_room_passive_heat_sources passive ON passive.home_id=p_home_id AND passive.room_key=g.room_key
   LEFT JOIN LATERAL (
-    SELECT min(s.start_ts) AS first_at FROM energy_room_probe_slots s
-    WHERE p_history AND s.home_id=p_home_id AND s.room_key=g.room_key AND s.source_key=p.rooms->g.room_key->>'source_key'
-  ) probe ON true
+    SELECT jsonb_agg(jsonb_build_array(other.room_key,p.rooms->other.room_key->>'source_key') ORDER BY other.room_key) AS sources
+    FROM jsonb_array_elements(p.connections) edge
+    CROSS JOIN LATERAL (VALUES (edge->'rooms'->>0,edge->'rooms'->>1),(edge->'rooms'->>1,edge->'rooms'->>0))
+      AS other(receiver_key, room_key)
+    WHERE other.receiver_key=g.room_key
+  ) neighbors ON true
   LEFT JOIN LATERAL (
     SELECT max(s.start_ts) + interval '15 minutes' AS last_at FROM energy_room_probe_slots s
-    WHERE p_history AND s.home_id=p_home_id AND s.room_key=g.room_key AND s.source_key<>p.rooms->g.room_key->>'source_key'
+    WHERE p_history AND s.home_id=p_home_id AND s.room_key=g.room_key AND s.source_key IS DISTINCT FROM p.rooms->g.room_key->>'source_key'
   ) prior ON true;
 $$;
 REVOKE ALL ON FUNCTION private.energy_room_heating_contexts(uuid,boolean) FROM PUBLIC, anon, authenticated;
@@ -108,6 +113,7 @@ BEGIN
       INSERT INTO private.energy_heating_calibration_revisions(home_id,owner_kind,owner_key,revision,calibration)
       VALUES(NEW.home_id,owner,owner_key,ref,
         (to_jsonb(NEW)-'heating_bands'-'last_fit_attempt'-'last_attempted_at'-'model_revision')
+          || COALESCE(NEW.heating_bands->'reference'->'model','{}'::jsonb)
           || jsonb_build_object('binding',binding))
       ON CONFLICT DO NOTHING;
     END IF;
@@ -220,11 +226,14 @@ BEGIN
 
   SELECT jsonb_build_object(
     'room', (SELECT (to_jsonb(model) - 'doorway_exchange' - 'passive_heat' - 'heating_bands')
-      || jsonb_build_object('temperature_bands', COALESCE((
-        SELECT model.heating_bands->'active' FROM private.energy_room_heating_contexts(p_home_id) c
-        WHERE c.room_key=model.room_key AND c.binding=model.heating_bands->>'binding'
-      ),'[]'::jsonb))
+      || COALESCE(fit.reference,'{}'::jsonb)
+      || jsonb_build_object('temperature_bands', COALESCE(fit.bands,'[]'::jsonb))
       FROM public.energy_optimisation_zone_models model
+      LEFT JOIN LATERAL (
+        SELECT model.heating_bands->'active' AS bands, model.heating_bands->'reference'->'model' AS reference
+        FROM private.energy_room_heating_contexts(p_home_id) c
+        WHERE c.room_key=model.room_key AND c.binding=model.heating_bands->>'binding'
+      ) fit ON true
       WHERE model.home_id = p_home_id AND model.room_key = p_room_key),
     'connections', COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
@@ -278,9 +287,11 @@ BEGIN
       SELECT last_attempted_at IS NULL OR last_attempted_at < now()-CASE
           WHEN trained AND (heating_bands IS NULL OR heating_bands->>'reference_revision' IS NOT NULL)
           THEN interval '24 hours' ELSE interval '1 hour' END
-        OR (heating_bands IS NOT NULL AND heating_bands->>'binding' IS DISTINCT FROM heating_bindings->>(o->>'key'))
-        OR (trained AND last_fit_attempt->'learning'->>'method' IS DISTINCT FROM 'interval_mean_transition_holdout_v1')
-        OR (trained AND last_fit_attempt->'learning'->>'family' IS DISTINCT FROM 'house_outdoor_solar_v1')
+        OR (heating_bindings ? (o->>'key') AND heating_bands IS NOT NULL
+          AND heating_bands->>'binding' IS DISTINCT FROM heating_bindings->>(o->>'key'))
+        OR (trained AND (heating_bands->>'reference_revision' IS NULL OR NOT (heating_bindings ? (o->>'key')))
+          AND (last_fit_attempt->'learning'->>'method' IS DISTINCT FROM 'interval_mean_transition_holdout_v1'
+            OR last_fit_attempt->'learning'->>'family' IS DISTINCT FROM 'house_outdoor_solar_v1'))
       INTO due FROM public.energy_optimisation_zone_models WHERE home_id=p_home_id AND room_key=o->>'key';
     ELSIF o->>'kind'='pool' AND o->>'key'='pool' THEN
       SELECT last_attempted_at IS NULL OR last_attempted_at<now()-interval '24 hours'

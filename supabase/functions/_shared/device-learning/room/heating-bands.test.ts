@@ -47,3 +47,16 @@ Deno.test("the exact thermal candidate wins on later measured heating and cooldo
   assertEquals(roomHeatingBandAt(promoted.active, 2)?.revision, staged.candidates[0].revision);
   assertEquals(roomHeatingBandAt(promoted.active, 4), undefined);
 });
+
+Deno.test("a narrower room revision serves its observed range and retains the older fit at the edges", () => {
+  const rows = observations();
+  const old = { revision: "wide", band_c: 0, observed_min_c: 0, observed_max_c: 4,
+    training_from: "2025-10-01", training_to: "2025-10-08", model: reference };
+  const library: RoomHeatingBands = { reference_revision: "general", binding: "synthetic-room", since: "2025-10-01",
+    active: [old], candidates: [], attempted: {} };
+  const staged = advanceRoomHeatingBands(library, rows.slice(0, 96 * 4), reference, 500);
+  const promoted = advanceRoomHeatingBands(staged, rows, reference, 500);
+  assertEquals(roomHeatingBandAt(promoted.active, 0)?.revision, "wide");
+  assertEquals(roomHeatingBandAt(promoted.active, 4)?.revision, "wide");
+  assertEquals(roomHeatingBandAt(promoted.active, 2)?.revision, staged.candidates[0].revision);
+});

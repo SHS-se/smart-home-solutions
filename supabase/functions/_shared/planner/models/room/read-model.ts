@@ -1,8 +1,9 @@
 import type { ThermalZoneModel } from "./thermal.ts";
 
 /** Nullable statistical evidence never removes the room's comfort service. */
-export function readThermalModel(row: Record<string, unknown> | undefined): ThermalZoneModel | null {
-  if (!row) return null;
+export function readThermalModel(value: unknown): ThermalZoneModel | null {
+  if (typeof value !== "object" || value === null) return null;
+  const row = value as Record<string, unknown>;
   const number = (key: string) => row[key] == null ? NaN : Number(row[key]);
   const optional = (key: string) => row[key] == null ? null : Number(row[key]);
   const model: ThermalZoneModel = {

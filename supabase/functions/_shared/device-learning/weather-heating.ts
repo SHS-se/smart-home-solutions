@@ -1,5 +1,5 @@
 import { heatingCurveAt, MAX_POINTS, WEATHER_HEATING_METHOD, type HeatingDrawBand, type WeatherHeatingProfile } from "../planner/weather-heating.ts";
-import { heatingBand } from "../planner/heating-bands.ts";
+import { heatingBand, publishHeatingBand } from "../planner/heating-bands.ts";
 import { addPairedLoss, pairedImprovement, type PairedDay } from "./heating-comparison.ts";
 
 const BAND_C = 3;
@@ -89,23 +89,20 @@ export function advanceWeatherHeatingBands(
     for (const row of rows) {
       if (row.day < pending.training_to.slice(0, 10) ||
         row.outdoor_c < pending.min_c || row.outdoor_c > pending.max_c) continue;
-      const existing = incumbent && row.outdoor_c >= incumbent.min_c && row.outdoor_c <= incumbent.max_c ? incumbent.watts
-        : profile.reference && heatingCurveAt(profile.reference.points, row.outdoor_c)?.watts;
+      const existing = active.find(point => point.band_c === band && row.outdoor_c >= point.min_c && row.outdoor_c <= point.max_c)?.watts
+        ?? (profile.reference && heatingCurveAt(profile.reference.points, row.outdoor_c)?.watts);
       if (existing != null) addPairedLoss(losses, Date.parse(row.day),
         (row.watts - pending.watts) ** 2, (row.watts - existing) ** 2);
     }
     const result = pairedImprovement(losses);
-    const points = result === "better" ? [...active.filter(point => point !== incumbent), pending]
-      .sort((a, b) => a.band_c - b.band_c) : active;
+    const points = result === "better" ? publishHeatingBand(active, pending) : active;
     return { ...profile, points, versioned: { attempted, candidates: result === "undecided" ? state.candidates : others } };
   }
   const days = [...new Set(rows.map(row => row.day))];
   const firstDay = days[incumbent ? Math.floor(days.length / 2) : 0];
   const training = rows.filter(row => row.day >= firstDay);
   const point = heatingPoint(training);
-  if (point.days < 2 || (incumbent && (point.min_c > incumbent.min_c || point.max_c < incumbent.max_c))) {
-    return { ...profile, versioned: { ...state, attempted } };
-  }
+  if (point.days < 2) return { ...profile, versioned: { ...state, attempted } };
   const revision: HeatingDrawBand = { ...point, revision: crypto.randomUUID(), band_c: band,
     observed_min_c: point.min_c, observed_max_c: point.max_c, training_from: new Date(firstDay).toISOString(),
     training_to: new Date(Date.parse(latest) + DAY_MS).toISOString() };

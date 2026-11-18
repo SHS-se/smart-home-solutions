@@ -34,7 +34,7 @@ Deno.test("a new-season electrical fit replaces only its own band on independent
       day: new Date(Date.UTC(2026, 9, start + index)).toISOString().slice(0, 10), outdoor_c, watts, hours: 2,
     }));
   const cold = days(1, 2, -7, 1100);
-  const mild = days(3, 4, 6, 650);
+  const mild = [...days(3, 3, 5.3, 650), ...days(4, 4, 6, 650)];
   let profile = advanceWeatherHeatingBands("meter", null, cold, "2026-10-03");
   profile = advanceWeatherHeatingBands("meter", profile, [...cold, ...mild], "2026-10-05");
   const [oldCold, oldMild] = profile.points;
@@ -44,6 +44,8 @@ Deno.test("a new-season electrical fit replaces only its own band on independent
   assertEquals(profile.versioned?.candidates[0]?.watts, 450);
   const later = days(12, 15, 6, 450);
   profile = advanceWeatherHeatingBands("meter", profile, [...cold, ...mild, ...refit, ...later], "2026-10-16");
-  assertEquals(profile.points.map(point => point.watts), [1100, 450]);
+  assertEquals(profile.points.map(point => point.watts), [1100, 450, 650]);
   assertEquals(profile.points[0], oldCold);
+  assertEquals(heatingWatts(profile, 5.3), 650);
+  assertEquals(heatingWatts(profile, 6), 450);
 });

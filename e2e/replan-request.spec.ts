@@ -1082,14 +1082,14 @@ test.describe('requesting a replan', () => {
       expect(filters.get('home_id')).toBe(`eq.${HOME_ID}`);
       expect(filters.get('device_key')).toBe(`eq.${key}`);
       expect(filters.get('operating_points->>method')).toBe('eq.weather_heating_draw_v1');
-      await route.fulfill({ json: [{ operating_points: { method: 'weather_heating_draw_v1', points: [
+      await route.fulfill({ json: [{ points: [
         { min_c: -5, max_c: -3, outdoor_c: -4, watts: 1100, spread_w: 120, days: 4, hours: 15.5,
           band_c: -5, revision: '11111111-1111-4111-8111-111111111111',
           training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z' },
         { min_c: 3, max_c: 4.8, outdoor_c: 4, watts: 640, spread_w: 95, days: 12, hours: 41.25,
           band_c: 0, revision: '22222222-2222-4222-8222-222222222222',
           training_from: '2026-10-02T00:00:00Z', training_to: '2026-10-21T00:00:00Z' },
-      ] } }] });
+      ], reference: null }] });
     });
 
     await page.goto(`/portal/energy-modeling?tab=devices&device=${key}`);

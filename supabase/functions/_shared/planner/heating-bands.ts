@@ -23,10 +23,17 @@ export interface RoomHeatingBands {
   since: string;
   reference_revision: string | null;
   previous_reference_revision?: string;
+  reference?: RoomHeatingReference;
   active: RoomHeatingBand[];
   // Frozen candidates are private learning state, never used for planning.
   candidates: RoomHeatingBand[];
   attempted: Record<string, string>;
+}
+
+export interface RoomHeatingReference {
+  model: ThermalZoneModel;
+  passive_heat?: unknown;
+  doorway_exchange?: unknown;
 }
 
 export interface RoomHeatingBasis {
@@ -66,6 +73,14 @@ export function roomHeatingBandAt(bands: readonly RoomHeatingBand[], outdoorC: n
     outdoorC >= band.observed_min_c && outdoorC <= band.observed_max_c);
 }
 
+/** New fits take precedence in their measured range. Keep older evidence
+ * for temperatures the new revision did not observe. */
+export function publishHeatingBand<T extends HeatingBandRevision>(active: readonly T[], candidate: T): T[] {
+  return [candidate, ...active.filter(point => point.band_c !== candidate.band_c ||
+    point.observed_min_c < candidate.observed_min_c || point.observed_max_c > candidate.observed_max_c)]
+    .sort((a, b) => a.band_c - b.band_c);
+}
+
 export function formatHeatingRange(min: number, max: number, format: (value: number) => string) {
   return min === max ? `${format(min)} °C` : `${format(min)} – ${format(max)} °C`;
 }
@@ -77,7 +92,9 @@ export function readRoomHeatingBands(value: unknown): RoomHeatingBands | undefin
     !(library.reference_revision === null || typeof library.reference_revision === "string") ||
     !Array.isArray(library.active) || !Array.isArray(library.candidates) || !library.attempted ||
     typeof library.attempted !== "object") return;
-  return { ...library, active: readFits(library.active), candidates: readFits(library.candidates) };
+  const model = readThermalModel(library.reference?.model);
+  const reference = model ? { ...library.reference, model } : undefined;
+  return { ...library, reference, active: readFits(library.active), candidates: readFits(library.candidates) };
 }
 
 function readFits(points: RoomHeatingBand[]): RoomHeatingBand[] {
@@ -87,7 +104,7 @@ function readFits(points: RoomHeatingBand[]): RoomHeatingBand[] {
       point.observed_min_c > point.observed_max_c || heatingBand(point.observed_min_c) !== point.band_c ||
       heatingBand(point.observed_max_c) !== point.band_c ||
       !(Date.parse(point.training_from) < Date.parse(point.training_to))) return [];
-    const model = readThermalModel(point.model as unknown as Record<string, unknown>);
+    const model = readThermalModel(point.model);
     return model ? [{ ...point, model }] : [];
   });
 }

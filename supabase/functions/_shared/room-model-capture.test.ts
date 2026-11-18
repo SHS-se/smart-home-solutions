@@ -228,7 +228,9 @@ Deno.test("a forecast crosses heating bands and publishes the actual thermal and
     model: { ...reference, gain_c_per_wh: gain },
   });
   fitted.heating_bands = { binding: "synthetic-configuration", since: "2025-01-01", reference_revision: "general",
-    attempted: {}, candidates: [], active: [fit(-10, "cold", -7, reference.gain_c_per_wh), fit(5, "mild", 6, reference.gain_c_per_wh)] };
+    reference: { model: reference }, attempted: {}, candidates: [],
+    active: [fit(-10, "cold", -7, reference.gain_c_per_wh), fit(5, "mild", 6, reference.gain_c_per_wh)] };
+  fitted.background_gain_c_per_h = reference.background_gain_c_per_h + .5;
   bundle.roomHeating = { [key]: { binding: "synthetic-configuration", observed_since: "2025-01-01" } };
   snapshot.slots = snapshot.slots.slice(0, 3);
   snapshot.outdoor_temperature_c = [-7, 6, 11];
@@ -245,6 +247,7 @@ Deno.test("a forecast crosses heating bands and publishes the actual thermal and
       training_from: "2025-01-01", training_to: "2025-01-08" }],
   } }];
   const prepared = prepareRoomModels(snapshot, [mapping], bundle);
+  assertEquals(prepared.rooms[0].model?.background_gain_c_per_h, reference.background_gain_c_per_h);
   const evidence = roomPlanningZones(prepared.snapshot, prepared.rooms, { schedules: new Map([[key, {
     weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
     off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21,

@@ -44,8 +44,7 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
       ? roomHeating
         ? await fitStoredRoomHeating(db, claim.home_id, claim.customer_id, claim.owner_key, roomHeating,
           previous ?? undefined, claim.input.location ?? null, now())
-        : { ...await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now()),
-          ...(previous?.heating_bands ? { heating_bands: null } : {}) }
+        : await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
       : claim.owner_kind === "device"
       ? claim.input.weather_heating_binding
         ? await fitStoredWeatherHeating(db, claim.home_id, claim.customer_id, claim.owner_key,

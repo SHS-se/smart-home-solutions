@@ -1,6 +1,6 @@
 import { fitRoomBand, roomMeanObservation, type RoomMeanQuarter } from "./mean-observations.ts";
 import { HEATED_SAMPLE_MIN_W } from "./regression.ts";
-import { heatingBand, roomHeatingBandAt, type RoomHeatingBand, type RoomHeatingBands } from "../../planner/heating-bands.ts";
+import { heatingBand, publishHeatingBand, roomHeatingBandAt, type RoomHeatingBand, type RoomHeatingBands } from "../../planner/heating-bands.ts";
 import type { ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 import { addPairedLoss, pairedImprovement, type PairedDay } from "../heating-comparison.ts";
 
@@ -13,13 +13,14 @@ function comparison(
   const from = Date.parse(proposed.training_to);
   const lag = reference.heat_lag_h ?? 0;
   const carry = roomMeanObservation(0, lag).C;
-  let delivered = 0, predicted: [number, number] | null = null;
+  let delivered = 0, measuredHours = 0, predicted: [number, number] | null = null;
   let previous: RoomMeanQuarter | undefined;
   let observedHeat = false;
   const warming = new Map<number, PairedDay>(), cooldown = new Map<number, PairedDay>();
   for (const row of rows) {
     if (row.start_ms - (previous?.start_ms ?? Infinity) !== QUARTER_MS) {
       delivered = 0;
+      measuredHours = 0;
       observedHeat = false;
       predicted = null;
     }
@@ -36,7 +37,7 @@ function comparison(
       observedHeat = false;
     }
     observedHeat ||= phase === "warming";
-    if (row.start_ms >= from) {
+    if (row.start_ms >= from && measuredHours >= 4 * lag) {
       const model = roomHeatingBandAt(incumbent, row.outdoor_c)?.model ?? reference;
       const inBand = row.outdoor_c >= proposed.observed_min_c && row.outdoor_c <= proposed.observed_max_c;
       const models = [model, inBand ? proposed.model : model] as const;
@@ -63,6 +64,7 @@ function comparison(
       }
     }
     delivered = carry * delivered + (1 - carry) * row.heat_w;
+    measuredHours += .25;
     previous = row;
   }
   const coolingLossImproved = [...cooldown.values()].reduce((sum, day) => sum + day.sum / day.count, 0) >= 0;
@@ -100,17 +102,13 @@ export function advanceRoomHeatingBands(
     const candidates = library.candidates.filter(candidate => candidate !== pending);
     if (result.warming === "worse" || result.cooldown === "worse") return { ...library, attempted, candidates };
     if (result.warming === "better" && result.cooldownHeld) {
-      return { ...library, attempted, candidates, active: [...library.active.filter(point => point.band_c !== band), pending]
-        .sort((a, b) => a.band_c - b.band_c) };
+      return { ...library, attempted, candidates, active: publishHeatingBand(library.active, pending) };
     }
     return { ...library, attempted };
   }
   const training = history ? rows.filter(row => row.start_ms < history.split) : rows;
   const fit = fitRoomBand(training, reference, outdoor => heatingBand(outdoor) === band, ratedPowerW);
-  const incumbent = library.active.find(point => point.band_c === band);
-  if (!fit || (incumbent && (fit.minC > incumbent.observed_min_c || fit.maxC < incumbent.observed_max_c))) {
-    return { ...library, attempted };
-  }
+  if (!fit) return { ...library, attempted };
   const candidate: RoomHeatingBand = {
     revision: crypto.randomUUID(), band_c: band, observed_min_c: fit.minC, observed_max_c: fit.maxC,
     training_from: new Date(training[0].start_ms).toISOString(),
@@ -120,7 +118,7 @@ export function advanceRoomHeatingBands(
   if (history) {
     const result = comparison(rows, library.active, candidate, reference);
     if (result.warming === "better" && result.cooldownHeld) return { ...library, attempted,
-      active: [...library.active.filter(point => point.band_c !== band), candidate].sort((a, b) => a.band_c - b.band_c) };
+      active: publishHeatingBand(library.active, candidate) };
     if (result.warming === "worse" || result.cooldown === "worse") return { ...library, attempted };
   }
   return { ...library, attempted, candidates: [...library.candidates, candidate] };

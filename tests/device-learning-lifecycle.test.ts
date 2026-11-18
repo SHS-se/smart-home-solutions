@@ -101,6 +101,34 @@ Deno.test("heating calibration publications keep old revisions and expose only c
     assertEquals((await view()).room.temperature_bands.map(band => band.revision), [cold, replacement]);
     await db.exec("UPDATE energy_optimisation_devices SET category='cooling'");
     assertEquals((await view()).room.temperature_bands, []);
+    await db.exec("UPDATE energy_optimisation_zone_models SET last_attempted_at=now()-interval '2 days'");
+    await request(db);
+    assert(await publish(db, await claim(db), 4, { ...fitted(), gain_c_per_wh: .003 }));
+    await db.exec("UPDATE energy_optimisation_devices SET category='heating',mapping_status='partial'");
+    assertEquals((await view()).room.temperature_bands.map(band => band.revision), [cold, replacement]);
+  } finally { await db.close(); }
+});
+
+Deno.test("the room history can find an old weather band before room probes existed", async () => {
+  const db = await database();
+  try {
+    await db.query(`WITH installed AS (
+      INSERT INTO energy_optimisation_devices(id,home_id,customer_id,device_key,
+        category,statistic_id,planning_role_override,control_type_override,mapping_summary,first_seen_at)
+      VALUES(gen_random_uuid(),$1,$1,'synthetic-heater','heating','synthetic-meter','controllable',
+        'switch_schedule','{"room_key":"synthetic-room"}','2025-10-01') RETURNING id
+    ) INSERT INTO energy_optimisation_device_slots(device_id,home_id,customer_id,start_ts,energy_kwh)
+      SELECT id,$1,$1,ts::timestamptz,kwh FROM installed
+      CROSS JOIN (VALUES ('2026-01-10 08:00Z',.2),('2026-01-10 08:15Z',NULL),('2026-01-10 08:45Z',.2)) samples(ts,kwh)`, [home]);
+    await db.query(`INSERT INTO energy_optimisation_outdoor_slots VALUES($1,$1,'2026-01-10 08:00Z',-7),
+      ($1,$1,'2026-01-10 08:15Z',-6),($1,$1,'2026-01-10 08:45Z',-7)`, [home]);
+    await db.query(`INSERT INTO energy_optimisation_thermal_slots VALUES($1,'synthetic-room','2026-01-10 08:00Z',19),
+      ($1,'synthetic-room','2026-01-10 08:15Z',19.1),($1,'synthetic-room','2026-01-10 08:45Z',19.3)`, [home]);
+    const context = await db.query<{ since: string }>(`SELECT get_energy_room_heating_context($1,'synthetic-room')->>'observed_since' AS since`, [home]);
+    assertEquals(context.rows[0].since.slice(0, 10), "2025-10-01");
+    const history = await db.query<{ band_c: number; minutes: number }>(`SELECT band_c,extract(minute FROM last_at)::int AS minutes
+      FROM get_energy_room_heating_band_history($1,'synthetic-room','2025-10-01','2026-10-01')`, [home]);
+    assertEquals(history.rows, [{ band_c: -10, minutes: 45 }]);
   } finally { await db.close(); }
 });
 Deno.test("learning coalesces each owner and captures model revisions atomically", async () => {
