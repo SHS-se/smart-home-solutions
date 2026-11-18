@@ -5309,6 +5309,10 @@ export type Database = {
           start_ts: string
         }[]
       }
+      read_energy_forecast_accuracy: {
+        Args: { p_home_id: string; p_known_revision?: string | null }
+        Returns: Json
+      }
       get_energy_forecast_accuracy: {
         Args: { p_home_id: string }
         Returns: Json

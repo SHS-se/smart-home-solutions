@@ -4,6 +4,7 @@ import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
 import PlanningNotesButton from './PlanningNotesButton';
 import AccuracyButtons from './AccuracyButtons';
+import { AccuracyReportCache, type AccuracyReportDelta } from '../../../../supabase/functions/_shared/forecast-accuracy-sync';
 import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
@@ -132,6 +133,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     failures: number;
     current: CurrentRow | null;
     trace: PlanDisplayTrace;
+    accuracy: AccuracyReportCache;
     known: Record<string, string | Record<string, string>>;
     actuals: HistoryCache<ActualEnergySlot>;
     prices: HistoryCache<PriceSlotRow>;
@@ -139,7 +141,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   } | null>(null);
   if (syncRef.current?.scope !== syncScope) {
     syncRef.current = { scope: syncScope, busy: false, initialized: false, failures: 0,
-      current: null, trace: new PlanDisplayTrace(), known: {},
+      current: null, trace: new PlanDisplayTrace(), accuracy: new AccuracyReportCache(), known: {},
       actuals: new HistoryCache(), prices: new HistoryCache(), deviceActuals: new HistoryCache() };
   }
   const { trace } = syncRef.current;
@@ -182,11 +184,17 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         return { delta, syncError };
       };
       const [{ delta, syncError }, accuracyResult] = await Promise.all([readPortal(),
-        Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId}))
+        Promise.resolve(supabase.rpc('read_energy_forecast_accuracy', {p_home_id: homeId, p_known_revision: cache.accuracy.revision}))
         .catch(() => ({data: null, error: {message: 'Accuracy unavailable'}}))]);
       if (syncRef.current !== cache) return;
-      setAccuracyError(accuracyResult.error ? t('Noggrannhet är inte tillgänglig', 'Accuracy unavailable') : null);
-      setAccuracy(accuracyResult.data as unknown as AccuracyReport | null);
+      try {
+        if (accuracyResult.error) throw accuracyResult.error;
+        setAccuracy(cache.accuracy.apply(accuracyResult.data as unknown as AccuracyReportDelta));
+        setAccuracyError(null);
+      } catch {
+        setAccuracy(cache.accuracy.clear());
+        setAccuracyError(t('Noggrannhet är inte tillgänglig', 'Accuracy unavailable'));
+      }
       if (syncError) throw syncError;
       recordPortalSync(delta, !cache.initialized);
       const row = delta.current ? { ...delta.current,
