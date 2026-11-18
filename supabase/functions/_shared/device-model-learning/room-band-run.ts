@@ -37,7 +37,7 @@ export async function runRoomHeatingLearning(
   const basis = { p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence, p_revision: revision };
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const { data, error } = await db.rpc(name, { ...basis, ...args });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`${name}: ${error.message}`);
     return data;
   };
   const reset = async (cursor: number): Promise<RoomLearningStep> => {

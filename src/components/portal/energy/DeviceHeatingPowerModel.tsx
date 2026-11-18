@@ -10,6 +10,53 @@ import { supabase } from '@/integrations/supabase/client';
 import { WEATHER_HEATING_METHOD } from '../../../../supabase/functions/_shared/planner/weather-heating';
 import { formatHeatingRange, HEATING_BAND_WIDTH_C } from '../../../../supabase/functions/_shared/planner/heating-bands';
 import { HeatingBandSelect } from './HeatingBandSelect';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+
+const runningPowerModel = z.object({
+  model_method: z.literal('room_running_power_constant_v1'),
+  revision: z.string().min(1),
+  expected_w: z.number().positive(),
+  on_hours: z.number().nonnegative(),
+  intervals: z.number().int().nonnegative(),
+  cycles: z.number().int().positive().optional(),
+  source: z.enum(['attributed_cycles', 'recorded_on_intervals']),
+  observed_from: z.iso.datetime({ offset: true }),
+  observed_to: z.iso.datetime({ offset: true }),
+  retained: z.boolean().optional(),
+}).refine(model => model.source === 'attributed_cycles' ? model.cycles !== undefined : model.intervals > 0);
+const configuredPower = z.object({ source: z.literal('configured'), expected_w: z.number().positive() });
+
+function RunningPowerContents({ model, configuredWatts }: {
+  model: z.infer<typeof runningPowerModel> | null; configuredWatts: number | null;
+}) {
+  const { language, t } = useLanguage();
+  const timeZone = useHomeTimeZone();
+  const date = new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { timeZone, dateStyle: 'medium' });
+  const number = (value: number) => value.toLocaleString(language === 'sv' ? 'sv-SE' : 'en-GB', { maximumFractionDigits: 2 });
+  return <section className="space-y-3 rounded-md border p-4 text-sm">
+    <dl className="grid gap-4 sm:grid-cols-3">
+      <div><dt className="text-muted-foreground">{configuredWatts !== null
+        ? t('Inställd effekt', 'Configured power') : t('Effekt vid uppvärmning', 'Running power while heating')}</dt>
+        <dd>{model || configuredWatts !== null ? `${number((model?.expected_w ?? configuredWatts!) / 1000)} kW` : '—'}</dd></div>
+      {model && <>
+        <div><dt className="text-muted-foreground">{t('Observerade uppvärmningstimmar', 'Observed heating hours')}</dt>
+          <dd>{number(model.on_hours)} h</dd></div>
+        <div><dt className="text-muted-foreground">{model.source === 'attributed_cycles'
+          ? t('Uppvärmningscykler', 'Heating cycles') : t('Observationer under uppvärmning', 'Heating observations')}</dt>
+          <dd>{number(model.source === 'attributed_cycles' ? model.cycles! : model.intervals)}</dd></div>
+      </>}
+    </dl>
+    {model ? <>
+      <p className="text-muted-foreground">{t('Konstant effekt anpassad från mätningar under uppvärmning.', 'Constant running power fitted from heating measurements.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Träningsdata', 'Training data')}: {date.format(new Date(model.observed_from))} – {date.format(new Date(model.observed_to))}</p>
+      {model.retained && <p className="text-xs text-muted-foreground">{t('Den tidigare anpassningen behålls. De senaste mätningarna identifierade ingen ny drifteffekt.',
+        'The previous fit is retained. The latest measurements did not identify a new running power.')}</p>}
+    </> : <p className="text-muted-foreground">{configuredWatts !== null
+      ? t('Effekten kommer från enhetens inställningar. Ingen anpassning från mätningar finns ännu.',
+        'Power comes from the device settings. No fit from measurements is available yet.')
+      : t('Samlar in mätningar av effekt vid uppvärmning.', 'Collecting power readings while heating.')}</p>}
+  </section>;
+}
 
 const weatherBand = z.object({
   outdoor_c: z.number(),
@@ -103,36 +150,49 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
   </>;
 }
 
-export default function DeviceHeatingPowerModel({ homeId, deviceKey, children }: {
+export default function DeviceHeatingPowerModel({ homeId, deviceKey, heating, children }: {
   homeId: string;
   deviceKey: string;
+  heating: boolean;
   children: ReactNode;
 }) {
   const { t } = useLanguage();
   const model = useQuery({
-    queryKey: ['device-heating-power-model', homeId, deviceKey],
+    queryKey: ['device-heating-power-model', homeId, deviceKey, heating],
     queryFn: async () => {
       const { data, error } = await supabase.from('energy_optimisation_device_operating_points')
         .select('points:operating_points->points,reference:operating_points->reference' as string)
         .eq('home_id', homeId).eq('device_key', deviceKey)
         .filter('operating_points->>method', 'eq', WEATHER_HEATING_METHOD).maybeSingle();
       if (error) throw error;
-      if (!data) return null;
-      return weatherProfile.parse(data);
+      if (data) return { kind: 'weather' as const, profile: weatherProfile.parse(data) };
+      if (!heating) return null;
+      const { data: device, error: deviceError } = await supabase.from('energy_optimisation_devices')
+        .select('model:inference->on_power' as string).eq('home_id', homeId).eq('device_key', deviceKey).single();
+      if (deviceError) throw deviceError;
+      const value = z.object({ model: z.unknown().nullish() }).parse(device).model;
+      // An unqualified capture is an attempt, not a fitted running-power model.
+      const fitted = value && typeof value === 'object' && 'model_method' in value
+        ? runningPowerModel.parse(value) : null;
+      const configuredWatts = !fitted && value && typeof value === 'object' && 'source' in value && value.source === 'configured'
+        ? configuredPower.parse(value).expected_w : null;
+      return { kind: 'constant' as const, model: fitted, configuredWatts };
     },
   });
   if (model.isPending) return <p className="text-sm text-muted-foreground">{t('Laddar enhetsmodell…', 'Loading device model…')}</p>;
   if (model.isError) return <p className="text-sm text-destructive" role="alert">{t('Kunde inte läsa enhetsmodellen.', 'Could not load the device model.')}</p>;
   if (model.data === null) return children;
+  if (model.data.kind === 'constant') return <RunningPowerContents model={model.data.model} configuredWatts={model.data.configuredWatts} />;
+  const profile = model.data.profile;
   const title = t('Eleffekt vid uppvärmning efter utomhustemperatur', 'Heating power by outdoor temperature');
   return <section className="space-y-3 rounded-md border p-4 text-sm">
     <h3 className="font-semibold">{title}</h3>
-    {model.data.points.length > 0 && <HeatingPowerChart bands={model.data.points} title={title} />}
-    {model.data.reference && <details className="space-y-3">
+    {profile.points.length > 0 && <HeatingPowerChart bands={profile.points} title={title} />}
+    {profile.reference && <details className="space-y-3">
       <summary className="cursor-pointer font-medium">{t('Allmän effektkurva', 'General power curve')}</summary>
-      <HeatingPowerChart bands={model.data.reference.points} title={t('Allmän effektkurva', 'General power curve')} />
+      <HeatingPowerChart bands={profile.reference.points} title={t('Allmän effektkurva', 'General power curve')} />
     </details>}
-    {model.data.points.length === 0 && !model.data.reference &&
+    {profile.points.length === 0 && !profile.reference &&
       <p className="text-muted-foreground">{t('Samlar in mätningar av effekt vid uppvärmning.', 'Collecting power readings while heating.')}</p>}
   </section>;
 }

@@ -53,6 +53,7 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     // functions under test execute against the concrete synthetic relations.
     await db.exec("SET check_function_bodies=false");
     await db.exec(await Deno.readTextFile("supabase/migrations/20261118190000_native_heating_observations.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119001500_bound_room_history_reads.sql"));
     await db.exec("SET check_function_bodies=true");
     const start = (await db.query<{ at: string }>("SELECT to_char(date_trunc('hour',now()-interval '1 day'),'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at")).rows[0].at;
     const end = new Date(Date.parse(start) + 3_600_000).toISOString();
@@ -148,7 +149,13 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     assertEquals(afterProbes.changed === beforeProbes.changed, false);
     assertEquals((await db.query("SELECT temperature_source_key,probe_evidence FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
       [customer, home, start, end])).rows, [{ temperature_source_key: former, probe_evidence: await facts() }]);
+    const probeRevision = async () => (await db.query<{ fingerprint: string; changed: string; matches: boolean }>(`
+      SELECT probe_fingerprint AS fingerprint,learning_updated_at::text AS changed,probe_fingerprint=md5(probes::text) AS matches
+      FROM energy_heating_probe_observations WHERE home_id=$1 AND start_ts=$2 AND duration_s=3600`, [home, start])).rows[0];
+    const recordedProbe = await probeRevision();
+    assertEquals(recordedProbe.matches, true);
     await writeProbes([fact, otherFact]);
+    assertEquals(await probeRevision(), recordedProbe, "identical probe facts preserve the generated hash and material clock");
     assertEquals(await window(), afterProbes, "array order alone is not new evidence");
     await writeProbes([otherFact, { ...fact, mean: null, unchanged: null, joint_unchanged: null,
       cohort_key: null, reported: null, unavailable: null }]);
@@ -229,8 +236,12 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.query("UPDATE energy_optimisation_devices SET first_seen_at=$1 WHERE id=$2", [start, device]);
     await db.query("INSERT INTO energy_optimisation_thermal_slots(home_id,customer_id,room_key,start_ts,room_temperature_c,cooling_duty) VALUES($1,$2,'room',$3,20,0)",
       [home, customer, legacyCurrent]);
-    const legacy = async () => (await db.query("SELECT temperature_source_key,probe_evidence FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
-      [customer, home, legacyCurrent, legacyThrough])).rows;
+    const legacy = async (from = legacyCurrent, through = legacyThrough) => (await db.query<{
+      start_ts: Date; temperature_source_key: string; probe_evidence: unknown;
+    }>("SELECT start_ts,temperature_source_key,probe_evidence FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
+      [customer, home, from, through])).rows
+      .filter(row => row.start_ts.getTime() === Date.parse(legacyCurrent))
+      .map(({ temperature_source_key, probe_evidence }) => ({ temperature_source_key, probe_evidence }));
     assertEquals(await legacy(), [{ temperature_source_key: source, probe_evidence: null }]);
     await writeProbes([{ ...fact, source_key: source }], legacyCurrent, 900);
     assertEquals(await legacy(), [{ temperature_source_key: source, probe_evidence: [{ ...fact, source_key: source }] }]);
@@ -245,14 +256,22 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
       await write({ ...row, start: at, duration_s: 900, source: "recorder_5minute_mean" });
       await writeProbes([{ ...fact, source_key: source, unavailable: true }], at, 900);
     }
-    assertEquals((await db.query("SELECT duration_s,probe_evidence->0->>'unavailable' AS unavailable FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
-      [customer, home, fineStart, fineEnd])).rows, Array(4).fill({ duration_s: 900, unavailable: "true" }));
+    const fine = async (from = fineStart) => (await db.query<{ start_ts: Date; duration_s: number; unavailable: string | null }>(
+      "SELECT start_ts,duration_s,probe_evidence->0->>'unavailable' AS unavailable FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
+      [customer, home, from, fineEnd])).rows.filter(row => row.start_ts.getTime() >= Date.parse(fineStart))
+      .map(({ duration_s, unavailable }) => ({ duration_s, unavailable }));
+    const expectedFine = Array(4).fill({ duration_s: 900, unavailable: "true" });
+    assertEquals(await fine(), expectedFine);
+    await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',$3,99,0)",
+      [home, customer, new Date(Date.parse(fineStart) + 100).toISOString()]);
+    assertEquals(await fine(), expectedFine, "a fractional legacy timestamp inside a native quarter is covered");
     const afterSpan = new Date(Date.parse(fineEnd) + 3_600_000).toISOString();
     const wideWindow = async () => (await db.query<{ fingerprint: string; changed: string }>(
       "SELECT fingerprint,evidence_updated_at::text AS changed FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4) WHERE band_c=-10",
       [home, customer, start, new Date(Date.parse(afterSpan) + 3_600_000).toISOString()])).rows[0];
     const beforeCadenceCorrection = await wideWindow();
-    await writeProbes([{ ...fact, source_key: source, mean: 20.2, unchanged: false }], legacyCurrent, 900);
+    const correctedFact = { ...fact, source_key: source, mean: 20.2, unchanged: false };
+    await writeProbes([correctedFact], legacyCurrent, 900);
     const cadenceCorrected = await wideWindow();
     assertEquals(cadenceCorrected.fingerprint === beforeCadenceCorrection.fingerprint, false,
       "probe cadence outside the cold band's fitted intervals is still a qualification dependency");
@@ -262,6 +281,12 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const expiredProbe = new Date(Date.parse(start) - 401 * 86_400_000).toISOString();
     await writeProbes([fact], expiredProbe);
     assertEquals((await db.query("SELECT * FROM energy_heating_probe_observations WHERE start_ts=$1", [expiredProbe])).rows, []);
+    const expectedLegacy = [{ temperature_source_key: source, probe_evidence: [correctedFact] }];
+    assertEquals(await legacy(), expectedLegacy);
+    assertEquals(await legacy(start, fineEnd), expectedLegacy,
+      "a broader read spanning a former probe assignment retains the correct later current-source fact");
+    assertEquals(await fine(start), expectedFine,
+      "reading across a former source assignment preserves later complete fine intervals");
 
     // Compact transport round-trips canonical facts; no string identities are
     // repeated per row and absence of evidence stays distinct from an empty list.
@@ -425,7 +450,28 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     // room; unknown eligibility is not permission to disregard known identity.
     await writeProbes([ownCurrent, otherFact, hallHistorical, ...extraPeers.map(p =>
       p.area_key === "mixed" ? { ...p, source_key: conflicting } : p)], nativePeerAt);
-    assertEquals((await nativePeer()).house_temperature_c, null);
+    const peerQualifiedWindow = async () => (await db.query<{ fingerprint: string; changed: string }>(`
+      SELECT fingerprint,evidence_updated_at::text AS changed FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)
+      WHERE band_c=-10`, [home, customer, nativePeerAt, nativePeerEnd])).rows[0];
+    const { probe_evidence: peersBeforeEdit, ...observationsBeforeEdit } = await nativePeer();
+    assertEquals(observationsBeforeEdit.house_temperature_c, null);
+    assertEquals(peersBeforeEdit?.some(probe => probe.source_key === unreadySource), true);
+    const beforePeerEdit = await peerQualifiedWindow();
+    const rawBeforePeerEdit = await facts(nativePeerAt);
+    const replacementUnreadySource = await hash("sensor.synthetic_replacement_unready_air");
+    await db.query("UPDATE energy_room_profiles SET rooms=jsonb_set(rooms,'{unready,source_key}',to_jsonb($1::text)) WHERE home_id=$2",
+      [replacementUnreadySource, home]);
+    const { probe_evidence: peersAfterEdit, ...observationsAfterEdit } = await nativePeer();
+    assertEquals(observationsAfterEdit, observationsBeforeEdit);
+    assertEquals(peersAfterEdit?.some(probe => probe.area_key === "unready"), false);
+    assertEquals(await facts(nativePeerAt), rawBeforePeerEdit, "changing the configured source preserves raw facts");
+    const afterPeerEdit = await peerQualifiedWindow();
+    assertEquals(afterPeerEdit.fingerprint === beforePeerEdit.fingerprint, false);
+    assertEquals((await db.query<{ advanced: boolean }>("SELECT $1::timestamptz>$2::timestamptz AS advanced",
+      [afterPeerEdit.changed, beforePeerEdit.changed])).rows[0].advanced, true,
+    "an unready peer's binding change advances evidence even with the same numerical observations");
+    await db.query("UPDATE energy_room_profiles SET rooms=jsonb_set(rooms,'{unready,source_key}',to_jsonb($1::text)) WHERE home_id=$2",
+      [unreadySource, home]);
     await writeProbes([ownCurrent, otherFact, hallHistorical, ...extraPeers], nativePeerAt);
     assertEquals((await nativePeer()).house_temperature_c, 20);
 

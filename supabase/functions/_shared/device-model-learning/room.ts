@@ -33,7 +33,7 @@ export async function readRoomQuarters(
       const { data, error } = await db.rpc("get_energy_room_thermal_interval_capture", {
         p_customer_id: customerId, p_home_id: homeId, p_room_key: roomKey, p_from: from, p_to: to,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(`get_energy_room_thermal_interval_capture: ${error.message}`);
       return decodeHeatingProbeCapture(data, roomKey);
     }));
     for (const chunk of batch) rows.push(...chunk);
@@ -62,7 +62,9 @@ export interface HeatingFitWindow {
   evidence_updated_at: string;
 }
 
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:pooled_band_general_freshness_v4`;
+// Revisit completed attempts after the broad source-epoch qualification repair
+// and the compact, full-dependency SQL fingerprint change.
+export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:pooled_band_general_freshness_v5`;
 
 function inputRevision(windows: HeatingFitWindow[]): string {
   return JSON.stringify(windows.map(window => [window.window_key, window.from_at, window.to_at, window.fingerprint])
@@ -130,7 +132,7 @@ export async function prepareStoredRoomHeating(
       p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey,
       p_from: from, p_to: to,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`get_energy_room_heating_fit_windows: ${error.message}`);
     return data;
   };
   const windows = (await readWindows()).sort((a, b) =>
@@ -293,7 +295,7 @@ export async function recaptureStoredRoomBand(
       p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey,
       p_from: metadata.pinnedFloor, p_to: window.to_at,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`get_energy_room_heating_fit_windows: ${error.message}`);
     const found = (data as HeatingFitWindow[]).find(candidate => candidate.window_key === window.window_key);
     return found !== undefined && inputRevision([found]) === inputRevision([window]) &&
       found.band_c === window.band_c && found.evidence_updated_at === window.evidence_updated_at;
@@ -379,7 +381,7 @@ async function repairNativeRoomSolar(
     p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: binding,
     p_from: from, p_to: to, p_points: points,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`repair_energy_heating_irradiance: ${error.message}`);
   return { unavailable: false, patched: Number(data) || 0 };
 }
 

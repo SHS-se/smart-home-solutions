@@ -175,13 +175,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
 
   const device = selectedBattery ? null : selected;
   const status = planStatus(device ?? null);
-  const heatingModel = device?.category === 'heating' && mappingState(device) === 'ready'
-    ? currentPlan?.device_models.find(model => model.key === device.device_key &&
-      model.statistic_id === device.statistic_id && model.category === 'heating' &&
-      model.control_type === device.control_type_override)
-    : undefined;
-  const runningPower = device?.active_power_w ?? heatingModel?.active_power_w;
-  const historyQuarters = device?.profile_sample_count || heatingModel?.profile_sample_count || 0;
+  const runningPower = device?.active_power_w;
+  const historyQuarters = device?.profile_sample_count ?? 0;
   const name = device?.name ?? t('Husbatteri', 'House battery');
   const selectedRoom = device && roomKey(device);
   const roomName = device?.mapping_summary?.room_name;
@@ -253,7 +248,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 </div>
               </TabsContent>
               <TabsContent value="model">
-                {device ? <DeviceHeatingPowerModel homeId={homeId} deviceKey={device.device_key}>
+                {device ? <DeviceHeatingPowerModel homeId={homeId} deviceKey={device.device_key} heating={device.category === 'heating'}>
                   <dl className="grid gap-4 rounded-md border p-4 text-sm sm:grid-cols-2">
                     <div><dt className="text-muted-foreground">{device.category === 'heating'
                       ? t('Effekt vid uppvärmning', 'Running power while heating') : t('Aktiv effekt', 'Active power')}</dt>

@@ -1138,7 +1138,7 @@ test.describe('requesting a replan', () => {
     expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
-  test('device Model shows a matched heating plan estimate when inventory has no running power', async ({ page, context }) => {
+  test('device Model shows fitted running-power evidence independently of the current plan', async ({ page, context }) => {
     const key = 'synthetic-floor-heater', meter = 'sensor.synthetic_floor_heater_energy';
     replan.devices = [{
       id: key, device_key: key, statistic_id: meter, name: 'Test floor heater', category: 'heating',
@@ -1149,18 +1149,48 @@ test.describe('requesting a replan', () => {
       ...mixedModeFixture.plan.device_models[0], key, statistic_id: meter, category: 'heating',
       control_type: 'setpoint', active_power_w: 503, profile_sample_count: 86,
     }] };
+    let fitted: Record<string, unknown> | null = {
+      model_method: 'room_running_power_constant_v1', revision: 'synthetic-running-power-revision',
+      source: 'attributed_cycles', expected_w: 620, cycles: 7, intervals: 0, on_hours: 2.4,
+      observed_from: '2026-10-01T00:00:00Z', observed_to: '2026-10-04T00:00:00Z', retained: true,
+    };
     await context.route('**/rest/v1/energy_optimisation_device_operating_points*', route => route.fulfill({ json: [] }));
+    await context.route('**/rest/v1/energy_optimisation_devices*', route => {
+      const filters = new URL(route.request().url()).searchParams;
+      expect(filters.get('home_id')).toBe(`eq.${HOME_ID}`);
+      expect(filters.get('device_key')).toBe(`eq.${key}`);
+      expect(filters.get('select')).toBe('model:inference->on_power');
+      return route.fulfill({ json: { model: fitted } });
+    });
     await page.goto(`/portal/energy-modeling?tab=devices&device=${key}`);
     const openModel = () => page.getByRole('tab', { name: /^(Modell|Model)$/ }).click();
     await openModel();
     const model = page.getByRole('tabpanel', { name: /^(Modell|Model)$/ });
-    await expect(model.getByText('0.50 kW', { exact: true })).toBeVisible();
-    await expect(model.getByText('86 × 15 min', { exact: true })).toBeVisible();
+    await expect(model.getByText(/^0[,.]62 kW$/)).toBeVisible();
+    await expect(model.getByText(/^2[,.]4 h$/)).toBeVisible();
+    await expect(model.getByText('7', { exact: true })).toBeVisible();
+    await expect(model.getByText(/tidigare anpassningen behålls|previous fit is retained/i)).toBeVisible();
+    await expect(model.getByText('86 × 15 min', { exact: true })).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 
-    replan.devices[0].statistic_id = 'sensor.replaced_meter_energy';
-    await page.reload();
-    await openModel();
+    fitted = { ...fitted, source: 'recorded_on_intervals', intervals: 12, on_hours: 1, retained: false };
+    delete fitted.cycles;
+    await page.reload(); await openModel();
+    await expect(model.getByText('12', { exact: true })).toBeVisible();
+    await expect(model.getByText(/observationer under uppvärmning|heating observations/i)).toBeVisible();
+
+    fitted = { source: 'configured', expected_w: 750 };
+    await page.reload(); await openModel();
+    await expect(model.getByText(/^0[,.]75 kW$/)).toBeVisible();
+    await expect(model.getByText(/inställd effekt|configured power/i)).toBeVisible();
+    await expect(model.getByText(/observerade uppvärmningstimmar|observed heating hours/i)).toHaveCount(0);
+
+    fitted = null;
+    await page.reload(); await openModel();
     await expect(model.getByText('—', { exact: true })).toBeVisible();
+    await expect(model.getByText(/samlar in mätningar|collecting power readings/i)).toBeVisible();
+    await expect(model.getByText(/0[,.]50 kW|86 × 15 min/)).toHaveCount(0);
   });
 
   test('device colours match every reference and survive refresh, reorder, configuration changes and additions', async ({ page, context }, testInfo) => {

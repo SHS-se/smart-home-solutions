@@ -470,6 +470,7 @@ test.describe('staff navigation shell', () => {
       json: portalDelta(route.request().postDataJSON().p_known, { devices }),
     }));
     await context.route('**/rest/v1/energy_optimisation_home_planning?**', route => route.fulfill({ json: battery }));
+    await context.route('**/rest/v1/energy_optimisation_devices?**', route => route.fulfill({ json: { model: null } }));
     await context.route('**/rest/v1/rpc/get_energy_optimisation_*', route => route.fulfill({ json: [] }));
     await context.route('**/rest/v1/rpc/set_energy_*', async route => {
       const body = route.request().postDataJSON();
@@ -531,7 +532,8 @@ test.describe('staff navigation shell', () => {
     await expect(devicePanel(1).getByRole('heading', { name: 'Utanför planen' })).toBeVisible();
     await expect(devicePanel(1).getByText(/Kontrollera Rumstemperatur/)).toBeVisible();
     await devicePanel(1).getByRole('tab', { name: 'Modell' }).click();
-    await expect(devicePanel(1).getByText('1.00 kW', { exact: true })).toBeVisible();
+    await expect(devicePanel(1).getByText('—', { exact: true })).toBeVisible();
+    await expect(devicePanel(1).getByText('Samlar in mätningar av effekt vid uppvärmning.', { exact: true })).toBeVisible();
     await selectDevice(0);
     await expect(toggle(0)).toBeEnabled();
     await expect(toggle(0)).not.toBeChecked();

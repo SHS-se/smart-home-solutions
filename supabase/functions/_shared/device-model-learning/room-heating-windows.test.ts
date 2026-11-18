@@ -165,8 +165,11 @@ Deno.test("historical windows add bands while retaining installed reference coef
 Deno.test("a failed history read never marks its window attempted", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10:2026-01");
   const db = database([candidate], rows);
-  db.fail("get_energy_room_thermal_interval_capture");
-  await assertRejects(async () => await fitStoredRoomHeating(db, "home", "customer", "room", context, undefined, null, now));
+  for (const operation of ["get_energy_room_heating_fit_windows", "get_energy_room_thermal_interval_capture"]) {
+    db.fail(operation);
+    await assertRejects(async () => await fitStoredRoomHeating(db, "home", "customer", "room", context, undefined, null, now),
+      Error, `${operation}: synthetic read failed`);
+  }
 });
 
 Deno.test("absent heating windows retain the standard recent-fit diagnostic", async () => {
