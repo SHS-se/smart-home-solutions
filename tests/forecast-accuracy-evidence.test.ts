@@ -22,6 +22,7 @@ async function database() {
     CREATE TABLE energy_optimisation_current(home_id uuid,plan_id uuid);`);
   await db.exec(await Deno.readTextFile(migration));
   await db.exec(await Deno.readTextFile('supabase/migrations/20261102080000_stream_accuracy_slot_selection.sql'));
+  await db.exec(await Deno.readTextFile('supabase/migrations/20261118154500_accuracy_reader_and_report_revisions.sql'));
   return db;
 }
 const slot=(start:string):AccuracySlot=>({start,duration_hours:.25,load_w:1600,pv_w:200,device_loads_w:{heater:400},
@@ -129,5 +130,43 @@ Deno.test('empty history and old report versions stay reporting-only absences',a
     assertEquals(calculateAccuracy({...selected,...metadata()}).report.historical.percentage,null);
     await db.query(`INSERT INTO energy_forecast_accuracy_reports VALUES($1,$2,'{"version":2}','[]')`,[HOME,UNTIL]);
     assertEquals((await db.query<{r:unknown}>('SELECT get_energy_forecast_accuracy($1) r',[HOME])).rows[0].r,null);
+  } finally {await db.close();}
+});
+
+Deno.test('accuracy revisions preserve payloads, corrections, absence and metadata-only unchanged reads under RLS', async()=>{
+  const db=await database();
+  try {
+    const report={version:3,scheduled_at:UNTIL,historical:{percentage:84}},diagnostics=[{key:'synthetic',bias_kwh:1}];
+    await db.query(`INSERT INTO energy_forecast_accuracy_reports(home_id,scheduled_at,report,diagnostics)
+      VALUES($1,$2,$3,$4)`,[HOME,UNTIL,report,diagnostics]);
+    const read=async(known:string|null=null,home=HOME)=>(await db.query<{d:{state:string;revision:string|null;report?:unknown}}>(
+      'SELECT read_energy_forecast_accuracy($1,$2) d',[home,known])).rows[0].d;
+    const first=await read();
+    assertEquals(first.state,'changed');
+    assertEquals(first.report,{...report,calculations:diagnostics});
+    assertEquals((await db.query<{r:unknown}>('SELECT get_energy_forecast_accuracy($1) r',[HOME])).rows[0].r,first.report);
+    assertEquals(await read(first.revision),{state:'unchanged',revision:first.revision});
+    await db.query('UPDATE energy_forecast_accuracy_reports SET diagnostics=$1 WHERE home_id=$2',[diagnostics,HOME]);
+    assertEquals(await read(first.revision),{state:'unchanged',revision:first.revision});
+    const corrected=[{key:'synthetic',bias_kwh:2}];
+    await db.query('UPDATE energy_forecast_accuracy_reports SET diagnostics=$1 WHERE home_id=$2',[corrected,HOME]);
+    const second=await read(first.revision);
+    assertEquals(second.state,'changed'); assert(second.revision!==first.revision);
+    assertEquals(second.report,{...report,calculations:corrected});
+    // Existing fenced completion uses positional values; appended metadata must
+    // default correctly. This also creates a real other-home row for the RLS test.
+    await db.query('INSERT INTO energy_forecast_accuracy_reports VALUES($1,$2,$3,$4)',[OTHER,UNTIL,report,diagnostics]);
+    await db.exec(`ALTER TABLE energy_forecast_accuracy_reports ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY scoped_accuracy ON energy_forecast_accuracy_reports FOR SELECT TO authenticated
+        USING(home_id=current_setting('test.home')::uuid);
+      GRANT SELECT(home_id,scheduled_at,revision,report_version) ON energy_forecast_accuracy_reports TO authenticated;
+      SET test.home='${HOME}'; SET ROLE authenticated;`);
+    // No permission to read report/diagnostics: unchanged must use metadata only.
+    assertEquals(await read(second.revision),{state:'unchanged',revision:second.revision});
+    assertEquals(await read(second.revision,OTHER),{state:'missing',revision:null});
+    await assertRejects(()=>read(),Error,'permission denied');
+    await db.exec('RESET ROLE');
+    await db.query('DELETE FROM energy_forecast_accuracy_reports WHERE home_id=$1',[HOME]);
+    assertEquals(await read(second.revision),{state:'missing',revision:null});
   } finally {await db.close();}
 });

@@ -89,7 +89,19 @@
           "default": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "known_forecast_accuracy_revision",
+            "in": "query",
+            "required": false,
+            "description": "Revision retained with the complete accuracy report. Matching revisions return unchanged without diagnostics; clients without this hint receive a full report.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
       },
       "post": {
         "operationId": "reportIntegrationStatus",
@@ -156,7 +168,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "known_forecast_accuracy_revision",
+            "in": "query",
+            "required": false,
+            "description": "Revision retained with the complete accuracy report. Matching revisions return unchanged without diagnostics; clients without this hint receive a full report.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
       }
     },
     "/integration-tariff": {
@@ -1135,6 +1159,35 @@
                 }
               }
             }
+          },
+          "forecast_accuracy": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "forecast_accuracy_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "forecast_accuracy_state": {
+            "type": "string",
+            "enum": [
+              "changed",
+              "unchanged",
+              "missing",
+              "unavailable"
+            ]
+          },
+          "forecast_accuracy_error": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false

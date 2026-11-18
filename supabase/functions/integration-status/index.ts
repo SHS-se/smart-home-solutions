@@ -1,3 +1,4 @@
+import { readAccuracyStatus } from '../_shared/forecast-accuracy-sync.ts';
 import { NotificationUnavailable, waitForReplan } from "../_shared/replan-wait.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Lightweight status endpoint for the SHS Home Assistant integration.
@@ -162,7 +163,8 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
 
     let pending = pendingReplanRequestId(current);
     const params = new URL(req.url).searchParams;
-    if (req.method === "GET" && params.get("wait_for_replan") === "true") {
+    const notification = req.method === "GET" && params.get("wait_for_replan") === "true";
+    if (notification) {
       const after = params.get("after");
       if (after && !HA_UUID.test(after)) return json({ error: "invalid_replan_request_id" }, 400);
       await supabase.realtime.setAuth(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -198,17 +200,19 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         },
       });
     }
-    const [{data: forecastAccuracy, error: accuracyError}, roomModels] = await Promise.all([
-      Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId}))
-        .catch(() => ({data: null, error: {code: 'report_read_failed'}})), readRoomModels(supabase, auth.homeId)]);
-    if (accuracyError) console.error('[FORECAST-ACCURACY] report read failed', {home_id: auth.homeId, code: accuracyError.code});
+    const knownRevision = params.get('known_forecast_accuracy_revision');
+    const [accuracyStatus, roomModels] = await Promise.all([
+      readAccuracyStatus(supabase, auth.homeId, notification ? {kind: 'notification'} : {
+        kind: 'status', knownRevision: knownRevision && HA_UUID.test(knownRevision) ? knownRevision : null,
+      }),
+      notification ? Promise.resolve(null) : readRoomModels(supabase, auth.homeId),
+    ]);
     return json({
       api_version: HA_API_VERSION,
-      forecast_accuracy: forecastAccuracy,
-      forecast_accuracy_error: accuracyError ? 'Accuracy unavailable' : null,
+      ...accuracyStatus,
       // Each planned room's thermal model, so HA's input accuracy can show a
       // missing or limited fit. Null when it could not be read.
-      room_models: roomModels,
+      ...(!notification ? {room_models: roomModels} : {}),
       runtime_received: runtimeReceived,
       supported_snapshot_schema_versions: HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
       supported_plan_schema_versions: HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,

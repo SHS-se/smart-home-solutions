@@ -79,6 +79,7 @@ const idle: ReplanColumns = {
  * next read returns, which is the whole behaviour being checked.
  */
 interface MockPlanState {
+  accuracyReads?: Array<{known: string | null; state: string; bytes: number}>;
   log?: Array<Record<string, unknown>>;
   accuracy?: Record<string, unknown>;
   inputAccuracy?: Record<string, unknown>;
@@ -100,6 +101,8 @@ interface MockPlanState {
 
 async function mockBackend(context: BrowserContext, replan: MockPlanState, plan = PLAN, planSnapshot = snapshot()) {
   const savedColours = new Map<string, string>();
+  let accuracyIdentity = '';
+  let accuracyRevision: string | null = null;
   const nowIso = new Date().toISOString();
   // Reloading ROI uses the historical fixture's fixed clock, which can be ahead
   // of the test runner. Keep mocked sessions valid on both clocks.
@@ -160,8 +163,19 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
   await context.route('**/rest/v1/**', async route => {
     const shown = replan.publishedPlan ?? plan;
     const url = new URL(route.request().url());
-    if (url.pathname.endsWith('/rpc/get_energy_forecast_accuracy')) {
-      await route.fulfill({json: replan.accuracy ?? null});
+    if (url.pathname.endsWith('/rpc/read_energy_forecast_accuracy')) {
+      const report = replan.accuracy ?? null;
+      const identity = JSON.stringify(report);
+      if (identity !== accuracyIdentity) {
+        accuracyIdentity = identity;
+        accuracyRevision = report ? crypto.randomUUID() : null;
+      }
+      const known = route.request().postDataJSON().p_known_revision;
+      const reply = !report ? {state: 'missing', revision: null}
+        : known === accuracyRevision ? {state: 'unchanged', revision: accuracyRevision}
+        : {state: 'changed', revision: accuracyRevision, report};
+      replan.accuracyReads?.push({known, state: reply.state, bytes: JSON.stringify(reply).length});
+      await route.fulfill({json: reply});
       return;
     }
     if (url.pathname.endsWith('/rpc/get_energy_portal_delta')) {
@@ -1939,8 +1953,37 @@ test.describe('requesting a replan', () => {
     await expect(forecast).toBeFocused();
   });
 
+  test('accuracy refresh retains unchanged diagnostics and refetches after correction, absence and reload', async ({page}) => {
+    await page.clock.install();
+    const report = {version:3,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',
+      historical:{percentage:84,grade:'lime',devices:[]},calculations:[{key:'synthetic',bias_kwh:1}]};
+    replan.accuracy=report; replan.accuracyReads=[];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const accuracy=page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/});
+    await expect(accuracy).toContainText('84');
+    expect(replan.accuracyReads[0].known).toBeNull();
+    await page.clock.fastForward(31_000);
+    await expect.poll(()=>replan.accuracyReads!.at(-1)?.state).toBe('unchanged');
+    await expect(accuracy).toContainText('84');
+    expect(replan.accuracyReads.at(-1)!.bytes).toBeLessThan(100);
+    replan.accuracy={...report,historical:{...report.historical,percentage:74,grade:'yellow'}};
+    await page.clock.fastForward(31_000);
+    await expect(accuracy).toContainText('74');
+    expect(replan.accuracyReads.at(-1)!.state).toBe('changed');
+    replan.accuracy=undefined;
+    await page.clock.fastForward(31_000);
+    await expect(accuracy).toContainText('—');
+    replan.accuracy=report;
+    await page.clock.fastForward(31_000);
+    await expect(accuracy).toContainText('84');
+    expect(replan.accuracyReads.at(-1)!.known).toBeNull();
+    await page.reload();
+    await expect(accuracy).toContainText('84');
+    expect(replan.accuracyReads.at(-1)!.known).toBeNull();
+  });
+
   test('failed accuracy reporting leaves the plan and replanning available', async ({page}) => {
-    await page.route('**/rest/v1/rpc/get_energy_forecast_accuracy', route => route.abort('failed'));
+    await page.route('**/rest/v1/rpc/read_energy_forecast_accuracy', route => route.abort('failed'));
     await page.goto('/portal/energy-modeling?tab=plan');
     await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
     await page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/}).click();
