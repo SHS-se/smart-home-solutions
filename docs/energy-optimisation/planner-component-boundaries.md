@@ -400,3 +400,29 @@ Inactive candidate slot arrays may be cleared only after their actual final
 interval ends; identity/ACK facts and durable accepted copies survive. Migration
 uses exact current or provable historical server references. Missing accepted
 provenance remains explicit and never becomes an implicit release of holds.
+
+## Independently fitted room response families
+
+The 19 November 2026 requirement publishes the response selected by the learner:
+finite exchange, exact zero-exchange integrator, or algebraic equilibrium. Each
+band keeps its own family coefficients, lag, revision and selected-family evidence.
+An integrator has no finite time constant. Equilibrium identifies °C/W heater
+response and boundary shares, not a dynamic °C/Wh gain or heat capacity. The
+existing untagged finite record remains the finite storage shape; new fits name
+their family explicitly. Zero fitted limiting response is retained as evidence,
+not changed to a positive gain or rejected by an invented floor.
+
+The thermal owner compiles all families to affine transitions. Dynamic-to-dynamic
+bands retain the existing conserved temperature-equivalent stored heat. Entering
+or leaving equilibrium converts through delivered heater watts: dynamic state
+scale is gain × lag; equilibrium scale is steady heater response. The conversion
+occurs once per positive-duration interval, never per thermostat minute. An
+immediate response has no delayed state. Rust receives the conversion and compiled
+transitions, not fitting policy. Missing history still supplies bounded stored
+warmth, and family changes do not drop the room service.
+
+Solar repair seeks missing, source-qualified observation ranges using an index.
+Thermal evidence corrections do not invalidate completed solar coverage. A bounded
+pass advances through later gaps; unavailable provider hours remain missing and
+retry at the existing daily learning cadence. They do not keep completed numeric
+refits immediately runnable, and new thermal evidence cannot slide the retry date.

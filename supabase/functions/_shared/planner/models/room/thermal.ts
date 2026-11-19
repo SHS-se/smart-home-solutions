@@ -10,7 +10,8 @@ export interface PassiveRoomHeat {
   lag_h: number;
 }
 
-export interface ThermalZoneModel {
+export interface DynamicThermalZoneModel {
+  response_family?: "finite" | "integrator";
   /** Temperature rise per watt-hour delivered, °C/Wh. */
   gain_c_per_wh: number;
   /** Outdoor exchange, °C/h per °C between outdoor air and this room. */
@@ -39,11 +40,11 @@ export interface ThermalZoneModel {
    */
   solar_mean_w_per_m2?: number | null;
   /** Derived lumped heat capacity, Wh/°C. */
-  thermal_capacity_wh_per_c: number;
+  thermal_capacity_wh_per_c: number | null;
   /** Derived total internal plus external exchange coefficient, W/°C. */
-  heat_loss_w_per_c: number;
+  heat_loss_w_per_c: number | null;
   /** Derived time constant, hours. */
-  time_constant_h: number;
+  time_constant_h: number | null;
   /** EMHASS `heating_rate` at the zone's rated power, °C/h. */
   heating_rate_c_per_h: number | null;
   r2: number;
@@ -63,18 +64,49 @@ export interface ThermalZoneModel {
   prediction_error_c?: number | null;
 }
 
+/** Algebraic temperature response; no dynamic capacity or energy gain is identified. */
+export interface EquilibriumThermalZoneModel {
+  response_family: "equilibrium";
+  heater_c_per_w: number;
+  outdoor_share: number;
+  offset_c: number;
+  solar_c_per_wm2: number | null;
+  solar_mean_w_per_m2?: number | null;
+  heat_lag_h?: number | null;
+  r2: number;
+  sample_count: number;
+  residual_std_c: number;
+  prediction_error_c?: number | null;
+}
+export type ThermalZoneModel = DynamicThermalZoneModel | EquilibriumThermalZoneModel;
+export const isEquilibrium = (model: ThermalZoneModel): model is EquilibriumThermalZoneModel => model.response_family === "equilibrium";
+export const heaterResponse = (model: ThermalZoneModel): number => isEquilibrium(model) ? model.heater_c_per_w : model.gain_c_per_wh;
+/** Scale from delivered heater watts to this response's delayed state. */
+export const roomMemoryPerWatt = (model: ThermalZoneModel): number => !(model.heat_lag_h! > 0) ? 0 :
+  isEquilibrium(model) ? model.heater_c_per_w : model.gain_c_per_wh * model.heat_lag_h!;
+/** Dynamic bands conserve Q. Across an algebraic boundary, preserve delivered
+ * heater watts; its response coordinate is not a dynamic heat-capacity estimate. */
+export function roomMemoryScale(previous: ThermalZoneModel, next: ThermalZoneModel): number {
+  if (!isEquilibrium(previous) && !isEquilibrium(next)) return 1;
+  if (previous === next) return 1;
+  const before = roomMemoryPerWatt(previous), after = roomMemoryPerWatt(next);
+  return before > 0 ? after / before : 0;
+}
+
 /** What a room is subject to over one quarter. */
 export interface RoomConditions {
   hours: number;
   outdoor_c: number;
   /** Required when the model couples to the house. */
   house_c?: number | null;
-  /** Free heat this quarter, °C/h: `backgroundRateForSlot`. */
+  /** Dynamic forcing rate (°C/h), or algebraic equilibrium offset (°C),
+   * compiled by backgroundRateForSlot for this same response family. */
   background_c_per_h: number;
 }
 
-/** Exact constant-input transition. Q is stored temperature-equivalent heat,
- * independent of the gain or lag chosen for the next forecast interval.
+/** Exact constant-input transition. Dynamic Q is stored temperature-equivalent heat.
+ * Equilibrium Q is the delayed heater contribution to algebraic temperature.
+ * roomMemoryScale converts once when crossing those response coordinates.
  * next T = decay*T + offset + stored_heat_release*Q + gain_c_per_w*P
  * next Q = carry*Q + stored_heat_gain_c_per_w*P */
 export interface RoomTransition {
@@ -87,10 +119,21 @@ export interface RoomTransition {
 }
 
 export const usesHouse = (model: ThermalZoneModel): boolean =>
+  isEquilibrium(model) ? model.outdoor_share < 1 :
   typeof model.house_coupling_per_h === "number" && model.house_coupling_per_h > 0;
 
 export function roomTransition(model: ThermalZoneModel, conditions: RoomConditions): RoomTransition {
   const hours = Math.max(0, conditions.hours);
+  if (isEquilibrium(model)) {
+    if (hours === 0) return { decay: 1, offset_c: 0, stored_heat_release: 0, gain_c_per_w: 0, stored_heat_gain_c_per_w: 0, carry: 1 };
+    if (usesHouse(model) && !(typeof conditions.house_c === "number" && Number.isFinite(conditions.house_c))) throw new Error("a house-coupled room needs the house temperature");
+    const lag = model.heat_lag_h ?? 0, carry = lag > 0 ? Math.exp(-hours / lag) : 0;
+    const gain = model.heater_c_per_w * (1 - carry);
+    return { decay: 0, offset_c: model.outdoor_share * conditions.outdoor_c +
+      (usesHouse(model) ? (1 - model.outdoor_share) * conditions.house_c! : 0) + conditions.background_c_per_h,
+      stored_heat_release: carry, gain_c_per_w: gain,
+      stored_heat_gain_c_per_w: lag > 0 ? gain : 0, carry };
+  }
   const house = usesHouse(model) ? model.house_coupling_per_h! : 0;
   if (house > 0 && !(typeof conditions.house_c === "number" && Number.isFinite(conditions.house_c))) {
     throw new Error("a house-coupled room needs the house temperature");
@@ -114,7 +157,8 @@ export function roomTransition(model: ThermalZoneModel, conditions: RoomConditio
 
 export interface RoomState {
   temperature_c: number;
-  /** Unreleased temperature-equivalent heat, °C; conserved across model changes. */
+  /** Dynamic unreleased heat or equilibrium delayed contribution, °C.
+   * Dynamic band changes conserve it; algebraic boundaries convert via delivered watts. */
   stored_heat_c: number;
 }
 
@@ -128,7 +172,7 @@ export const stepRoom = (transition: RoomTransition, state: RoomState, watts: nu
 export function storedHeat(model: ThermalZoneModel, recentQuarterW: readonly number[]): number {
   const lag = model.heat_lag_h ?? 0;
   if (!(lag > 0)) return 0;
-  return model.gain_c_per_wh * lag * deliveredHeatAtLag(lag, recentQuarterW);
+  return roomMemoryPerWatt(model) * deliveredHeatAtLag(lag, recentQuarterW);
 }
 
 function deliveredHeatAtLag(lag: number, recentQuarterW: readonly number[]): number {
@@ -167,8 +211,9 @@ export function backgroundRateForSlot(
   solarWPerM2?: (number | null)[] | null,
   passiveHeatCPerH?: readonly number[],
 ): number {
-  const background = model.background_gain_c_per_h + (passiveHeatCPerH?.[index] ?? 0);
-  const coefficient = model.solar_gain_c_per_h_per_wm2;
+  // A finite rate has zero algebraic equilibrium contribution. Do not relabel it as °C.
+  const background = isEquilibrium(model) ? model.offset_c : model.background_gain_c_per_h + (passiveHeatCPerH?.[index] ?? 0);
+  const coefficient = isEquilibrium(model) ? model.solar_c_per_wm2 : model.solar_gain_c_per_h_per_wm2;
   if (typeof coefficient !== "number" || !Number.isFinite(coefficient)) {
     return background;
   }
@@ -190,8 +235,13 @@ export function projectZoneTemperature(
 ): number[] {
   const projection: number[] = [];
   let state: RoomState = { temperature_c: startTemperatureC, stored_heat_c: context.start_stored_heat_c ?? 0 };
+  let previous = context.model_by_quarter?.[0] ?? model;
   for (let index = 0; index < outdoorC.length; index += 1) {
     const physics = context.model_by_quarter?.[index] ?? model;
+    if ((durationHours?.[index] ?? SLOT_HOURS) > 0) {
+      state.stored_heat_c *= roomMemoryScale(previous, physics);
+      previous = physics;
+    }
     projection.push(Math.round(state.temperature_c * 1000) / 1000);
     state = stepRoom(roomTransition(physics, {
       hours: durationHours?.[index] ?? SLOT_HOURS, outdoor_c: outdoorC[index],

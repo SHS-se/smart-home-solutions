@@ -1,11 +1,11 @@
 import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
-import { roomTransition, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { backgroundRateForSlot, roomMemoryScale, roomTransition, type DynamicThermalZoneModel, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 const thermostat: RoomThermostat = { entity_id: "climate.bathroom", minimum_c: 5, maximum_c: 90, step_c: 1,
   current_temperature_c: 21, target_temperature_c: 21, hvac_action: "idle", sensor_offset_c: 0, power_w: 686.3 };
-const model: ThermalZoneModel = { gain_c_per_wh: .001, cooling_constant_per_h: 0, background_gain_c_per_h: 0,
+const model: DynamicThermalZoneModel = { gain_c_per_wh: .001, cooling_constant_per_h: 0, background_gain_c_per_h: 0,
   thermal_capacity_wh_per_c: 1000, heat_loss_w_per_c: 0, time_constant_h: 100, heating_rate_c_per_h: 1,
   r2: 1, sample_count: 1000, residual_std_c: 0 };
 const quarter = (hours = .25, thermal = model) => { const steps = Math.ceil(hours * 60); return { hours, steps,
@@ -96,4 +96,43 @@ Deno.test("native quarter planning conserves heat through independently fitted g
     assertAlmostEquals(native.temperature_c[i], current.temperature_c, 1e-10);
     assertAlmostEquals(native.thermostat_w[i][0], heater.power_w, 1e-10);
   }
+});
+
+Deno.test("response coordinate conversion applies once in native and reference minute projections", () => {
+  // Independent synthetic response families; the first boundary reduces the
+  // stored coordinate and the second increases it, without changing watts.
+  const families: ThermalZoneModel[] = [
+    { ...model, heat_lag_h: 2 },
+    { response_family: "equilibrium", heater_c_per_w: .0008, outdoor_share: .1,
+      offset_c: 1, solar_c_per_wm2: null, heat_lag_h: .75, sample_count: 500, r2: .9, residual_std_c: .1 },
+    { ...model, response_family: "integrator", heat_lag_h: 1.5, time_constant_h: null },
+  ];
+  const target = 30;
+  const quarters: RoomQuarter[] = families.map((family, i) => {
+    const conditions = { hours: .25, outdoor_c: 5, house_c: 21,
+      background_c_per_h: backgroundRateForSlot(family, 0) };
+    const scale = i ? roomMemoryScale(families[i - 1], family) : 1;
+    const transition = roomTransition(family, conditions);
+    transition.stored_heat_release *= scale;
+    transition.carry *= scale;
+    return { hours: .25, steps: 15, memory_scale: scale, transition,
+      step: roomTransition(family, { ...conditions, hours: 1 / 60 }),
+      required_c: 19, maximum_c: 35, maximum_w: 1000, relay_w: [], fixed_relays: [], fixed_targets_c: [target],
+      import_sek_per_kwh: 1, export_sek_per_kwh: 1, surplus_w: 0 };
+  });
+  const initial = { ...state(19), stored_heat_c: .4 };
+  const native = planRoomHeating(initial.temperature_c, [thermostat], quarters, initial.stored_heat_c);
+  let current = initial;
+  for (const [i, q] of quarters.entries()) {
+    const manual = { ...current, stored_heat_c: current.stored_heat_c * q.memory_scale! };
+    const withoutScale = { ...q, memory_scale: undefined };
+    const expected = projectThermostatQuarter(withoutScale, [thermostat], manual, [target], 0);
+    const reference = projectThermostatQuarter(q, [thermostat], current, [target], 0);
+    assertEquals(reference, expected, "one conversion before all minutes");
+    assertAlmostEquals(native.temperature_c[i], reference.state.temperature_c, 1e-10);
+    assertAlmostEquals(native.thermostat_w[i][0], reference.thermostat_w[0], 1e-10);
+    current = reference.state;
+  }
+  const zero = { ...quarters[1], hours: 0, steps: 0 };
+  assertEquals(projectThermostatQuarter(zero, [], initial, [], 0).state, initial);
 });

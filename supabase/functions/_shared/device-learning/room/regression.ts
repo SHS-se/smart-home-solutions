@@ -1,5 +1,5 @@
 /** Room parameter estimation and evidence. These diagnostics never grant device permission. */
-import { SLOT_HOURS, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
+import { SLOT_HOURS, type DynamicThermalZoneModel, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 import { solveLinearSystem } from "../linear-algebra.ts";
 
 /** Minimum quarters before a fit is offered at all. */
@@ -99,8 +99,8 @@ export type ThermalFitRejection =
   | "non_physical"
   | "sensor_tracks_outdoor";
 
-export type ThermalFitResult =
-  | { ok: true; model: ThermalZoneModel; warnings?: ThermalFitRejection[] }
+export type ThermalFitResult<Model extends ThermalZoneModel = DynamicThermalZoneModel> =
+  | { ok: true; model: Model; warnings?: ThermalFitRejection[] }
   | { ok: false; reason: ThermalFitRejection; sample_count: number };
 
 const mean = (values: number[]) =>

@@ -120,6 +120,7 @@ fn physics_key(q: &Quarter) -> Vec<u64> {
     let mut key = vec![
         q.physics.hours.to_bits(),
         q.physics.steps as u64,
+        q.physics.memory_scale.unwrap_or(1.).to_bits(),
         q.physics.step.decay.to_bits(),
         q.physics.step.offset_c.to_bits(),
         q.physics.step.stored_heat_release.to_bits(),
@@ -657,7 +658,6 @@ fn reachable_rows(input: &Input, grid: &Grid, top: f64) -> Option<Vec<Option<(us
             && total >= 0.
             && s.stored_heat_gain_c_per_w >= 0.
             && s.carry >= 0.
-            && s.carry <= 1.
             && input.start_stored_heat_c >= 0.)
         {
             return None;
@@ -989,6 +989,27 @@ mod tests {
         assert!(reachable_rows(&input, &grid, 1e6).is_none());
         input.quarters[0].transition.gain_c_per_w = f64::NAN;
         assert!(reachable_rows(&input, &grid, 1e6).is_none());
+    }
+
+    #[test]
+    fn boundary_coordinate_scale_is_in_physics_key_and_reachable_bounds() {
+        let vectors: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../tests/room-heating-native.fixture.json"
+        ))
+        .unwrap();
+        let mut input: Input =
+            serde_json::from_value(vectors.as_array().unwrap()[3]["input"].clone()).unwrap();
+        input.start_stored_heat_c = 0.4;
+        let key = physics_key(&input.quarters[0]);
+        input.quarters[0].physics.memory_scale = Some(2.);
+        input.quarters[0].transition.stored_heat_release *= 2.;
+        input.quarters[0].transition.carry *= 2.;
+        assert!(input.quarters[0].transition.carry > 1.);
+        assert_ne!(physics_key(&input.quarters[0]), key);
+        let full = plan_rows(&input, 0, false).unwrap();
+        let restricted = plan_rows(&input, 32 * 1024 * 1024, true).unwrap();
+        assert!(restricted.is_some());
+        assert_eq!(restricted, full);
     }
 
     #[test]

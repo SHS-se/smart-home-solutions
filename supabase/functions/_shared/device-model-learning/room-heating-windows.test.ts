@@ -75,6 +75,16 @@ function database(windows: Window[], rows: ThermalQuarterRow[]) {
       reads.push(name);
       const error = name === failure ? { message: "synthetic read failed" } : null;
       if (name === "get_energy_room_heating_fit_windows") return Promise.resolve({ data: windows.map(window => ({ ...window })), error });
+      if (name === "get_energy_room_missing_irradiance_window") {
+        const missing = rows.filter(row => row.solar_w_per_m2 === null &&
+          row.start_ts >= String(args.p_from) && Date.parse(row.start_ts) + Number(row.duration_s) * 1000 <= Date.parse(String(args.p_to)));
+        const next = missing.find(row => args.p_after == null || row.start_ts >= String(args.p_after)) ?? missing[0];
+        const from = next ? Math.floor(Date.parse(next.start_ts) / hour) * hour : 0;
+        const last = missing.filter(row => Date.parse(row.start_ts) >= from &&
+          Date.parse(row.start_ts) + Number(row.duration_s) * 1000 <= from + 31 * 24 * hour).at(-1);
+        return Promise.resolve({ data: last ? { from_at: new Date(from).toISOString(),
+          to_at: new Date(Date.parse(last.start_ts) + Number(last.duration_s) * 1000).toISOString() } : null, error });
+      }
       if (name === "get_energy_room_thermal_interval_capture") {
         assertEquals(args.p_room_key, "room");
         const selected = rows.filter(row => row.start_ts >= String(args.p_from) && row.start_ts < String(args.p_to));
@@ -288,7 +298,7 @@ Deno.test("verified earlier history for a new source is not fenced by the previo
 Deno.test("historical solar repair is source-qualified, precedes fitting, and records enriched fingerprint", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10:2026-01");
   const base = database([candidate], rows), calls: string[] = [];
-  const points = rows.slice(0, -1).map((row, index) => ({ t: Date.parse(row.start_ts) + hour,
+  const points = rows.map((row, index) => ({ t: Date.parse(row.start_ts) + hour,
     v: Math.max(0, 200 * Math.sin(index * Math.PI / 12)) }));
   const db = {
     ...base,
@@ -320,37 +330,61 @@ Deno.test("historical solar repair is source-qualified, precedes fitting, and re
   assertEquals(calls.filter(name => name === "get_energy_room_heating_fit_windows").length, 6);
   assertEquals(bands(fitted).window_attempts?.[candidate.window_key], `${ROOM_WINDOW_IMPLEMENTATION}:enriched-solar-fingerprint`);
   assertEquals(bands(fitted).pending_windows, 0);
-  assertEquals(rows.at(-1)!.solar_w_per_m2, null); // Provider gap is never zero-filled.
+  assertEquals(rows.at(-1)!.solar_w_per_m2, points.at(-1)!.v);
 });
 
-Deno.test("archive outages leave fitting available and retry independently of unchanged observations", async () => {
+Deno.test("archive gaps finish refits and retry daily without sliding the deadline on thermal changes", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10:2026-01");
+  // The archive's newest missing hour must not keep numerical learning busy.
+  for (const row of rows.slice(0, -1)) row.solar_w_per_m2 = 100;
   const base = database([candidate], rows);
-  let unavailable = true;
+  let unavailable = true, requests = 0;
   const db = { ...base, from(name: string) {
     if (name !== "energy_outdoor_forecast_cache") return base.from(name);
+    requests++;
     if (unavailable) throw new Error("Synthetic archive cache unavailable");
     const query = { eq: () => query, maybeSingle: () => Promise.resolve({
-      data: { points: [], expires_at: new Date(now + hour).toISOString() }, error: null,
+      data: { points: [], expires_at: new Date(now + 72 * hour).toISOString() }, error: null,
     }) };
     return { select: () => query };
   } };
-  const first = await fitStoredRoomHeating(db, "home", "customer", "room", context, undefined,
-    { latitude: 0, longitude: 0 }, now);
+  const location = { latitude: 0, longitude: 0 };
+  const first = await fitStoredRoomHeating(db, "home", "customer", "room", context, undefined, location, now);
   assertEquals(first.trained, true);
-  assertEquals(bands(first).pending_windows, 2);
+  assertEquals(bands(first).pending_windows, 0);
   assertEquals(bands(first).window_solar_pending?.[candidate.window_key], true);
-  unavailable = false; // A successful empty archive remains a documented data gap.
-  const second = await fitStoredRoomHeating(db, "home", "customer", "room", context, stored(first),
-    { latitude: 0, longitude: 0 }, now);
-  assertEquals(bands(second).pending_windows, 1);
-  assertEquals(bands(second).general_solar_pending, false);
-  assertEquals(bands(second).window_solar_pending?.[candidate.window_key], true);
-  const band = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...second }),
-    { latitude: 0, longitude: 0 }, now + 1);
-  assertEquals(bands(band).pending_windows, 0);
-  assertEquals(bands(band).window_solar_pending?.[candidate.window_key], false);
-  assert(rows.every(row => row.solar_w_per_m2 === null));
+  assertEquals(bands(first).general_solar_pending, true);
+  const due = new Date(now + 24 * hour).toISOString();
+  assertEquals(bands(first).general_solar_retry_at, due);
+  assertEquals(bands(first).window_solar_retry_at?.[candidate.window_key], due);
+  assertEquals(requests, 2, "one request for each initial general/band phase");
+  unavailable = false; // Successful-but-empty archive still has no measurement.
+  let previous = stored(first);
+  const run = async (at: number) => {
+    const result = await runRoomPhase(db, "home", "customer", "room", context, previous, location, at);
+    previous = stored({ ...previous, ...result });
+    return bands(result);
+  };
+  assertEquals((await run(now + hour)).pending_windows, 0);
+  assertEquals(requests, 2);
+  const revision = bands(first).active[0].revision;
+  candidate.evidence_updated_at = new Date(now + 2 * hour).toISOString();
+  candidate.fingerprint = "corrected-thermal-evidence";
+  await run(now + 2 * hour);
+  const changed = await run(now + 2 * hour + 1);
+  assert(changed.active[0].revision !== revision, "changed thermal data can fit during a deferred solar retry");
+  assertEquals(changed.pending_windows, 0);
+  assertEquals(requests, 2);
+  assertEquals(changed.general_solar_retry_at, due);
+  assertEquals(changed.window_solar_retry_at?.[candidate.window_key], due);
+  await run(now + 24 * hour);
+  const retried = await run(now + 24 * hour + 1);
+  assertEquals(requests, 4, "each phase retries once when the normal daily cadence is due");
+  assertEquals(retried.pending_windows, 0);
+  assertEquals(retried.window_solar_pending?.[candidate.window_key], true);
+  assertEquals(rows.at(-1)!.solar_w_per_m2, null, "provider absence is never fabricated zero");
+  await run(now + 24 * hour + 2);
+  assertEquals(requests, 4, "a successful absent hour cannot create a tight retry loop");
 });
 
 Deno.test("retention expiry alone never replaces a fitted winter band", async () => {
@@ -371,41 +405,84 @@ Deno.test("retention expiry alone never replaces a fitted winter band", async ()
   assert(bands(corrected).active[0].revision !== revision);
 });
 
-Deno.test("pooled historical solar drains bounded chunks before fitting with no silent time truncation", async () => {
+Deno.test("solar seeks only missing observation ranges and keeps completed coverage across corrections", async () => {
   const winter = history(Date.UTC(2025, 10, 1)), autumn = history(Date.UTC(2026, 10, 1));
   const rows = [...winter, ...autumn], candidate = window(rows, "-10");
-  const base = database([candidate], rows), requested: string[] = [];
+  const base = database([candidate], rows), requested: [number, number][] = [];
+  let bounds: [number, number] = [0, 0];
   const db = { ...base, from(name: string) {
     if (name !== "energy_outdoor_forecast_cache") return base.from(name);
     const query = { eq: (key: string, value: string) => {
-      if (key === "provider") requested.push(value);
+      if (key === "provider") {
+        bounds = value.match(/analysis_(\d+)_(\d+)$/)!.slice(1).map(Number) as [number, number];
+        requested.push(bounds);
+      }
       return query;
     }, maybeSingle: () => Promise.resolve({
-      data: { points: [], expires_at: new Date(now + hour).toISOString() }, error: null,
+      data: { points: Array.from({ length: (bounds[1] - bounds[0]) / hour }, (_, i) =>
+        ({ t: bounds[0] + (i + 1) * hour, v: i % 24 < 12 ? 0 : 100 })),
+        expires_at: new Date(now + hour).toISOString() }, error: null,
     }) };
     return { select: () => query };
+  }, rpc(name: string, args: Record<string, unknown>) {
+    if (name !== "repair_energy_heating_irradiance") return base.rpc(name, args);
+    const points = args.p_points as { t: number; v: number }[];
+    let patched = 0;
+    for (const row of rows) if (row.solar_w_per_m2 === null) {
+      const point = points.find(p => p.t === Date.parse(row.start_ts) + hour);
+      if (point) { row.solar_w_per_m2 = point.v; patched++; }
+    }
+    if (patched) candidate.fingerprint += ":solar";
+    return Promise.resolve({ data: patched, error: null });
   } };
   let previous: StoredDeviceModel | undefined, result: Record<string, unknown> = {};
-  for (let i = 0; i < 20; i++) {
-    result = await fitStoredRoomHeating(db, "home", "customer", "room", context, previous,
-      { latitude: 0, longitude: 0 }, now + i);
-    previous = stored({ ...previous, ...result });
-    if (!bands(result).pending_windows) break;
-    assertEquals(base.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, 3); // Three bounded chunks for the initial general phase only.
-    assertEquals(bands(result).window_attempts, undefined);
-  }
+  const drain = async () => {
+    for (let i = 0; i < 8; i++) {
+      result = await fitStoredRoomHeating(db, "home", "customer", "room", context, previous,
+        { latitude: 0, longitude: 0 }, now + i);
+      previous = stored({ ...previous, ...result });
+      if (!bands(result).pending_windows) return;
+    }
+    throw new Error("Synthetic solar work failed to drain");
+  };
+  await drain();
+  assertEquals(requested.length, 2, "only observed winter and autumn, never the empty months between them");
+  assert(requested.every(([from, to]) => to - from <= 31 * 24 * hour));
+  const firstRevision = bands(result).active[0].revision;
+  candidate.evidence_updated_at = new Date(now + 1).toISOString();
+  candidate.fingerprint = "meter-correction-with-completed-solar";
+  await drain();
+  assertEquals(requested.length, 2, "changing thermal evidence cannot restart completed solar work");
+  assert(bands(result).active[0].revision !== firstRevision);
+  // Late historical rows and a new end are discovered from actual missing data.
+  rows[5].solar_w_per_m2 = null;
+  candidate.evidence_updated_at = new Date(now + 2).toISOString();
+  candidate.fingerprint = "late-historical-solar-gap";
+  await drain();
+  assertEquals(requested.length, 3);
+  assertEquals(requested.at(-1), [Date.parse(rows[5].start_ts), Date.parse(rows[5].start_ts) + hour]);
   assertEquals(bands(result).pending_windows, 0);
-  assertEquals(previous!.trained, true);
-  assert(requested.length > 10);
-  const windows = requested.slice(1).map(key => key.match(/analysis_(\d+)_(\d+)$/)!.slice(1).map(Number));
-  assertEquals(windows[0][0], Date.parse(candidate.from_at));
-  assertEquals(windows.at(-1)![1], Date.parse(candidate.to_at));
-  for (let i = 0; i < windows.length; i++) {
-    assert(windows[i][1] - windows[i][0] <= 31 * 24 * hour);
-    if (i) assertEquals(windows[i][0], windows[i - 1][1]);
-  }
-  assertEquals(bands(result).active[0].training_from, candidate.from_at);
-  assertEquals(bands(result).active[0].training_to, candidate.to_at);
+});
+
+Deno.test("partial solar archives remain pending and later gaps still get a turn", async () => {
+  const rows = [...history(Date.UTC(2025, 10, 1), 2), ...history(Date.UTC(2026, 10, 1), 2)];
+  const candidate = window(rows, "-10"), base = database([candidate], rows), requested: number[] = [];
+  const initial = await runRoomPhase(base, "home", "customer", "room", context, undefined, null, now);
+  const db = { ...base, from(name: string) {
+    if (name !== "energy_outdoor_forecast_cache") return base.from(name);
+    const query = { eq: (key: string, value: string) => {
+      if (key === "provider") requested.push(Number(value.match(/analysis_(\d+)_(\d+)$/)![1]));
+      return query;
+    }, maybeSingle: () => Promise.resolve({ data: { points: [], expires_at: new Date(now + hour).toISOString() }, error: null }) };
+    return { select: () => query };
+  } };
+  const first = await runRoomPhase(db, "home", "customer", "room", context, stored(initial), { latitude: 0, longitude: 0 }, now);
+  const second = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...initial, ...first }), { latitude: 0, longitude: 0 }, now + 1);
+  assertEquals(requested, [Date.parse(rows[0].start_ts), Date.parse(rows[2].start_ts)]);
+  assertEquals(bands(second).window_solar_pending?.[candidate.window_key], true);
+  assertEquals(bands(second).pending_windows, 0);
+  assertEquals(bands(second).window_solar_retry_at?.[candidate.window_key], new Date(now + 1 + 24 * hour).toISOString());
+  assert(rows.every(row => row.solar_w_per_m2 === null));
 });
 
 

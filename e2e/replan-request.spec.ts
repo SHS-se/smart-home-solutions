@@ -1060,6 +1060,16 @@ test.describe('requesting a replan', () => {
         revision: '11111111-1111-4111-8111-111111111111', band_c: -10, observed_min_c: -9, observed_max_c: -6,
         training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z',
         model: { ...fit, sample_count: 427, time_constant_h: 7 }, warnings: ['insufficient_heating', 'poor_fit'],
+      }, {
+        revision: '22222222-2222-4222-8222-222222222222', band_c: 0, observed_min_c: 0, observed_max_c: 4,
+        training_from: '2025-02-02T00:00:00Z', training_to: '2025-02-14T00:00:00Z',
+        model: { ...fit, response_family: 'integrator', cooling_constant_per_h: 0, house_coupling_per_h: 0,
+          heat_loss_w_per_c: 0, time_constant_h: null },
+      }, {
+        revision: '33333333-3333-4333-8333-333333333333', band_c: 10, observed_min_c: 10, observed_max_c: 14,
+        training_from: '2025-03-02T00:00:00Z', training_to: '2025-03-14T00:00:00Z',
+        model: { response_family: 'equilibrium', heater_c_per_w: .004, outdoor_share: .2, offset_c: 1,
+          solar_c_per_wm2: null, heat_lag_h: 1, sample_count: 400, r2: .8, residual_std_c: .1 },
       }] }, connections: [
         { key: 'synthetic-corridor', name: 'Test corridor', model: fit, doorway: { weight: .065, usual: -1 } },
         { key: 'synthetic-landing', name: 'Test landing', model: null, doorway: null },
@@ -1119,6 +1129,18 @@ test.describe('requesting a replan', () => {
     await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
     await expect(page.getByText(/utanför observerat intervall|outside observed range/i)).toBeVisible();
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();
+    const bandControl = page.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i });
+    await bandControl.selectOption('22222222-2222-4222-8222-222222222222');
+    await expect(page.getByText(/integrerande respons|integrator response/i)).toBeVisible();
+    await expect(page.getByText(/obegränsad i modellen|unbounded in this model/i)).toBeVisible();
+    await expect(page.getByText('1 °C/kWh', { exact: true })).toBeVisible();
+    await bandControl.selectOption('33333333-3333-4333-8333-333333333333');
+    await expect(page.getByText(/jämviktsrespons|equilibrium response/i)).toBeVisible();
+    await expect(page.getByText('4 °C/kW', { exact: true })).toBeVisible();
+    await expect(page.getByText(/ingen dynamisk tidskonstant|no dynamic time constant/i)).toBeVisible();
+    await page.getByLabel(/värmarens effekt|heater power/i).fill('1');
+    await expect(cycle).toBeVisible();
+    await expect(summary).not.toContainText(/NaN|Infinity/);
 
   });
 

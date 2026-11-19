@@ -1,6 +1,6 @@
 /** Offline comparison of one steady doorway. This model has no plan consumer. */
 import { roomMeanHeat, roomMeanObservation, type RoomMeanQuarter } from "./mean-observations.ts";
-import type { ThermalZoneModel } from "../../planner/models/room/thermal.ts";
+import type { DynamicThermalZoneModel as ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 export const ROOM_QUARTER_MS = 900_000;
 const finite = (value: number | null | undefined): value is number =>

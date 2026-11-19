@@ -10,7 +10,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { HEATING_HOURS, SCENARIO_HOURS, projectDoorwayImpact, projectRoomCycle } from '@/lib/energy-shift/room-scenario';
 import { readThermalModel } from '../../../../supabase/functions/_shared/planner/models/room/read-model';
-import { SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
+import { isEquilibrium, SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
 import { FittedRoomWarnings, LatestRoomSourceEvidence } from './RoomModelEvidence';
@@ -94,7 +94,7 @@ function RoomScenario({ model, connections, initialOutdoor = -5, band }: {
   const [house, setHouse] = useState('20');
   const [powerOverride, setPower] = useState<string | null>(null);
   const physics = model;
-  const fitPower = physics.heating_rate_c_per_h && physics.heating_rate_c_per_h > 0
+  const fitPower = !isEquilibrium(physics) && physics.heating_rate_c_per_h && physics.heating_rate_c_per_h > 0
     ? String(Math.round(physics.heating_rate_c_per_h / physics.gain_c_per_wh) / 1000) : '';
   const power = powerOverride ?? fitPower;
   const controls = [outdoor, start, house, power];
@@ -112,7 +112,7 @@ function RoomScenario({ model, connections, initialOutdoor = -5, band }: {
   const receivingRooms = connections.map(connection => {
     const name = connection.name || t('Otillgängligt rum', 'Unavailable room');
     const receiver = connection.model?.trained ? readThermalModel(connection.model) : null;
-    const values = temperatures && receiver && connection.doorway &&
+    const values = temperatures && receiver && !isEquilibrium(receiver) && connection.doorway &&
       connection.doorway.weight <= (receiver.house_coupling_per_h ?? 0) * (1 + 1e-12)
       ? projectDoorwayImpact(receiver, connection.doorway, temperatures, scenario.houseC) : null;
     return { key: connection.key, name, values };
@@ -196,8 +196,15 @@ function RoomFits({ model, connections, bands }: {
       selected={selected?.revision ?? 'general'} onSelect={setSelection} />}
     <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" aria-live="polite">
       {selected && <div><dt>{t('Observerat intervall', 'Observed range')}</dt><dd className="font-medium">{observed(selected)}</dd></div>}
-      <div><dt>{t('Värmerespons', 'Heating response')}</dt><dd className="font-medium">{format(fitted.gain_c_per_wh * 1000)} °C/kWh</dd></div>
-      <div><dt>{t('Termisk tidskonstant', 'Thermal time constant')}</dt><dd className="font-medium">{format(fitted.time_constant_h)} h</dd></div>
+      <div><dt>{t('Responsfamilj', 'Response family')}</dt><dd className="font-medium">{isEquilibrium(fitted)
+        ? t('Jämviktsrespons', 'Equilibrium response') : fitted.response_family === 'integrator'
+        ? t('Integrerande respons', 'Integrator response') : t('Ändlig termisk respons', 'Finite thermal response')}</dd></div>
+      <div><dt>{t('Värmerespons', 'Heating response')}</dt><dd className="font-medium">{isEquilibrium(fitted)
+        ? `${format(fitted.heater_c_per_w * 1000)} °C/kW` : `${format(fitted.gain_c_per_wh * 1000)} °C/kWh`}</dd></div>
+      <div><dt>{t('Termisk tidskonstant', 'Thermal time constant')}</dt><dd className="font-medium">{isEquilibrium(fitted)
+        ? t('Ingen dynamisk tidskonstant', 'No dynamic time constant') : fitted.response_family === 'integrator'
+        ? t('Obegränsad i modellen', 'Unbounded in this model') : fitted.time_constant_h === null ? '—' : `${format(fitted.time_constant_h)} h`}</dd></div>
+      <div><dt>{t('Värmefördröjning', 'Heater lag')}</dt><dd className="font-medium">{format(fitted.heat_lag_h ?? 0)} h</dd></div>
       <div><dt>{t('Anpassade övergångar', 'Fitted transitions')}</dt><dd className="font-medium">{fitted.sample_count.toLocaleString(language)}</dd></div>
     </dl>
     {selected && <p className="text-xs text-muted-foreground">

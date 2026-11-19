@@ -35,6 +35,7 @@ Deno.test("short identifiable cold bands retain measured solar forcing", () => {
   const truth = plant([3600], 72, 1, .0008);
   const result = fitIndependentRoomBand(truth.rows, c => c >= -10 && c < -5).result;
   assert(result.ok);
+  assert(result.model.response_family !== "equilibrium");
   assertAlmostEquals(result.model.solar_gain_c_per_h_per_wm2!, .0008, 1e-6);
   assertAlmostEquals(result.model.gain_c_per_wh, truth.gain, 1e-6);
   assertEquals(result.model.heat_lag_h, truth.lag);
@@ -75,7 +76,7 @@ Deno.test("band cells reject invalid prefixes and retain an unidentified complet
   assertEquals([minC, maxC], [null, null]);
 });
 
-Deno.test("a short holdout cannot hide the best limiting-family response", () => {
+Deno.test("a short holdout publishes the selected equilibrium family and its own diagnostics", () => {
   // Independent synthetic algebraic room with a two-hour delivered-power
   // reservoir. There is no finite room heat capacity to recover.
   let seed = 19, delivered = 0;
@@ -93,10 +94,22 @@ Deno.test("a short holdout cannot hide the best limiting-family response", () =>
       house_c: house, outdoor_c: outdoor, heat_w: power, cooling: false, solar_w_per_m2: null });
   }
   const result = fitIndependentRoomBand(rows, () => true).result;
-  assert(!result.ok);
-  assertEquals(result.reason, "response_unresolved");
+  assert(result.ok);
+  assertEquals(result.model.response_family, "equilibrium");
+  assert(result.model.response_family === "equilibrium");
   const selection = result.learning_evidence!.response_selection!;
   assertEquals(selection.selected, "equilibrium_response");
+  assertEquals(result.model.heater_c_per_w, selection.steady_response!.heater_c_per_w);
+  assertEquals(result.model.heat_lag_h, selection.equilibrium_lag_h);
+  assertEquals(result.learning_evidence!.selected_lag_h, selection.equilibrium_lag_h);
+  assertEquals(result.learning_evidence!.validation_pairs, selection.equilibrium_validation_pairs);
+  assertEquals(result.learning_evidence!.validation_mse_c2, selection.equilibrium_validation_mse_c2);
+  assert(Number.isFinite(result.model.prediction_error_c));
+  assert(result.model.prediction_error_c! < .2);
+  const prepared = prepareIndependentRoomBand(rows, () => true);
+  const cells = Array.from({ length: ROOM_BAND_FIT_CELL_COUNT }, (_, i) => fitIndependentRoomBandCell(prepared, i));
+  assertEquals(finalizeIndependentRoomBand(prepared, parseRoomBandFitCells(JSON.parse(JSON.stringify(cells))))
+    .result, result);
   assertEquals(selection.equilibrium_holdout_selected_lag_h, 1.5);
   assertEquals(selection.equilibrium_lag_h, 2);
   assertEquals(selection.equilibrium_validation_pairs, 9);
@@ -111,11 +124,12 @@ Deno.test("a noisy slow room still identifies its finite capacity", () => {
   const rows = truth.rows.map(row => ({ ...row, room_c: row.room_c! + .05 * (random() + random() + random() + random() - 2) }));
   const result = fitIndependentRoomBand(rows, () => true).result;
   assert(result.ok);
+  assert(result.model.response_family !== "equilibrium");
   assertEquals(result.learning_evidence!.response_selection!.selected, "finite_response");
   assertAlmostEquals(result.model.gain_c_per_wh, truth.gain, .0001);
 });
 
-Deno.test("an unresolved long time constant retains the integrator response without inventing finite loss", () => {
+Deno.test("a zero-exchange room publishes the fitted integrator response without inventing finite loss", () => {
   // Independent synthetic zero-exchange room. The exact interval mean is
   // linear within each hour; mild observation noise can create a spurious
   // finite profile minimum even though no loss timescale exists in the data.
@@ -131,10 +145,20 @@ Deno.test("an unresolved long time constant retains the integrator response with
     temperature += rate;
   }
   const result = fitIndependentRoomBand(rows, () => true).result;
-  assert(!result.ok);
-  assertEquals(result.reason, "response_unresolved");
+  assert(result.ok);
+  assert(result.model.response_family === "integrator");
   const selection = result.learning_evidence!.response_selection!;
   assertEquals(selection.selected, "integrator_response");
+  assertEquals(result.model.gain_c_per_wh, selection.integrator_response!.heater_c_per_wh);
+  assertEquals(result.model.cooling_constant_per_h, 0);
+  assertEquals(result.model.house_coupling_per_h, 0);
+  assertEquals(result.model.time_constant_h, null);
+  assertEquals(result.learning_evidence!.selected_lag_h, selection.integrator_lag_h);
+  assertEquals(result.learning_evidence!.validation_pairs, selection.integrator_validation_pairs);
+  assertEquals(result.learning_evidence!.validation_mse_c2, selection.integrator_validation_mse_c2);
+  assert(Number.isFinite(result.model.prediction_error_c));
+  assert(result.model.prediction_error_c! < .2);
+  assertEquals(JSON.parse(JSON.stringify(result.model)), result.model);
   assert(selection.finite_aicc !== null);
   assert(selection.integrator_aicc! < selection.finite_aicc);
   assertEquals(selection.integrator_parameters, selection.finite_parameters! - 2);
@@ -151,6 +175,7 @@ Deno.test("warm history cannot change a cold band's temperature correction or fi
   const original = fitIndependentRoomBand(cold, c => c < -5).result;
   const appended = fitIndependentRoomBand([...cold, ...warm], c => c < -5).result;
   assert(original.ok && appended.ok);
+  assert(original.model.response_family !== "equilibrium" && appended.model.response_family !== "equilibrium");
   assertEquals(original.learning_evidence!.estimated_temperature_readings, 1);
   assertEquals(appended.learning_evidence!.estimated_temperature_readings, 1);
   assertAlmostEquals(appended.model.gain_c_per_wh, original.model.gain_c_per_wh, 1e-12);
@@ -179,6 +204,7 @@ Deno.test("native cold band identifies complete coefficients without an inherite
   const truth = plant([3600]);
   const fit = fitIndependentRoomBand(truth.rows, c => c >= -10 && c < -5, 500);
   assert(fit.result.ok);
+  assert(fit.result.model.response_family !== "equilibrium");
   assertAlmostEquals(fit.result.model.gain_c_per_wh, truth.gain, 1e-6);
   assertEquals(fit.result.model.heat_lag_h, truth.lag);
   assert(fit.minC! >= -10 && fit.maxC! < -5);
@@ -193,6 +219,7 @@ Deno.test("a late winter band validates its own later observations with separate
   const cold = truth.rows.map(row => ({ ...row, start_ms: row.start_ms + 720 * 3_600_000 }));
   const result = fitIndependentRoomBand([...prefix, ...cold], c => c >= -10 && c < -5).result;
   assert(result.ok);
+  assert(result.model.response_family !== "equilibrium");
   assertEquals(result.learning_evidence!.training_pairs, 159);
   // The first of the 79 validation transitions initializes unknown heat and
   // is excluded from every lag candidate's common scoring set.
@@ -292,6 +319,7 @@ Deno.test("independent bands do not inherit other bands' gain and delayed heat c
   }
   const result = fitIndependentRoomBand(rows, c => c >= -10 && c < -5).result;
   assert(result.ok);
+  assert(result.model.response_family !== "equilibrium");
   assertEquals(result.model.heat_lag_h, 1);
   assertAlmostEquals(result.model.gain_c_per_wh, .0015, 1e-6);
   assertAlmostEquals(result.model.house_coupling_per_h!, .02, 1e-5);
@@ -335,7 +363,45 @@ for (const lag of [1, 2]) Deno.test(`one late observed heating pulse can identif
   assertAlmostEquals(fitted.model.gain_c_per_wh, .0015, 1e-6);
   const band = fitIndependentRoomBand(rows, () => true, 800).result;
   assert(band.ok);
+  assert(band.model.response_family !== "equilibrium");
   assertEquals(band.model.heat_lag_h, lag);
   assertAlmostEquals(band.model.gain_c_per_wh, .0015, 1e-6);
   assertEquals(band.learning_evidence!.response_selection!.selected, "finite_response");
+});
+
+Deno.test("equilibrium fitting does not mistake auxiliary temperature rates for algebraic offsets", () => {
+  // Independently generated synthetic equilibrium with continuously varying
+  // boundaries and heater power. An external rate has zero temperature effect
+  // at the exact zero-capacity limit, rather than becoming a degree offset.
+  const rows: RoomMeanQuarter[] = Array.from({ length: 160 }, (_, i) => {
+    const house = 21 + Math.sin(i / 23), outdoor = -7 + Math.cos(i / 17), power = i % 9 < 3 ? 500 : 0;
+    return { start_ms: i * 3600000, duration_s: 3600,
+      room_c: .8 * house + .2 * outdoor + 3 + .006 * power,
+      house_c: house, outdoor_c: outdoor, heat_w: power, cooling: false, solar_w_per_m2: null,
+      band_forcing_c_per_h: .7 * Math.sin(i / 7) };
+  });
+  const result = fitIndependentRoomBand(rows, () => true).result;
+  assert(result.ok);
+  assert(result.model.response_family === "equilibrium");
+  assertAlmostEquals(result.model.outdoor_share, .2, 1e-8);
+  assertAlmostEquals(result.model.heater_c_per_w, .006, 1e-8);
+  assertAlmostEquals(result.model.offset_c, 3, 1e-8);
+  assertAlmostEquals(result.model.prediction_error_c!, 0, 1e-8);
+});
+
+Deno.test("an identified zero equilibrium heater gain publishes finite diagnostics", () => {
+  // Synthetic sensor follows only its boundary temperatures; measured heater
+  // pulses are present but have no identifiable contribution to this sensor.
+  const rows: RoomMeanQuarter[] = Array.from({ length: 160 }, (_, i) => {
+    const house = 21 + Math.sin(i / 23), outdoor = -7 + Math.cos(i / 17), power = i % 9 < 3 ? 500 : 0;
+    return { start_ms: i * 3600000, duration_s: 3600,
+      room_c: .8 * house + .2 * outdoor + 3,
+      house_c: house, outdoor_c: outdoor, heat_w: power, cooling: false, solar_w_per_m2: null };
+  });
+  const result = fitIndependentRoomBand(rows, () => true).result;
+  assert(result.ok);
+  assert(result.model.response_family === "equilibrium");
+  assertAlmostEquals(result.model.heater_c_per_w, 0, 1e-12);
+  assert(Number.isFinite(result.model.prediction_error_c));
+  assertEquals(JSON.parse(JSON.stringify(result.model)), result.model);
 });

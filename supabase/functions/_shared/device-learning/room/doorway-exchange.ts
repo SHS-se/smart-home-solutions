@@ -3,7 +3,7 @@ import {
   roomMeanObservation,
   type RoomMeanQuarter,
 } from "./mean-observations.ts";
-import type { ThermalZoneModel } from "../../planner/models/room/thermal.ts";
+import type { DynamicThermalZoneModel as ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 import { ROOM_QUARTER_MS as Q } from "./doorway-shadow.ts";
 const finite = (x: unknown): x is number =>
   typeof x === "number" && Number.isFinite(x);

@@ -1,4 +1,4 @@
-import { backgroundRateForSlot, projectZoneTemperature, type RoomProjectionContext, type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { heaterResponse, isEquilibrium, roomMemoryPerWatt, roomMemoryScale, backgroundRateForSlot, projectZoneTemperature, type RoomProjectionContext, type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 export const COMFORT_MODES = ["off", "low-temp", "high-temp"] as const;
 export type ComfortMode = (typeof COMFORT_MODES)[number];
@@ -195,11 +195,9 @@ export function buildComfortForecast(
   }
   if (
     !Number.isFinite(startTemperatureC) || !Number.isFinite(ratedPowerW) ||
-    ratedPowerW <= 0 || !Number.isFinite(model.gain_c_per_wh) ||
-    model.gain_c_per_wh <= 0 ||
-    !Number.isFinite(model.cooling_constant_per_h) ||
-    model.cooling_constant_per_h < 0 ||
-    !Number.isFinite(model.background_gain_c_per_h) ||
+    ratedPowerW <= 0 || !Number.isFinite(heaterResponse(model)) || heaterResponse(model) < 0 ||
+    (!isEquilibrium(model) && (!Number.isFinite(model.cooling_constant_per_h) ||
+      model.cooling_constant_per_h < 0 || !Number.isFinite(model.background_gain_c_per_h))) ||
     outdoorTemperatureC.some((value) => !Number.isFinite(value))
   ) {
     throw new Error(
@@ -229,10 +227,12 @@ export function buildComfortForecast(
   const required = [...target];
   for (let index = required.length - 2; index >= 0; index -= 1) {
     const step = transitions[index];
+    // Algebraic response has no room-temperature memory to propagate backwards.
+    if (step.decay === 0) continue;
     if (!(step.decay > 0)) throw new Error("thermal cooling constant is unstable");
     // The most a quarter can add is with the heater, and its delay, at full.
     const physics = context.model_by_quarter?.[index] ?? model;
-    const capacity = physics.gain_c_per_wh * (physics.heat_lag_h ?? 0);
+    const capacity = roomMemoryPerWatt(physics);
     const maximumNextGain = step.offset_c + (step.stored_heat_release * capacity + step.gain_c_per_w) *
       (ratedPowerByQuarter?.[index] ?? ratedPowerW);
     const neededNow = (required[index + 1] - maximumNextGain) / step.decay;
@@ -247,9 +247,11 @@ export function buildComfortForecast(
   for (let index = 0; index < starts.length; index += 1) {
     const rated = ratedPowerByQuarter?.[index] ?? ratedPowerW;
     const step = transitions[index];
+    if (index > 0) state.stored_heat_c *= roomMemoryScale(context.model_by_quarter?.[index - 1] ?? model,
+      context.model_by_quarter?.[index] ?? model);
     const desiredNext = required[Math.min(index + 1, required.length - 1)];
     const passiveNext = stepRoom(step, state, 0).temperature_c;
-    const desiredPower = step.gain_c_per_w > 0 ? (desiredNext - passiveNext) / step.gain_c_per_w : rated;
+    const desiredPower = step.gain_c_per_w > 0 ? (desiredNext - passiveNext) / step.gain_c_per_w : 0;
     const watts = heatingLockout[index]
       ? 0
       : Math.max(0, Math.min(rated, desiredPower));

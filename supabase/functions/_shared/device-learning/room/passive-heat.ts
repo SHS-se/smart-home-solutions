@@ -1,7 +1,7 @@
 // A monitored appliance is an observed heat source. Its watts are never an actuator.
 import { HEATED_SAMPLE_MIN_W } from "./regression.ts";
 import { fitRoomMeans, roomMeanHeat, roomMeanObservation, type RoomMeanFitResult, type RoomMeanQuarter } from "./mean-observations.ts";
-import { SLOT_HOURS, type PassiveRoomHeat, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
+import { SLOT_HOURS, type PassiveRoomHeat, type DynamicThermalZoneModel as ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 const QUARTER_MS = SLOT_HOURS * 3_600_000;
 const COOLDOWN_QUARTERS = 12;
@@ -136,7 +136,7 @@ function heldOutScores(candidates: Candidate[], cycles: number): PassiveHeatScor
 export function fitRoomWithPassiveHeat(
   quarters: RoomMeanQuarter[], ratedPowerW: number | null,
   source: { device_key: string; watts: ReadonlyMap<number, number> },
-): { room: RoomMeanFitResult; passive?: PassiveRoomHeat; scores?: PassiveHeatScores } {
+): { room: RoomMeanFitResult<ThermalZoneModel>; passive?: PassiveRoomHeat; scores?: PassiveHeatScores } {
   const rows = [...quarters].sort((a, b) => a.start_ms - b.start_ms);
   const cycles = observedCycles(rows, source.watts);
   const ordinary = { room: fitRoomMeans(rows, ratedPowerW) };

@@ -11,7 +11,7 @@ import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-stor
 import { publishRoomHeatingBandFit } from "../device-learning/room/heating-bands.ts";
 import { heatingBand, readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
 import { readThermalModel } from "../planner/models/room/read-model.ts";
-import { type ThermalZoneModel } from "../planner/models/room/thermal.ts";
+import { isEquilibrium, type DynamicThermalZoneModel, type ThermalZoneModel } from "../planner/models/room/thermal.ts";
 import { readRoomDoorwayModel, type RoomDoorwayModel } from "../planner/models/room/doorway-boundary.ts";
 import { qualifyProbeFreshness, type ProbeFreshnessReport } from "../device-learning/room/source-freshness.ts";
 import { decodeHeatingProbeCapture } from "../heating-probe-wire.ts";
@@ -61,9 +61,9 @@ export interface HeatingFitWindow {
   evidence_updated_at: string;
 }
 
-// Revisit completed attempts after the broad source-epoch qualification repair
-// and the compact, full-dependency SQL fingerprint change.
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:pooled_band_general_freshness_v5`;
+// Revisit each completed band once to publish the selected response family
+// and evaluate equilibrium forcing in its own temperature coordinates.
+export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:selected_response_families_v6`;
 
 function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
   const result = new Map<string, number>();
@@ -162,7 +162,9 @@ export async function prepareStoredRoomHeating(
     const captured = visits.get(key);
     return captured === undefined ? recorded : recorded === undefined ? captured : Math.max(captured, recorded);
   };
-  const pending = windows.filter(window => evidenceChanged(window) || library.window_solar_pending?.[window.window_key])
+  const solarReady = (retryAt?: string | null) => !(Date.parse(retryAt ?? "") > now);
+  const pending = windows.filter(window => evidenceChanged(window) ||
+    (library.window_solar_pending?.[window.window_key] && solarReady(library.window_solar_retry_at?.[window.window_key])))
     .sort((a, b) => {
       const visitA = lastVisit(a.window_key), visitB = lastVisit(b.window_key);
       const attemptedA = visitA !== undefined, attemptedB = visitB !== undefined;
@@ -187,7 +189,8 @@ export async function prepareStoredRoomHeating(
   // reference backwards to an older household state.
   const generalDue = (!installed?.training_to || Date.parse(latest.to_at) >= Date.parse(installed.training_to)) &&
     (library.general_attempt?.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
-      Date.parse(evidenceAt) > Date.parse(library.general_attempt.evidence_updated_at) || library.general_solar_pending === true);
+      Date.parse(evidenceAt) > Date.parse(library.general_attempt.evidence_updated_at) ||
+      (library.general_solar_pending === true && solarReady(library.general_solar_retry_at)));
   const firstBootstrap = !installed && library.general_attempt?.implementation !== ROOM_WINDOW_IMPLEMENTATION;
   const oldestBandVisit = pending.length ? lastVisit(pending[0].window_key) : undefined;
   const generalVisit = library.general_attempt?.attempted_at
@@ -199,7 +202,8 @@ export async function prepareStoredRoomHeating(
   if (generalDue && (firstBootstrap || generalTurn)) {
     const to = latest.to_at, from = new Date(Math.max(Date.parse(library.since), Date.parse(floor),
       Date.parse(to) - TRAINING_WINDOW_DAYS * 86_400_000)).toISOString();
-    const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding, location, from, to, now);
+    const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding, location, from, to, now,
+      undefined, library.general_solar_retry_at);
     let updatedAt = evidenceAt;
     if (solar.patched) {
       const refreshed = await readWindows();
@@ -220,8 +224,8 @@ export async function prepareStoredRoomHeating(
       heating_bands: { ...library,
         ...(reference ? { reference, reference_revision: model ? crypto.randomUUID() : library.reference_revision } : {}),
         general_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, evidence_updated_at: updatedAt, from_at: from, to_at: to, attempted_at: attemptedAt },
-        general_solar_pending: solar.unavailable,
-        pending_windows: pending.length + Number(solar.unavailable),
+        general_solar_pending: solar.pending, general_solar_retry_at: solar.retry_at,
+        pending_windows: pending.length + Number(solar.pending && solarReady(solar.retry_at)),
       } } };
   }
   if (!pending.length) return { kind: "model", model: { home_id: homeId, customer_id: customerId, room_key: roomKey,
@@ -229,18 +233,15 @@ export async function prepareStoredRoomHeating(
 
   let window = pending[0];
   const previousProgress = library.window_solar_progress?.[window.window_key];
-  const progress = library.window_solar_pending?.[window.window_key] && previousProgress ? previousProgress : {
-    from_at: window.from_at, through_at: window.from_at, to_at: window.to_at,
-  };
-  // Complete a fixed archive traversal despite live arrivals; a later evidence
-  // revision starts another traversal and picks up late/corrected older rows.
-  const from = new Date(Math.max(Date.parse(progress.through_at), Date.parse(window.from_at))).toISOString();
-  const to = new Date(Math.min(Date.parse(progress.to_at), Date.parse(from) + 31 * 86_400_000)).toISOString();
-  const solar = location && Date.parse(to) > Date.parse(from)
-    ? await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding, location, from, to, now)
-    : { unavailable: false, patched: 0 };
-  const nextProgress = { ...progress, through_at: solar.unavailable ? progress.through_at : to };
-  const solarPending = Boolean(location) && (solar.unavailable || Date.parse(to) < Date.parse(progress.to_at));
+  // Coverage belongs to observations, not the thermal fit fingerprint. Seek an
+  // actual missing range; completed months never restart for a meter correction.
+  // A successful partial provider response advances this cursor so an archive
+  // hole cannot starve later observations, but remains explicitly pending.
+  const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding,
+    location, window.from_at, window.to_at, now, previousProgress?.through_at, library.window_solar_retry_at?.[window.window_key]);
+  const nextProgress = { from_at: window.from_at, to_at: window.to_at,
+    through_at: solar.through_at ?? window.to_at };
+  const solarPending = solar.pending;
   if (solar.patched) {
     // Record only a fingerprint for the exact captured bounds. New arrivals
     // outside this snapshot remain eligible for the next independent attempt.
@@ -251,8 +252,9 @@ export async function prepareStoredRoomHeating(
   const progressLibrary = { ...library,
     window_last_attempted_at: { ...library.window_last_attempted_at, [window.window_key]: attemptedAt },
     window_solar_pending: { ...library.window_solar_pending, [window.window_key]: solarPending },
+    window_solar_retry_at: { ...library.window_solar_retry_at, [window.window_key]: solar.retry_at },
     window_solar_progress: { ...library.window_solar_progress, [window.window_key]: nextProgress },
-    pending_windows: pending.length - 1 + Number(solarPending) + Number(generalDue) };
+    pending_windows: pending.length - 1 + Number(solarPending && solarReady(solar.retry_at)) + Number(generalDue) };
   // Keep an installed model while bounded archive chunks drain. An outage may
   // not block initial learning: fit once without missing solar and retry later.
   if (solarPending && (!solar.unavailable || !evidenceChanged(window))) return { kind: "model", model: {
@@ -397,17 +399,43 @@ async function repairNativeRoomSolar(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, binding: string,
   location: { latitude: number; longitude: number } | null, from: string, to: string, now: number,
-): Promise<{ unavailable: boolean; patched: number }> {
-  if (!location) return { unavailable: false, patched: 0 };
-  const points = await historicalIrradiancePoints({ supabase: db, ...location, from, to, now: new Date(now) });
-  if (points === null) return { unavailable: true, patched: 0 };
-  if (!points.length) return { unavailable: false, patched: 0 };
-  const { data, error } = await db.rpc("repair_energy_heating_irradiance", {
-    p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: binding,
-    p_from: from, p_to: to, p_points: points,
-  });
-  if (error) throw new Error(`repair_energy_heating_irradiance: ${error.message}`);
-  return { unavailable: false, patched: Number(data) || 0 };
+  after?: string, retryAt?: string | null,
+): Promise<{ unavailable: boolean; pending: boolean; patched: number; through_at?: string; retry_at: string | null }> {
+  if (!location) return { unavailable: false, pending: false, patched: 0, retry_at: null };
+  // Thermal corrections may fit immediately while archive gaps wait for the
+  // existing daily learning cadence. Never slide this deadline on such fits.
+  if (retryAt && Date.parse(retryAt) > now) return {
+    unavailable: true, pending: true, patched: 0, through_at: after, retry_at: retryAt,
+  };
+  const retry = () => new Date(now + 24 * 3_600_000).toISOString();
+  const missing = async (cursor?: string): Promise<{ from_at: string; to_at: string } | null> => {
+    const { data, error } = await db.rpc("get_energy_room_missing_irradiance_window", {
+      p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: binding,
+      p_from: from, p_to: to, p_after: cursor ?? null,
+    });
+    if (error) throw new Error(`get_energy_room_missing_irradiance_window: ${error.message}`);
+    return data;
+  };
+  const gap = await missing(after);
+  if (!gap) return { unavailable: false, pending: false, patched: 0, retry_at: null };
+  const points = await historicalIrradiancePoints({ supabase: db, ...location,
+    from: gap.from_at, to: gap.to_at, now: new Date(now) });
+  if (points === null) return { unavailable: true, pending: true, patched: 0, through_at: gap.from_at, retry_at: retry() };
+  let patched = 0;
+  if (points.length) {
+    const { data, error } = await db.rpc("repair_energy_heating_irradiance", {
+      p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: binding,
+      p_from: gap.from_at, p_to: gap.to_at, p_points: points,
+    });
+    if (error) throw new Error(`repair_energy_heating_irradiance: ${error.message}`);
+    patched = Number(data) || 0;
+  }
+  const remaining = await missing(gap.to_at);
+  // The gap RPC wraps to an earlier missing hour only after later ranges have
+  // had their turn. A completed pass with provider holes is not ready work.
+  const exhausted = remaining !== null && Date.parse(remaining.from_at) < Date.parse(gap.to_at);
+  return { pending: remaining !== null, patched, through_at: gap.to_at,
+    unavailable: exhausted, retry_at: exhausted ? retry() : null };
 }
 
 async function fitLoadedRoom(
@@ -475,7 +503,7 @@ async function loadRoomObservations(
 }
 
 function fitOptionalRoomResponses(row: Record<string, unknown>, quarters: ThermalQuarterRow[],
-  doorways: DoorwayProbeRow[], model: ThermalZoneModel) {
+  doorways: DoorwayProbeRow[], model: DynamicThermalZoneModel) {
     const passive_heat = row.passive_heat;
     let doorway_exchange: RoomDoorwayModel | null = null;
     if (!passive_heat && doorways.length) {
@@ -510,7 +538,7 @@ export function bandObservations(rows: RoomMeanQuarter[], reference: RoomHeating
   source: { device_key: string; watts: ReadonlyMap<number, number> } | undefined, probes: DoorwayProbeRow[]) {
   rows.sort((a, b) => a.start_ms - b.start_ms);
   const passive = readPassiveHeatModel(reference.passive_heat);
-  const indoor = reference.model.house_coupling_per_h ?? 0;
+  const indoor = isEquilibrium(reference.model) ? 0 : reference.model.house_coupling_per_h ?? 0;
   const doorway = readRoomDoorwayModel(reference.doorway_exchange, indoor);
   if (!doorway && !passive) return rows;
   const neighbors = doorway?.peers.flatMap(peer => {

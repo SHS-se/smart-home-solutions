@@ -6,7 +6,7 @@ import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning
 import type { DeviceModelBundle } from "./device-model-store.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { passiveHeatRates, roomTransition } from "./planner/models/room/thermal.ts";
+import { isEquilibrium, roomMemoryScale, passiveHeatRates, roomTransition } from "./planner/models/room/thermal.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "./room-passive-heat-evidence.ts";
 import { ROOM_HISTORY_QUARTER_MS as SLOT_MS, roomHistoryWarning } from "./room-history-warnings.ts";
 import { readThermalModel } from "./planner/models/room/read-model.ts";
@@ -218,7 +218,7 @@ export function prepareRoomModels(
         "room_heating_band_estimated", room.key, `${room.name}: heating sources changed.`,
         "The general room response is used while the new heating setup is measured.")]);
     }
-    const doorway = readRoomDoorwayModel(boundary ? boundary.doorway_exchange : fitted?.doorway_exchange, model?.house_coupling_per_h ?? 0);
+    const doorway = readRoomDoorwayModel(boundary ? boundary.doorway_exchange : fitted?.doorway_exchange, model && !isEquilibrium(model) ? model.house_coupling_per_h ?? 0 : 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
       ...(heatingContext ? { heating_bands: { reference_revision: model ? library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null : null,
@@ -317,6 +317,7 @@ export async function captureRoomPlanningState(
     const supportedOutdoor = new Map([...outdoor].filter(([, c]) => room.model ||
       roomHeatingBandAt(room.heating_bands?.active ?? [], c)));
     let heat = 0;
+    let previousResponses = models;
     for (const start of quarters) {
       const watts = temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0;
       const c = outdoor.get(start);
@@ -324,15 +325,24 @@ export async function captureRoomPlanningState(
       // Without a general response, an uncovered historical interval has no
       // identified storage dynamics. Nonnegative heat has the lower bound zero;
       // subsequent covered intervals rebuild it without extrapolating a band.
-      if (!selected && !room.model) { heat = 0; continue; }
+      if (!selected && !room.model) { heat = 0; previousResponses = []; continue; }
       // Missing historical weather cannot manufacture warmth: the minimum
       // across compatible responses is a lower bound, not a measured state.
-      heat = Math.min(...(selected ? [selected] : models).map(model => {
+      const nextResponses = selected ? [selected] : models;
+      heat = Math.min(...nextResponses.map(model => {
         const step = roomTransition(model, { hours: SLOT_MS / 3_600_000, outdoor_c: 0,
           house_c: 0, background_c_per_h: 0 });
-        return step.carry * heat + step.stored_heat_gain_c_per_w * watts;
+        const converted = previousResponses.length ? Math.min(...previousResponses.map(previous =>
+          heat * roomMemoryScale(previous, model))) : 0;
+        return step.carry * converted + step.stored_heat_gain_c_per_w * watts;
       }));
+      previousResponses = nextResponses;
     }
+    const firstOutdoor = snapshot.outdoor_temperature_c?.[0];
+    const firstResponse = firstOutdoor == null ? room.model :
+      roomHeatingBandAt(room.heating_bands?.active ?? [], firstOutdoor)?.model ?? room.model;
+    if (firstResponse && previousResponses.length) heat = Math.min(...previousResponses.map(previous =>
+      heat * roomMemoryScale(previous, firstResponse)));
     stored.set(room.key, heat);
 
     const warning = roomHistoryWarning(room, "room_heat_history_missing", quarters, [
@@ -366,7 +376,7 @@ export async function captureRoomPlanningState(
       houseForecast.every((c): c is number => typeof c === "number" && Number.isFinite(c))) {
     const slots = snapshot.slots.map(slot => Date.parse(slot.start));
     for (const room of doorwayRooms) {
-      const result = doorwayProbes && doorwayBoundary(room.doorway!, room.model!.house_coupling_per_h!,
+      const result = doorwayProbes && room.model && !isEquilibrium(room.model) && doorwayBoundary(room.doorway!, room.model.house_coupling_per_h!,
         doorwayProbes.filter(probe => probe.room_key === room.key), houseForecast, slots, captured);
       if (result && result.temperatures) doorwayBoundaries.set(room.key, result.temperatures);
       if (!result || result.incomplete) historyWarnings.push(planningWarning("room_evidence_unavailable", room.key,

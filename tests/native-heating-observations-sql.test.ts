@@ -59,6 +59,7 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const originalWindows = (await db.query<{ definition: string }>(
       "SELECT pg_get_functiondef('get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure) AS definition")).rows[0].definition;
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119080000_reduce_heating_learning_spills.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119103000_seek_missing_heating_irradiance.sql"));
     const memorySettings = (await db.query<{ settings: string[] }>(`SELECT proconfig AS settings
       FROM pg_proc WHERE oid IN (
         'get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure,
@@ -77,6 +78,43 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const stamp = async () => (await db.query<{ at: string }>("SELECT learning_updated_at::text AS at FROM energy_heating_observations WHERE start_ts=$1", [start])).rows[0].at;
     assertEquals(await write(row), { accepted: 1, accepted_by_source: [{ room_key: "room", source_key: source, accepted: 1 }] });
     assertEquals(await intervals(), [{ duration_s: 3600, heat_w: 800, heat_attributed: true }]);
+    // The gap query uses current lineage and real missing coverage, independently
+    // of thermal evidence revisions. Its cursor wraps only to remaining holes.
+    const solarBinding = (await db.query<{ binding: string }>(
+      "SELECT binding FROM private.energy_room_heating_contexts($1) WHERE room_key='room'", [home])).rows[0].binding;
+    const solarGap = async (after: string | null = null) => (await db.query<{ gap: { from_at: string; to_at: string } | null }>(
+      "SELECT get_energy_room_missing_irradiance_window($1,$2,'room',$3,$4,$5,$6) AS gap",
+      [home, customer, solarBinding, start, end, after])).rows[0].gap;
+    assertEquals(Date.parse((await solarGap())!.from_at), Date.parse(start));
+    assertEquals(Date.parse((await solarGap())!.to_at), Date.parse(end));
+    assertEquals(await solarGap(end), await solarGap(), "a remaining hole is retried after later ranges get a turn");
+    await assertRejects(() => db.query("SELECT get_energy_room_missing_irradiance_window($1,$2,'room','wrong',$3,$4,NULL)",
+      [home, customer, start, end]), Error, "Heating source changed");
+    await db.query("SELECT repair_energy_heating_irradiance($1,$2,'room',$3,$4,$5,$6::jsonb)",
+      [home, customer, solarBinding, start, end, JSON.stringify([{ t: Date.parse(end), v: 120 }])]);
+    assertEquals(await solarGap(), null);
+    await write({ ...row, room_temperature_c: 20.1, solar_w_per_m2: 120 });
+    assertEquals(await solarGap(), null, "a temperature correction does not invalidate filled solar");
+    await db.query("UPDATE energy_heating_observations SET solar_w_per_m2=NULL WHERE home_id=$1 AND room_key='room' AND start_ts=$2", [home, start]);
+    assertEquals(Date.parse((await solarGap())!.from_at), Date.parse(start), "late missing coverage is discovered without resetting a traversal");
+    await write(row);
+    await db.exec("BEGIN");
+    await db.query(`INSERT INTO energy_heating_observations SELECT
+      (jsonb_populate_record(NULL::energy_heating_observations,to_jsonb(n)||jsonb_build_object('start_ts',at))).*
+      FROM energy_heating_observations n CROSS JOIN generate_series($1::timestamptz-interval '40 days',
+        $1::timestamptz-interval '1 day',interval '1 day') at WHERE n.start_ts=$1`, [start]);
+    const oldest = new Date(Date.parse(start) - 40 * 86_400_000).toISOString();
+    const longGap = (await db.query<{ gap: { from_at: string; to_at: string } }>(
+      "SELECT get_energy_room_missing_irradiance_window($1,$2,'room',$3,$4,$5,NULL) AS gap",
+      [home, customer, solarBinding, oldest, end])).rows[0].gap;
+    assertEquals(Date.parse(longGap.from_at), Date.parse(oldest));
+    assertEquals(Date.parse(longGap.to_at) - Date.parse(oldest), 30 * 86_400_000 + 3_600_000);
+    await db.query("UPDATE energy_heating_observations SET source_key=$1", [conflicting]);
+    assertEquals((await db.query<{ gap: unknown }>(
+      "SELECT get_energy_room_missing_irradiance_window($1,$2,'room',$3,$4,$5,NULL) AS gap",
+      [home, customer, solarBinding, oldest, end])).rows[0].gap, null, "unmatched source histories do not request weather");
+    await db.exec("ROLLBACK");
+
     // Qualified native history precedes current meter discovery and an old
     // probe cutoff. Ambiguous legacy rows must remain excluded there.
     await db.query("INSERT INTO energy_room_probe_slots VALUES($1,'room',$2,$3)", [home, former, end]);

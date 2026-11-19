@@ -27,6 +27,9 @@ pub struct Thermostat {
 pub struct Interval {
     pub hours: f64,
     pub steps: usize,
+    /// Convert delayed response coordinates once at an interval boundary.
+    #[serde(default)]
+    pub memory_scale: Option<f64>,
     pub step: Transition,
     pub relay_budget_w: Option<f64>,
 }
@@ -214,6 +217,11 @@ fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGL
     I: IntoIterator<Item = &'a Thermostat> + Clone,
 {
     out.state = initial;
+    if q.steps > 0 {
+        if let Some(scale) = q.memory_scale {
+            out.state.stored_heat *= scale;
+        }
+    }
     out.power.fill(0.);
     out.peak = relay;
     let hours = if q.steps > 0 {
@@ -289,6 +297,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn response_coordinate_scale_applies_once_before_all_minutes() {
+        let mut q = Interval {
+            hours: 0.25,
+            steps: 15,
+            memory_scale: Some(0.5),
+            step: Transition {
+                decay: 1.,
+                offset_c: 0.,
+                stored_heat_release: 0.1,
+                gain_c_per_w: 0.,
+                stored_heat_gain_c_per_w: 0.,
+                carry: 1.,
+            },
+            relay_budget_w: None,
+        };
+        let initial = State {
+            temperature: 20.,
+            stored_heat: 4.,
+            mask: 0,
+        };
+        let mut out = Projection::new(0);
+        project(&q, &[], initial, &[], 0., &mut out);
+        assert_eq!(out.state.stored_heat, 2.);
+        assert!((out.state.temperature - 23.).abs() < 1e-12);
+        q.steps = 0;
+        q.hours = 0.;
+        project(&q, &[], initial, &[], 0., &mut out);
+        assert_eq!(out.state.stored_heat, initial.stored_heat);
+        assert_eq!(out.state.temperature, initial.temperature);
+    }
+
+    #[test]
     fn temperature_band_draw_does_not_reduce_the_running_reservation() {
         let thermostat = Thermostat {
             minimum_c: 5.,
@@ -303,6 +343,7 @@ mod tests {
         let interval = Interval {
             hours: 0.25,
             steps: 1,
+            memory_scale: None,
             step: Transition {
                 decay: 1.,
                 offset_c: 0.,
@@ -404,6 +445,7 @@ mod tests {
                             let q = Interval {
                                 hours: 0.25,
                                 steps: 15,
+                                memory_scale: None,
                                 relay_budget_w: None,
                                 step: Transition {
                                     decay: 0.999,

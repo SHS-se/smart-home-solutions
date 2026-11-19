@@ -14,7 +14,7 @@ import { prepareRoomMeanEvidence, roomIntervalHours, roomIntervalSeconds } from 
 import { HEAT_LAG_GRID_H, MAX_PREDICTION_ERROR_C } from "./fit.ts";
 import { HEATED_SAMPLE_MIN_W, MIN_HEATED_SAMPLES, MIN_SOLAR_COVERAGE, MIN_TRAINING_SAMPLES,
   type ThermalFitRejection, type ThermalFitResult } from "./regression.ts";
-import { type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
+import { type DynamicThermalZoneModel, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 export interface RoomMeanQuarter {
   start_ms: number;
@@ -53,7 +53,7 @@ export interface RoomLearningEvidence {
   attributed_heater_intervals?: number;
   response_selection?: RoomResponseSelection;
 }
-export type RoomMeanFitResult = ThermalFitResult & { learning_evidence?: RoomLearningEvidence };
+export type RoomMeanFitResult<Model extends ThermalZoneModel = ThermalZoneModel> = ThermalFitResult<Model> & { learning_evidence?: RoomLearningEvidence };
 const finite = (v: number | null): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** Heating input's contribution to the change between adjacent quarter means. */
@@ -191,7 +191,8 @@ function prepareDesign(rows: RoomMeanQuarter[], lag: number, solar: boolean, ban
       return { segment, z: pair.memory * initialScale,
         x: [pair.memory * v[0] + pair.currentHeat * v[1] + pair.nextHeat * v[2], (pair.L + pair.nextForcing) * v[3],
           pair.L * v[4] + pair.nextForcing * v[5], ...(solar ? [pair.L * v[6] + pair.nextForcing * v[7]] : [])],
-        y: v[8] - pair.alpha * v[9] - exchangeScale * (pair.L * v[10] + pair.nextForcing * v[11]) - pair.L * v[12] - pair.nextForcing * v[13] };
+        y: v[8] - pair.alpha * v[9] - exchangeScale * (pair.L * v[10] + pair.nextForcing * v[11]) -
+          (k === Infinity ? 0 : pair.L * v[12]) - (k === Infinity ? 0 : pair.nextForcing * v[13]) };
     });
     return { system, count };
   };
@@ -213,7 +214,7 @@ function visitTerms(rows: RoomMeanQuarter[], fit: FitEvaluation, from: number, b
     term.x[2] = pair.L * (q.outdoor_c! - q.house_c!) + pair.nextForcing * (next.outdoor_c! - next.house_c!);
     if (solar) term.x[3] = pair.L * q.solar_w_per_m2! + pair.nextForcing * next.solar_w_per_m2!;
     term.y = next.room_c! - pair.alpha * q.room_c! - exchangeScale * (pair.L * q.house_c! + pair.nextForcing * next.house_c!) -
-      (band ? pair.L * (q.band_forcing_c_per_h ?? 0) + pair.nextForcing * (next.band_forcing_c_per_h ?? 0) : 0);
+      (band && fit.family !== "equilibrium" ? pair.L * (q.band_forcing_c_per_h ?? 0) + pair.nextForcing * (next.band_forcing_c_per_h ?? 0) : 0);
     visit(term);
   });
 }
@@ -348,9 +349,9 @@ function fitCandidate(rows: RoomMeanQuarter[], lag: number, solar: boolean, band
 
 /** Learn local exchange on the same state coordinates as the room's general fit. */
 export function fitRoomBand(
-  rows: RoomMeanQuarter[], reference: ThermalZoneModel, outdoor: (outdoorC: number) => boolean,
+  rows: RoomMeanQuarter[], reference: DynamicThermalZoneModel, outdoor: (outdoorC: number) => boolean,
   ratedPowerW: number | null,
-): { model: ThermalZoneModel; minC: number; maxC: number } | null {
+): { model: DynamicThermalZoneModel; minC: number; maxC: number } | null {
   const lag = reference.heat_lag_h ?? 0;
   const solar = reference.solar_gain_c_per_h_per_wm2 != null;
   const band = { outdoor, house: reference.house_coupling_per_h ?? 0,
@@ -377,7 +378,7 @@ export function fitRoomBand(
   return {
     minC, maxC,
     model: {
-      ...reference, gain_c_per_wh: gain, cooling_constant_per_h: external,
+      ...reference, response_family: "finite", gain_c_per_wh: gain, cooling_constant_per_h: external,
       background_gain_c_per_h: background, solar_gain_c_per_h_per_wm2: sun ?? null,
       thermal_capacity_wh_per_c: 1 / gain, heat_loss_w_per_c: fit.k / gain, time_constant_h: 1 / fit.k,
       heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
@@ -470,6 +471,35 @@ function forecastError(fit: FitEvaluation, initialStates: Map<number, number>, r
     let complete = true;
     for (let j = i; j <= end; j++) if (segments[j] !== segment) { complete = false; break; }
     if (!complete) continue;
+    if (fit.family === "equilibrium" || fit.beta[0] === 0) {
+      // Evolve the heater's temperature contribution, not D=contribution/gain:
+      // an identified zero heater coefficient must never cause division by zero.
+      const pair = fit.family === "equilibrium"
+        ? roomEquilibriumMeanPair(fit.lag, roomIntervalHours(q), roomIntervalHours(rows[i + 1]))
+        : roomMeanPair(roomMeanObservation(fit.k, fit.lag, roomIntervalHours(q)),
+          roomMeanObservation(fit.k, fit.lag, roomIntervalHours(rows[i + 1])));
+      let response = fit.beta[0] * heat[i] + (pair.memory !== 0
+        ? initial[i] / pair.memory * (initialStates.get(segment) ?? 0) : 0);
+      const first = roomMeanObservation(fit.k, fit.lag, roomIntervalHours(q));
+      let temperature = fit.family === "equilibrium" ? 0
+        : (q.room_c! - first.U * response - (first.V - first.U) * fit.beta[0] * q.heat_w! - first.V * forcing(q)) / first.E;
+      for (let j = i; j < end; j++) {
+        const row = rows[j], step = roomMeanObservation(fit.k, fit.lag, roomIntervalHours(row));
+        if (fit.family !== "equilibrium") temperature = step.a * temperature + step.B * response +
+          (step.effect - step.B) * fit.beta[0] * row.heat_w! + step.effect * forcing(row);
+        response = step.C * response + (1 - step.C) * fit.beta[0] * row.heat_w!;
+      }
+      const next = rows[end], duration = roomIntervalHours(next);
+      const last = roomMeanObservation(fit.k, fit.lag, duration);
+      const fraction = fit.lag ? -fit.lag * Math.expm1(-duration / fit.lag) / duration : 0;
+      const predicted = fit.family === "equilibrium"
+        ? (1 - fit.beta[2]) * next.house_c! + fit.beta[2] * next.outdoor_c! + fit.beta[1] +
+          (fit.solar ? fit.beta[3] * next.solar_w_per_m2! : 0) + fraction * response +
+          (1 - fraction) * fit.beta[0] * next.heat_w!
+        : last.E * temperature + last.U * response + (last.V - last.U) * fit.beta[0] * next.heat_w! + last.V * forcing(next);
+      sum += Math.abs(predicted - next.room_c!); count++;
+      continue;
+    }
     const op = roomMeanObservation(fit.k, fit.lag, roomIntervalHours(q));
     const pair = roomMeanPair(op, roomMeanObservation(fit.k, fit.lag, roomIntervalHours(rows[i + 1])));
     const D = heat[i] + (pair.memory !== 0 ? initial[i] / pair.memory * (initialStates.get(segment) ?? 0) / fit.beta[0] : 0);
@@ -519,6 +549,8 @@ interface MeanFitCandidate {
   full: FitEvaluation;
 }
 
+function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: MeanFitCandidate[]): RoomMeanFitResult<DynamicThermalZoneModel>;
+function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: MeanFitCandidate[], band: BandFit): RoomMeanFitResult;
 function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: MeanFitCandidate[], band?: BandFit): RoomMeanFitResult {
   const { rows, validationRows, usable, solar, split, observation, evidence, hours, ratedPowerW, workspace } = prepared;
   if (!candidates.length) return { ok: false, reason: usable.length ? "singular" : "insufficient_samples", sample_count: usable.length,
@@ -544,17 +576,12 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
   };
   const equilibriumFamily = limitFamily("equilibrium"), integratorFamily = limitFamily("integrator");
   const equilibrium = equilibriumFamily.best, integrator = integratorFamily.best;
-  const chosen = selected ?? equilibrium ?? integrator!, fit = chosen.full;
-  const learning: RoomLearningEvidence = {
-    method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation, selection: "chronological_transition_mse",
-    training_pairs: chosen.training?.n ?? 0, validation_pairs: chosen.validation.count,
-    validation_mse_c2: chosen.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
-    ...evidence, residual_degrees_of_freedom: fit.dof,
-  };
+  let chosen = selected ?? equilibrium ?? integrator!;
+  let responseSelection: RoomResponseSelection | undefined;
   if (band) {
     const limit = equilibrium?.full, slow = integrator?.full;
-    learning.response_selection = compareFiniteRoomResponse(fit.n,
-      selected ? { mse: fit.mse, parameters: fit.n - fit.dof + 2 } : null,
+    responseSelection = compareFiniteRoomResponse(chosen.full.n,
+      selected ? { mse: selected.full.mse, parameters: selected.full.n - selected.full.dof + 2 } : null,
       limit ? { mse: limit.mse,
         // Both families search the same lag grid: count its selected parameter
         // and residual variance. The exact limit has no finite exchange k.
@@ -565,26 +592,36 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
         response: { heater_c_per_wh: slow.beta[0], background_c_per_h: slow.beta[1],
           solar_c_per_h_per_wm2: slow.solar ? slow.beta[3] : null }, lag_h: slow.lag } : null,
       selected?.full?.lag ?? null);
-    learning.response_selection.equilibrium_lags_evaluated = equilibriumFamily.candidates.map(c => c.full.lag);
-    learning.response_selection.equilibrium_validation_pairs = equilibrium?.validation.count ?? 0;
-    learning.response_selection.equilibrium_validation_mse_c2 = equilibrium?.validation.mse ?? null;
-    learning.response_selection.equilibrium_holdout_selected_lag_h = equilibriumFamily.held?.full.lag ?? null;
-    learning.response_selection.integrator_lags_evaluated = integratorFamily.candidates.map(c => c.full.lag);
-    learning.response_selection.integrator_validation_pairs = integrator?.validation.count ?? 0;
-    learning.response_selection.integrator_validation_mse_c2 = integrator?.validation.mse ?? null;
-    learning.response_selection.integrator_holdout_selected_lag_h = integratorFamily.held?.full.lag ?? null;
-    const comparison = learning.response_selection;
-    if (!selected || comparison.selected === "equilibrium_response" || comparison.selected === "integrator_response" ||
-      (comparison.selected === "unavailable" && comparison.unavailable_reason !== "limiting_families_unidentified")) {
-      return { ok: false, reason: "response_unresolved", sample_count: fit.n, learning_evidence: learning };
-    }
+    responseSelection.equilibrium_lags_evaluated = equilibriumFamily.candidates.map(c => c.full.lag);
+    responseSelection.equilibrium_validation_pairs = equilibrium?.validation.count ?? 0;
+    responseSelection.equilibrium_validation_mse_c2 = equilibrium?.validation.mse ?? null;
+    responseSelection.equilibrium_holdout_selected_lag_h = equilibriumFamily.held?.full.lag ?? null;
+    responseSelection.integrator_lags_evaluated = integratorFamily.candidates.map(c => c.full.lag);
+    responseSelection.integrator_validation_pairs = integrator?.validation.count ?? 0;
+    responseSelection.integrator_validation_mse_c2 = integrator?.validation.mse ?? null;
+    responseSelection.integrator_holdout_selected_lag_h = integratorFamily.held?.full.lag ?? null;
+    if (responseSelection.selected === "equilibrium_response") chosen = equilibrium!;
+    else if (responseSelection.selected === "integrator_response") chosen = integrator!;
+  }
+  const fit = chosen.full;
+  const learning: RoomLearningEvidence = {
+    method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation, selection: "chronological_transition_mse",
+    training_pairs: chosen.training?.n ?? 0, validation_pairs: chosen.validation.count,
+    validation_mse_c2: chosen.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
+    ...evidence, residual_degrees_of_freedom: fit.dof,
+    ...(responseSelection ? { response_selection: responseSelection } : {}),
+  };
+  if (responseSelection?.selected === "unavailable" &&
+    (responseSelection.unavailable_reason !== "limiting_families_unidentified" || !selected)) {
+    return { ok: false, reason: "response_unresolved", sample_count: fit.n, learning_evidence: learning };
   }
   let initialStates = fit.initial;
   if (!initialStates) {
-    // Staged bands keep only scalar fits. Reconstruct the selected finite
-    // estimate once at the saved exchange rate for the forecast diagnostic.
-    const selectedDesign = prepareDesign(rows, fit.lag, fit.solar, band, workspace)(fit.k);
-    const recovered = estimate(selectedDesign, fit.k, fit.lag, fit.solar, band);
+    // Staged bands keep only scalar fits. Recover the selected family's own
+    // nuisance states with exactly its original design and constraints.
+    const selectedDesign = prepareDesign(rows, fit.lag, fit.solar, band, workspace)(fit.family === "equilibrium" ? Infinity : fit.k);
+    const selectedBand = fit.family === "integrator" && band ? { ...band, house: 0 } : band;
+    const recovered = estimate(selectedDesign, fit.k, fit.lag, fit.solar, selectedBand, fit.family);
     if (!recovered || recovered.n !== fit.n || recovered.dof !== fit.dof || recovered.mse !== fit.mse ||
       recovered.beta.some((value, i) => value !== fit.beta[i])) throw new Error("Staged room band fit changed at finalization");
     initialStates = recovered.initial;
@@ -607,19 +644,31 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
   const solarRows = usable.filter(r => finite(r.solar_w_per_m2));
   const average = changes.reduce((sum, v) => sum + v, 0) / changes.length;
   const variance = changes.reduce((sum, v) => sum + (v - average) ** 2, 0) / changes.length;
-  const model: ThermalZoneModel = {
-    gain_c_per_wh: gain, cooling_constant_per_h: fit.beta[2],
-    house_coupling_per_h: fit.k - fit.beta[2], heat_lag_h: fit.lag,
-    background_gain_c_per_h: fit.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[3] : null,
+  const common = {
+    heat_lag_h: fit.lag,
     solar_mean_w_per_m2: fit.solar ? solarRows.reduce((sum, r) => sum + r.solar_w_per_m2! * roomIntervalHours(r), 0) / hours(solarRows) : null,
-    thermal_capacity_wh_per_c: 1 / gain, heat_loss_w_per_c: fit.k / gain, time_constant_h: 1 / fit.k,
-    heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
     sample_count: fit.n, r2: variance > 0 ? 1 - fit.mse / variance : 0,
     residual_std_c: Math.sqrt(fit.mse), prediction_error_c: prediction,
+  };
+  const model: ThermalZoneModel = fit.family === "equilibrium" ? {
+    ...common, response_family: "equilibrium", heater_c_per_w: gain, outdoor_share: fit.beta[2],
+    offset_c: fit.beta[1], solar_c_per_wm2: fit.solar ? fit.beta[3] : null,
+  } : {
+    ...common, response_family: fit.family,
+    gain_c_per_wh: gain, cooling_constant_per_h: fit.beta[2],
+    house_coupling_per_h: fit.k - fit.beta[2],
+    background_gain_c_per_h: fit.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[3] : null,
+    thermal_capacity_wh_per_c: gain > 0 ? 1 / gain : null,
+    heat_loss_w_per_c: gain > 0 ? fit.k / gain : null, time_constant_h: fit.k > 0 ? 1 / fit.k : null,
+    heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
   };
   return { ok: true, model, ...(warnings.length ? { warnings } : {}), learning_evidence: learning };
 }
 
+export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW?: number | null,
+  options?: undefined): RoomMeanFitResult<DynamicThermalZoneModel>;
+export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | null,
+  options: { outdoor: (outdoorC: number) => boolean }): RoomMeanFitResult;
 export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | null = null,
   options?: { outdoor: (outdoorC: number) => boolean }): RoomMeanFitResult {
   if (options) return fitIndependentRoomBand(quarters, options.outdoor, ratedPowerW).result;

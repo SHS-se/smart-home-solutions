@@ -20,6 +20,8 @@ export interface RoomThermostat extends ThermostatInput {
 export interface ThermostatRoomState extends RoomState { heating_mask: number }
 export interface ThermostatQuarter {
   hours: number;
+  /** Convert delayed response coordinates once before this interval. */
+  memory_scale?: number;
   thermostat_power_w?: readonly number[];
   /** Exact constant-input transition for each equal, at most one-minute step. */
   step: RoomTransition;
@@ -75,6 +77,7 @@ export function thermostatTargets(t: RoomThermostat, lowRoomC: number, highRoomC
 export function projectThermostatQuarter(q: ThermostatQuarter, thermostats: readonly RoomThermostat[],
   initial: ThermostatRoomState, targets: readonly number[], relayW: number) {
   let temperature = initial.temperature_c, delivered = initial.stored_heat_c, previousMask = initial.heating_mask;
+  if (q.steps > 0 && q.memory_scale !== undefined) delivered *= q.memory_scale;
   const step = q.step;
   const energy = thermostats.map(() => 0);
   const hours = q.steps > 0 ? q.hours / q.steps : 0;

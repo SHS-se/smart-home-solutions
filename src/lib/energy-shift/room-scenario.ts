@@ -1,5 +1,5 @@
 import {
-  backgroundRateForSlot, roomTransition, SLOT_HOURS, stepRoom, type ThermalZoneModel,
+  backgroundRateForSlot, roomTransition, SLOT_HOURS, stepRoom, type DynamicThermalZoneModel, type ThermalZoneModel,
 } from '../../../supabase/functions/_shared/planner/models/room/thermal.ts';
 
 export const HEATING_HOURS = 2;
@@ -27,7 +27,7 @@ export function projectRoomCycle(model: ThermalZoneModel, { startC, outdoorC, ho
 }
 
 export function projectDoorwayImpact(
-  receiver: ThermalZoneModel,
+  receiver: DynamicThermalZoneModel,
   doorway: { weight: number; usual: number },
   sourceC: readonly number[],
   houseC: number,

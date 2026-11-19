@@ -428,3 +428,63 @@ Deno.test("untrained general response retains independent bands and records each
   bundle.roomHeating[key].binding = "changed-source";
   assertEquals(prepareRoomModels(snapshot, [mapping], bundle).rooms[0].heating_bands?.active, []);
 });
+
+Deno.test("mixed response-family history carries measured heater memory into the first forecast band", async () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const prepared = prepareRoomModels(snapshot, mappings, bundle);
+  const room = prepared.rooms.find(candidate => candidate.model)!;
+  const dynamic = { response_family: "integrator" as const, gain_c_per_wh: .002, heat_lag_h: 2,
+    cooling_constant_per_h: 0, house_coupling_per_h: 0, background_gain_c_per_h: 0,
+    thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 0, time_constant_h: null,
+    heating_rate_c_per_h: null, r2: 1, sample_count: 240, residual_std_c: .01 };
+  const algebraic = { response_family: "equilibrium" as const, heater_c_per_w: .01, heat_lag_h: .5,
+    outdoor_share: .2, offset_c: 3, solar_c_per_wm2: null, r2: 1, sample_count: 240, residual_std_c: .01 };
+  room.model = dynamic;
+  room.heating_bands = { reference_revision: "synthetic-general", active: [
+    { band_c: -10, revision: "synthetic-integrator", observed_min_c: -10, observed_max_c: -6,
+      training_from: "2025-01-01", training_to: "2025-02-01", model: dynamic },
+    { band_c: 5, revision: "synthetic-equilibrium", observed_min_c: 5, observed_max_c: 9,
+      training_from: "2025-01-01", training_to: "2025-02-01", model: algebraic },
+  ] };
+  const run = (forecastC: number, missing: number[] = []) => {
+    const source = structuredClone(prepared.snapshot);
+    source.outdoor_temperature_c = source.slots.map(() => forecastC);
+    const db = createClient("http://localhost:54321", "synthetic-service", {
+      auth: { persistSession: false }, global: { fetch: (url, request) => {
+        switch (new URL(String(url)).pathname.split("/").at(-1)) {
+          case "get_energy_latest_room_temperatures": return Promise.resolve(Response.json([
+            { room_key: room.key, room_temperature_c: 19 },
+          ]));
+          case "energy_optimisation_comfort_schedules": return Promise.resolve(Response.json([
+            { room_key: room.key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
+              off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 },
+          ]));
+          case "get_energy_room_planning_history": {
+            const { p_from } = JSON.parse(String(request?.body));
+            const starts = Array.from({ length: 96 }, (_, i) => Date.parse(p_from) + i * 900_000);
+            return Promise.resolve(Response.json([{ room_key: room.key, temperature_starts: starts,
+              heater_quarters: starts.flatMap((start, i) => missing.includes(i) ? [] : [[start, 800]]),
+              outdoor_quarters: starts.map((start, i) => [start, i < 94 ? -7 : 6]),
+            }]));
+          }
+          default: throw new Error("Unexpected synthetic mixed-family capture endpoint");
+        }
+      } },
+    });
+    return captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", source, [room]);
+  };
+  // 23.5 hours through the dynamic reservoir, followed by half an hour through
+  // the algebraic reservoir. The coordinate changes, not measured delivered watts.
+  const deliveredCold = 800 * (1 - Math.exp(-23.5 / 2));
+  const delivered = 800 + (deliveredCold - 800) * Math.exp(-.5 / .5);
+  const cold = await run(-7), mild = await run(6);
+  assertAlmostEquals(cold.thermal_zones![0].start_stored_heat_c!, .002 * 2 * delivered, 1e-11);
+  assertAlmostEquals(mild.thermal_zones![0].start_stored_heat_c!, .01 * delivered, 1e-11);
+  for (const missing of [[95], [70], Array.from({ length: 96 }, (_, i) => i)]) {
+    const incomplete = await run(6, missing);
+    assertEquals(incomplete.thermal_zones!.length, 1);
+    const heat = incomplete.thermal_zones![0].start_stored_heat_c!;
+    assert(Number.isFinite(heat) && heat >= 0 && heat < .01 * delivered);
+    assertEquals(incomplete.thermal_zones![0].model, room.model);
+  }
+});

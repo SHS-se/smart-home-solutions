@@ -3,7 +3,7 @@ import { heatingModelRuns, type HeatingModelSource, type RoomHeatingBand, type R
 import { PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
-import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
+import { backgroundRateForSlot, heaterResponse, isEquilibrium, roomMemoryScale, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { heatingMask, isThermostat, nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
@@ -99,7 +99,7 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
     if (!executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
-      outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
+      outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
       complete?.();
@@ -229,6 +229,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
   const thermalUse: HeatingModelSource[] = [];
   const controlled = [...members, ...relays];
   const electricalUse = controlled.map(() => [] as HeatingModelSource[]);
+  let previousPhysics = zone.heating_bands?.active[zone.heating_bands.by_quarter[0]]?.model ?? model;
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
     const steps = Math.ceil(hours * 60);
@@ -248,7 +249,17 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
       }
     }
     const thermostatPower = weather ? actuators.map((actuator, j) => runningPower?.[j]?.watts ?? actuator.power_w) : undefined;
-    return { hours, steps, transition: roomTransition(physics, conditions),
+    const memoryScale = hours > 0 ? roomMemoryScale(previousPhysics, physics) : 1;
+    if (hours > 0) previousPhysics = physics;
+    const transition = roomTransition(physics, conditions);
+    // The whole-quarter envelope includes the boundary conversion. Minute
+    // projection receives it separately and applies it once, never per minute.
+    if (memoryScale !== 1) {
+      transition.stored_heat_release *= memoryScale;
+      transition.carry *= memoryScale;
+    }
+    return { hours, steps, transition,
+      ...(memoryScale !== 1 ? { memory_scale: memoryScale } : {}),
       ...(thermostatPower ? { thermostat_power_w: thermostatPower } : {}),
       step: roomTransition(physics, { ...conditions, hours: steps ? hours / steps : 0 }),
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),

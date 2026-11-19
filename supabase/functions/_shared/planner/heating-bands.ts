@@ -33,10 +33,13 @@ export interface RoomHeatingBands {
   window_attempts?: Record<string, string>;
   window_last_attempted_at?: Record<string, string>;
   window_solar_pending?: Record<string, boolean>;
+  /** Missing provider hours retry on the normal daily learning cadence. */
+  window_solar_retry_at?: Record<string, string | null>;
   window_evidence_updated_at?: Record<string, string>;
   window_solar_progress?: Record<string, { from_at: string; through_at: string; to_at: string }>;
   general_attempt?: { implementation: string; evidence_updated_at: string; from_at: string; to_at: string; attempted_at?: string };
   general_solar_pending?: boolean;
+  general_solar_retry_at?: string | null;
   pending_windows?: number;
   diagnostics?: Record<string, unknown>;
 }
