@@ -426,3 +426,23 @@ Thermal evidence corrections do not invalidate completed solar coverage. A bound
 pass advances through later gaps; unavailable provider hours remain missing and
 retry at the existing daily learning cadence. They do not keep completed numeric
 refits immediately runnable, and new thermal evidence cannot slide the retry date.
+
+## Counter-processing authority at ingestion
+
+Heating observation captures name their counter-processing revision independently
+of the app release and the physical source identity. The SQL ingestion owner
+keeps a monotonic watermark per home, device and physical statistic. Source-qualified
+uploads lock those meter rows in deterministic order before merging any energy,
+withdrawals or attribution. A lower-revision upload acknowledges its intervals and
+may update independent temperatures/solar, but cannot change protected meter facts.
+The guard runs before both thermal and electrical withdrawals. Same-revision and
+newer corrected measurements can recover unknown intervals. An unavailable reading
+remains unknown; no energy is inferred by this authority rule.
+
+The watermark covers the counter's whole retained history, including other native
+resolutions and intervals without stored rows. It survives observation pruning;
+there is one small record per physical meter, rather than per historical interval.
+Omitted revision denotes the pre-revision producer contract. Malformed explicit
+claims fail validation. A collector algorithm change increments the processing
+revision and changes its replay signature; replay, rather than model editing,
+repairs the measured inputs and ordinary learning updates the affected bands.

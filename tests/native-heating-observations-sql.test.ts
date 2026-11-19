@@ -778,6 +778,123 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const optimized = await window();
     await db.exec(originalWindows);
     assertEquals(await window(), optimized);
+    // Algorithm provenance is per physical meter, not per room-source hash or
+    // interval. These are independent synthetic readings, not household data.
+    await db.exec(`CREATE FUNCTION private.prune_native_room_fit_history(uuid,timestamptz,boolean)
+      RETURNS void LANGUAGE sql AS $$ SELECT $$`);
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119130000_fence_heating_counter_processing.sql"));
+    const protectedAt = new Date(Date.parse(start) - 10 * 86_400_000).toISOString();
+    const protectedRow = { ...row, start: protectedAt, device_energy_kwh: { heater: 5 }, heater_energy_limits_w: { heater: 800 } };
+    const rawEnergy = async (at = protectedAt) => (await db.query<{
+      device_energy_kwh: Record<string, number>; heater_energy_limits_w: Record<string, number>;
+      room_temperature_c: number; solar_w_per_m2: number | null; changed: string;
+    }>(`SELECT device_energy_kwh,heater_energy_limits_w,room_temperature_c,solar_w_per_m2,
+        learning_updated_at::text AS changed FROM energy_heating_observations
+        WHERE home_id=$1 AND room_key='room' AND source_key=$2 AND start_ts=$3 AND duration_s=3600`,
+      [home, source, at])).rows[0];
+    await write(protectedRow);
+    await write({ ...protectedRow, counter_processing_revision: 1,
+      device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    assertEquals((await rawEnergy()).device_energy_kwh, {});
+    // A delayed old value is ACKed, including when the withdrawal left no
+    // measurement. It cannot restore energy or replace its attribution limit.
+    assertEquals(await write({ ...protectedRow, heater_energy_limits_w: { heater: 900 } }),
+      { accepted: 1, accepted_by_source: [{ room_key: "room", source_key: source, accepted: 1 }] });
+    assertEquals((await rawEnergy()).device_energy_kwh, {});
+    assertEquals((await rawEnergy()).heater_energy_limits_w, { heater: 800 });
+    const blockedStamp = (await rawEnergy()).changed;
+    await write({ ...protectedRow, heater_energy_limits_w: {} });
+    assertEquals((await rawEnergy()).changed, blockedStamp, "an identical blocked replay is not new learning evidence");
+    await write({ ...protectedRow, room_temperature_c: 22, solar_w_per_m2: 123 });
+    assertEquals([(await rawEnergy()).room_temperature_c, (await rawEnergy()).solar_w_per_m2], [22, 123]);
+    assertEquals((await rawEnergy()).device_energy_kwh, {});
+    // Same/newer processing can replace an unknown; older explicit withdrawals
+    // cannot undo recovery in either thermal or electrical learning.
+    await write({ ...protectedRow, counter_processing_revision: 1, device_energy_kwh: { heater: .4 } });
+    await write({ ...protectedRow, device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    assertEquals((await rawEnergy()).device_energy_kwh, { heater: .4 });
+    await write({ ...protectedRow, counter_processing_revision: 2, device_energy_kwh: { heater: .3 }, heater_energy_limits_w: {} });
+    await write({ ...protectedRow, counter_processing_revision: 1, device_energy_kwh: { heater: .8 }, invalidated_device_keys: ["heater"] });
+    assertEquals((await rawEnergy()).device_energy_kwh, { heater: .3 });
+    assertEquals((await rawEnergy()).heater_energy_limits_w, {});
+    const absentAt = new Date(Date.parse(protectedAt) - 3600_000).toISOString();
+    await write({ ...protectedRow, start: absentAt, counter_processing_revision: 2,
+      device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    await write({ ...protectedRow, start: absentAt });
+    assertEquals((await rawEnergy(absentAt)).device_energy_kwh, {});
+    // A previously empty interval is protected too: no placeholder or existing
+    // observation is needed to remember the upgraded cleaner for this counter.
+    const emptyAt = new Date(Date.parse(absentAt) - 3600_000).toISOString();
+    await write({ ...protectedRow, start: emptyAt });
+    assertEquals((await rawEnergy(emptyAt)).device_energy_kwh, {});
+    const fineAt = new Date(Date.parse(emptyAt) - 3600_000).toISOString();
+    const fineRow = { ...protectedRow, start: fineAt, duration_s: 900, source: "recorder_5minute_mean",
+      counter_processing_revision: 2, device_energy_kwh: { heater: .1 } };
+    await write(fineRow);
+    await write({ ...protectedRow, start: fineAt, device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    assertEquals((await db.query(`SELECT device_energy_kwh FROM energy_heating_observations
+      WHERE home_id=$1 AND room_key='room' AND start_ts=$2 AND duration_s=900`, [home, fineAt])).rows,
+      [{ device_energy_kwh: { heater: .1 } }]);
+    await write({ ...protectedRow, start: fineAt, counter_processing_revision: 2, device_energy_kwh: { heater: .4 } });
+    await write({ ...fineRow, counter_processing_revision: 0, device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    assertEquals((await rawEnergy(fineAt)).device_energy_kwh, { heater: .4 });
+    // The electrical withdrawal owner must receive the same gated keys.
+    const withdrawalCount = (await db.query("SELECT count(*)::int AS n FROM private.energy_weather_heating_withdrawals")).rows[0];
+    await write({ ...drawRow, device_energy_kwh: {}, invalidated_device_keys: ["heater"] });
+    assertEquals((await db.query("SELECT count(*)::int AS n FROM private.energy_weather_heating_withdrawals")).rows[0], withdrawalCount);
+
+    // Every source-qualified row contributes to batch maxima before any
+    // mutation. Input order does not let an old numeric sibling win.
+    const batchAt = new Date(Date.parse(protectedAt) - 5 * 3600_000).toISOString();
+    const batchOther = new Date(Date.parse(batchAt) - 3600_000).toISOString();
+    for (const reverse of [false, true]) {
+      await db.query("DELETE FROM private.energy_heating_meter_processing WHERE home_id=$1 AND device_key='heater'", [home]);
+      const batch = [{ ...protectedRow, start: batchAt }, { ...protectedRow, start: batchOther,
+        counter_processing_revision: 2, device_energy_kwh: {}, invalidated_device_keys: ["heater"] }];
+      await db.query("SELECT record_energy_heating_observations($1,$2,$3::jsonb)",
+        [home, customer, JSON.stringify(reverse ? batch.reverse() : batch)]);
+      assertEquals((await rawEnergy(batchAt)).device_energy_kwh, {});
+    }
+    // A thermometer/source-hash change cannot reset the same physical meter.
+    await db.query("UPDATE energy_room_profiles SET rooms=jsonb_set(rooms,'{room,source_key}',$1::jsonb) WHERE home_id=$2",
+      [JSON.stringify("d".repeat(64)), home]);
+    await write({ ...protectedRow, source_key: "d".repeat(64), start: batchOther });
+    assertEquals((await db.query(`SELECT device_energy_kwh FROM energy_heating_observations WHERE home_id=$1
+      AND room_key='room' AND source_key=$2 AND start_ts=$3`, [home, "d".repeat(64), batchOther])).rows,
+      [{ device_energy_kwh: {} }]);
+    await db.query("UPDATE energy_room_profiles SET rooms=jsonb_set(rooms,'{room,source_key}',$1::jsonb) WHERE home_id=$2",
+      [JSON.stringify(source), home]);
+    const beforeWrongSource = (await db.query("SELECT * FROM private.energy_heating_meter_processing ORDER BY device_key,statistic_id")).rows;
+    assertEquals(await write({ ...protectedRow, source_key: "e".repeat(64), counter_processing_revision: 99 }),
+      { accepted: 0, accepted_by_source: [] });
+    assertEquals((await db.query("SELECT * FROM private.energy_heating_meter_processing ORDER BY device_key,statistic_id")).rows, beforeWrongSource);
+    await assertRejects(() => db.query("SELECT record_energy_heating_observations($1,$2,$3::jsonb)",
+      [home, "f".repeat(8) + "-ffff-4fff-8fff-" + "f".repeat(12), JSON.stringify([{ ...protectedRow, counter_processing_revision: 99 }])]), Error, "Home mismatch");
+    for (const revision of [null, "3", -1, 1.5, 2147483648]) await assertRejects(() => write({ ...protectedRow,
+      counter_processing_revision: revision }), Error, "Invalid counter processing revision");
+
+    // One protected meter does not prevent another physical counter in the
+    // same room from accepting a lower-revision observation.
+    await write({ ...coarse, counter_processing_revision: 1, device_energy_kwh: { main: .3, auxiliary: .1 },
+      heater_energy_limits_w: { main: 800, auxiliary: 200 } });
+    await db.query("UPDATE energy_optimisation_devices SET statistic_id='sensor.synthetic_new_auxiliary' WHERE home_id=$1 AND device_key='auxiliary'", [home]);
+    const changedMeters = { ...planMeters, auxiliary: "sensor.synthetic_new_auxiliary" };
+    await write({ ...coarse, device_statistics: changedMeters, device_energy_kwh: { main: 5, auxiliary: .15 },
+      heater_energy_limits_w: { main: 900, auxiliary: 210 }, invalidated_device_keys: ["main"] });
+    assertEquals((await db.query(`SELECT device_energy_kwh,heater_energy_limits_w FROM energy_heating_observations
+      WHERE home_id=$1 AND room_key=$2 AND start_ts=$3 AND device_statistics=$4::jsonb`,
+      [home, planRoom, retractAt, JSON.stringify(changedMeters)])).rows,
+      [{ device_energy_kwh: { auxiliary: .15 }, heater_energy_limits_w: { auxiliary: 210 } }]);
+    // A genuinely different statistic ID for the same device starts its own
+    // physical-counter epoch; the old counter's watermark is retained.
+    await db.query("UPDATE energy_optimisation_devices SET statistic_id='sensor.synthetic_replaced_energy' WHERE id=$1", [device]);
+    await write({ ...protectedRow, device_statistics: { heater: "sensor.synthetic_replaced_energy" } });
+    assertEquals((await db.query(`SELECT device_energy_kwh FROM energy_heating_observations WHERE home_id=$1
+      AND room_key='room' AND start_ts=$2 AND device_statistics='{"heater":"sensor.synthetic_replaced_energy"}'::jsonb`, [home, protectedAt])).rows,
+      [{ device_energy_kwh: { heater: 5 } }]);
+    await db.exec("SET ROLE service_role");
+    await assertRejects(() => db.query("SELECT * FROM private.energy_heating_meter_processing"), Error, "permission denied");
+    await db.exec("RESET ROLE");
     await db.exec("SET ROLE anon");
     await assertRejects(intervals, Error, "permission denied");
     await assertRejects(draw, Error, "permission denied");

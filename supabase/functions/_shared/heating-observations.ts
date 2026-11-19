@@ -67,6 +67,8 @@ export interface HeatingObservation {
   cooling: boolean | null;
   invalidated_device_keys?: string[];
   heater_energy_limits_w?: Record<string, number>;
+  /** Counter-cleaning semantics, independent of app version and observation time. */
+  counter_processing_revision?: number;
 }
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -115,6 +117,11 @@ export function parseHeatingObservations(input: unknown, fromMs: number, toMs: n
         !Object.hasOwn(row.device_statistics as Record<string, unknown>, key) || !finite(value) || value <= 0))) {
       skip("invalid_heater_attribution"); continue;
     }
+    if (row.counter_processing_revision !== undefined &&
+      (!Number.isSafeInteger(row.counter_processing_revision) || Number(row.counter_processing_revision) < 0 ||
+        Number(row.counter_processing_revision) > 2147483647)) {
+      skip("invalid_counter_processing_revision"); continue;
+    }
     const key = JSON.stringify([row.room_key, row.source_key, start, duration,
       Object.entries(row.device_statistics).sort(([a], [b]) => a.localeCompare(b))]);
     if (seen.has(key)) { skip("duplicate_heating_interval"); continue; }
@@ -128,6 +135,7 @@ export function parseHeatingObservations(input: unknown, fromMs: number, toMs: n
       device_statistics: row.device_statistics as Record<string, string>,
       device_energy_kwh: row.device_energy_kwh as Record<string, number | null>,
       cooling: cooling,
+      ...(row.counter_processing_revision === undefined ? {} : { counter_processing_revision: row.counter_processing_revision as number }),
       ...(row.heater_energy_limits_w === undefined ? {} : { heater_energy_limits_w: row.heater_energy_limits_w as Record<string, number> }),
       ...(row.invalidated_device_keys === undefined ? {} : { invalidated_device_keys: row.invalidated_device_keys as string[] }) });
   }

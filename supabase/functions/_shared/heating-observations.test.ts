@@ -78,3 +78,14 @@ Deno.test("invalid temperature isolates the field without stalling history ackno
   assertEquals(result.observations[0].outdoor_temperature_c, -12);
   assertEquals(result.ignored, { invalid_heating_reading: 1 });
 });
+
+Deno.test("counter processing provenance survives parsing and malformed authority is rejected", () => {
+  const revised = { ...row, counter_processing_revision: 1 };
+  assertEquals(parseHeatingObservations([revised], start, start + 3_600_000).observations[0].counter_processing_revision, 1);
+  assertEquals(parseHeatingObservations([row], start, start + 3_600_000).observations[0].counter_processing_revision, undefined);
+  for (const revision of [-1, 1.5, "1", null, 2147483648]) {
+    const result = parseHeatingObservations([{ ...row, counter_processing_revision: revision }], start, start + 3_600_000);
+    assertEquals(result.observations, []);
+    assertEquals(result.ignored, { invalid_counter_processing_revision: 1 });
+  }
+});
