@@ -2,7 +2,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fitStoredRoomHeating as runRoomPhase, prepareStoredRoomHeating, ROOM_WINDOW_IMPLEMENTATION, auxiliaryIntervalMean, bandObservations, readRoomQuarters, nativeRoomReadWindows } from "./room.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import { thermalQuarter, type ThermalQuarterRow } from "../thermal-training.ts";
-import type { RoomHeatingBands, RoomHeatingReference } from "../planner/heating-bands.ts";
+import { readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
 import type { HeatingProbeCapture } from "../heating-probe-wire.ts";
 
 
@@ -197,7 +197,9 @@ Deno.test("late older measurements refit a completed window without a newer fina
   assertEquals(bands(nothing).active[0].revision, revision);
   candidate.fingerprint = "filled-older-hole"; candidate.evidence_updated_at = new Date(now).toISOString();
   rows[80].heat_w = null;
-  const updated = await fitStoredRoomHeating(db, "home", "customer", "room", context, stored(first), null, now);
+  const general = await runRoomPhase(db, "home", "customer", "room", context, stored(first), null, now + 1);
+  assertEquals(bands(general).active[0].revision, revision);
+  const updated = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...general }), null, now + 2);
   assert(bands(updated).active[0].revision !== revision);
   assertEquals(bands(updated).window_attempts?.[candidate.window_key], `${ROOM_WINDOW_IMPLEMENTATION}:${candidate.fingerprint}`);
 });
@@ -342,11 +344,12 @@ Deno.test("archive outages leave fitting available and retry independently of un
   const second = await fitStoredRoomHeating(db, "home", "customer", "room", context, stored(first),
     { latitude: 0, longitude: 0 }, now);
   assertEquals(bands(second).pending_windows, 1);
-  assertEquals(bands(second).window_solar_pending?.[candidate.window_key], false);
-  const general = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...second }),
-    { latitude: 0, longitude: 0 }, now);
-  assertEquals(bands(general).pending_windows, 0);
-  assertEquals(bands(general).general_solar_pending, false);
+  assertEquals(bands(second).general_solar_pending, false);
+  assertEquals(bands(second).window_solar_pending?.[candidate.window_key], true);
+  const band = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...second }),
+    { latitude: 0, longitude: 0 }, now + 1);
+  assertEquals(bands(band).pending_windows, 0);
+  assertEquals(bands(band).window_solar_pending?.[candidate.window_key], false);
   assert(rows.every(row => row.solar_w_per_m2 === null));
 });
 
@@ -362,7 +365,9 @@ Deno.test("retention expiry alone never replaces a fitted winter band", async ()
   assertEquals(db.reads.slice(reads), ["get_energy_room_heating_fit_windows"]);
   assertEquals(bands(retained).pending_windows, 0);
   candidate.evidence_updated_at = new Date(now).toISOString();
-  const corrected = await fitStoredRoomHeating(db, "home", "customer", "room", context, stored(first), null, now);
+  const general = await runRoomPhase(db, "home", "customer", "room", context, stored(first), null, now + 1);
+  assertEquals(bands(general).active[0].revision, revision);
+  const corrected = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...general }), null, now + 2);
   assert(bands(corrected).active[0].revision !== revision);
 });
 
@@ -434,7 +439,7 @@ Deno.test("native band forcing averages complete peer quarters and rejects incom
   assertEquals(bandObservations([observation], reference, { device_key: "meter", watts }, [])[0].band_forcing_c_per_h, null);
 });
 
-Deno.test("general learning is a bounded independent phase and bands take priority over subsequent refreshes", async () => {
+Deno.test("general learning is bounded and shares turns with previously visited bands", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10");
   const db = database([candidate], rows);
   const first = await runRoomPhase(db, "home", "customer", "room", context, undefined, null, now);
@@ -453,7 +458,9 @@ Deno.test("general learning is a bounded independent phase and bands take priori
   candidate.fingerprint = "corrected-meter-coverage";
   for (const row of rows) row.heat_w = null;
   const third = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...second }), null, now);
-  assertEquals(bands(third).general_attempt, general); // Band attempted first.
+  assertEquals(bands(third).general_attempt?.evidence_updated_at, candidate.evidence_updated_at);
+  assertEquals(bands(third).reference_revision, bands(first).reference_revision); // Failed general cannot erase it.
+  assertEquals(third.trained, undefined);
   assertEquals(bands(third).active[0].revision, bands(second).active[0].revision);
   assertEquals(bands(third).pending_windows, 1);
   const fourth = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...first, ...third }), null, now);
@@ -461,6 +468,66 @@ Deno.test("general learning is a bounded independent phase and bands take priori
   assertEquals(fourth.trained, undefined);
   assertEquals(bands(fourth).general_attempt?.evidence_updated_at, candidate.evidence_updated_at);
   assertEquals(bands(fourth).pending_windows, 0);
+});
+
+Deno.test("continuous band updates give every first visit and then fair general and band turns", async () => {
+  const rows = [history(Date.UTC(2026, 0, 1), 3), history(Date.UTC(2026, 6, 1), 3, .002, 12),
+    history(Date.UTC(2026, 10, 16), 3, .002, 2)];
+  const windows = rows.map((history, i) => window(history, ["-10", "10", "0"][i], [-10, 10, 0][i]));
+  const db = database(windows, rows.flat());
+  let previous: StoredDeviceModel | undefined;
+  const turns: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const at = new Date(now + i * 60_000).toISOString();
+    // All three remain pending forever, as if uploads continuously repair or
+    // append evidence. Nothing relies on an empty pending queue to get a turn.
+    for (const candidate of windows) {
+      candidate.fingerprint = `synthetic-revision-${i}-${candidate.window_key}`;
+      candidate.evidence_updated_at = at;
+    }
+    const result = await runRoomPhase(db, "home", "customer", "room", context, previous, null, Date.parse(at));
+    const library = bands(result);
+    const selected = library.general_attempt?.attempted_at === at ? "general"
+      : Object.entries(library.window_last_attempted_at ?? {}).find(([, visit]) => visit === at)?.[0];
+    assert(selected, "each attempt records its own scheduling visit");
+    turns.push(selected);
+    previous = stored({ ...previous, ...result });
+  }
+  assertEquals(turns, ["general", "0", "10", "-10", "general", "0", "10", "-10", "general", "0"]);
+});
+
+Deno.test("general fairness uses private capture visits even when band publication was superseded", async () => {
+  const rows = history(Date.UTC(2026, 0, 1), 3), candidate = window(rows, "-10");
+  const db = database([candidate], rows);
+  const initial = await runRoomPhase(db, "home", "customer", "room", context, undefined, null, now);
+  candidate.evidence_updated_at = new Date(now + 60_000).toISOString();
+  const at = now + 120_000;
+  const prepared = await prepareStoredRoomHeating(db, "home", "customer", "room", context, stored(initial), null, at,
+    { binding: context.binding, implementation: ROOM_WINDOW_IMPLEMENTATION,
+      windows: { "-10": new Date(now + 60_000).toISOString() } });
+  assertEquals(prepared.kind, "model");
+  assert(prepared.kind === "model");
+  assertEquals(bands(prepared.model).general_attempt?.attempted_at, new Date(at).toISOString());
+  assertEquals(bands(prepared.model).window_attempts, undefined, "a scheduling visit is not a completed band fit");
+  assertEquals(bands(prepared.model).pending_windows, 1);
+});
+
+Deno.test("general attempt parsing preserves old evidence but never accepts an invalid scheduling clock", async () => {
+  const rows = history(Date.UTC(2026, 0, 1), 3), candidate = window(rows, "-10");
+  const initial = await runRoomPhase(database([candidate], rows), "home", "customer", "room", context, undefined, null, now);
+  const library = bands(initial), attempt = library.general_attempt!;
+  for (const attempted_at of [undefined, "not-a-date", 12]) {
+    const parsed = readRoomHeatingBands({ ...library, general_attempt: { ...attempt, attempted_at } })!;
+    assertEquals(parsed.general_attempt?.attempted_at, undefined);
+    assertEquals(parsed.general_attempt?.evidence_updated_at, attempt.evidence_updated_at);
+    const db = database([candidate], rows);
+    candidate.evidence_updated_at = new Date(now + 60_000).toISOString();
+    const prepared = await prepareStoredRoomHeating(db, "home", "customer", "room", context,
+      stored({ ...initial, heating_bands: { ...parsed, window_last_attempted_at: { "-10": new Date(now).toISOString() } } }),
+      null, now + 120_000);
+    assertEquals(prepared.kind, "model", "an earlier general attempt with an unknown visit time gets a turn after bands are visited");
+  }
+  assertEquals(readRoomHeatingBands({ ...library, general_attempt: { ...attempt, evidence_updated_at: "invalid" } })?.general_attempt, undefined);
 });
 
 Deno.test("native history chunks stay hour-aligned and preserve original partial endpoints", () => {
@@ -522,7 +589,9 @@ Deno.test("material changes during a bounded band capture keep its revision pend
   assertEquals(bands(changed).active, []);
   assertEquals(bands(changed).window_attempts, undefined);
   assert((bands(changed).pending_windows ?? 0) > 0);
-  const retried = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...general, ...changed }), null, now);
+  const refreshed = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...general, ...changed }), null, now + 1);
+  assertEquals(bands(refreshed).active, []);
+  const retried = await runRoomPhase(db, "home", "customer", "room", context, stored({ ...general, ...refreshed }), null, now + 2);
   assertEquals(bands(retried).active.length, 1);
   assertEquals(bands(retried).window_attempts?.[candidate.window_key], `${ROOM_WINDOW_IMPLEMENTATION}:${candidate.fingerprint}`);
 });

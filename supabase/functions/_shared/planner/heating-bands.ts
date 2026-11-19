@@ -35,7 +35,7 @@ export interface RoomHeatingBands {
   window_solar_pending?: Record<string, boolean>;
   window_evidence_updated_at?: Record<string, string>;
   window_solar_progress?: Record<string, { from_at: string; through_at: string; to_at: string }>;
-  general_attempt?: { implementation: string; evidence_updated_at: string; from_at: string; to_at: string };
+  general_attempt?: { implementation: string; evidence_updated_at: string; from_at: string; to_at: string; attempted_at?: string };
   general_solar_pending?: boolean;
   pending_windows?: number;
   diagnostics?: Record<string, unknown>;
@@ -110,7 +110,16 @@ export function readRoomHeatingBands(value: unknown): RoomHeatingBands | undefin
     typeof library.attempted !== "object") return;
   const model = readThermalModel(library.reference?.model);
   const reference = model ? { ...library.reference, model } : undefined;
-  return { ...library, reference, active: readFits(library.active), candidates: readFits(library.candidates) };
+  const attempt = library.general_attempt;
+  let general_attempt: RoomHeatingBands["general_attempt"];
+  if (attempt && typeof attempt.implementation === "string" &&
+    [attempt.evidence_updated_at, attempt.from_at, attempt.to_at].every(at => typeof at === "string" && Number.isFinite(Date.parse(at)))) {
+    const { attempted_at, ...evidence } = attempt;
+    general_attempt = typeof attempted_at === "string" && Number.isFinite(Date.parse(attempted_at))
+      ? { ...evidence, attempted_at } : evidence;
+  }
+  return { ...library, reference, ...(attempt !== undefined ? { general_attempt } : {}),
+    active: readFits(library.active), candidates: readFits(library.candidates) };
 }
 
 function readFits(points: RoomHeatingBand[]): RoomHeatingBand[] {

@@ -189,7 +189,14 @@ export async function prepareStoredRoomHeating(
     (library.general_attempt?.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
       Date.parse(evidenceAt) > Date.parse(library.general_attempt.evidence_updated_at) || library.general_solar_pending === true);
   const firstBootstrap = !installed && library.general_attempt?.implementation !== ROOM_WINDOW_IMPLEMENTATION;
-  if (generalDue && (firstBootstrap || !pending.length)) {
+  const oldestBandVisit = pending.length ? lastVisit(pending[0].window_key) : undefined;
+  const generalVisit = library.general_attempt?.attempted_at
+    ? Date.parse(library.general_attempt.attempted_at) : 0;
+  // Bootstrap once, then first-visit every seasonal band. After that the
+  // general fit shares the same oldest-visit queue: live band arrivals must
+  // not indefinitely prevent the recent general reference from refreshing.
+  const generalTurn = !pending.length || (oldestBandVisit !== undefined && generalVisit <= oldestBandVisit);
+  if (generalDue && (firstBootstrap || generalTurn)) {
     const to = latest.to_at, from = new Date(Math.max(Date.parse(library.since), Date.parse(floor),
       Date.parse(to) - TRAINING_WINDOW_DAYS * 86_400_000)).toISOString();
     const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding, location, from, to, now);
@@ -212,7 +219,7 @@ export async function prepareStoredRoomHeating(
       last_attempted_at: attemptedAt, last_fit_attempt: row.last_fit_attempt,
       heating_bands: { ...library,
         ...(reference ? { reference, reference_revision: model ? crypto.randomUUID() : library.reference_revision } : {}),
-        general_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, evidence_updated_at: updatedAt, from_at: from, to_at: to },
+        general_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, evidence_updated_at: updatedAt, from_at: from, to_at: to, attempted_at: attemptedAt },
         general_solar_pending: solar.unavailable,
         pending_windows: pending.length + Number(solar.unavailable),
       } } };
