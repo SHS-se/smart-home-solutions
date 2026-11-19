@@ -2,7 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant } from "../device-learning/room/native-mean.fixture.ts";
 import { ROOM_BAND_FIT_CELL_COUNT } from "../device-learning/room/mean-observations.ts";
-import { fitStoredRoomHeating } from "./room.ts";
+import { fitStoredRoomHeating, parseRoomBandMetadata, ROOM_WINDOW_IMPLEMENTATION } from "./room.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import type { RoomHeatingBands } from "../planner/heating-bands.ts";
 
@@ -24,6 +24,8 @@ function fixture() {
   const context = { binding: "synthetic-binding", observed_since: rows[0].start_ts };
   const window = { window_key: "-10", band_c: -10, from_at: rows[0].start_ts,
     to_at: new Date(now).toISOString(), fingerprint: "synthetic-window", evidence_updated_at: new Date(now).toISOString() };
+  const windows = [window];
+  let visits: unknown = null;
   let model: StoredDeviceModel | undefined;
   let progress: { metadata: unknown; cells: unknown[]; cursor: number; base_revision: number } | null = null;
   let capture: string | null = null, fence = 0;
@@ -38,11 +40,12 @@ function fixture() {
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
         case "claim_energy_device_learning": data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
-          owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress) }; break;
+          owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress),
+          room_window_visits: jsonb(visits) }; break;
         case "capture_energy_device_models": data = { rooms: model ? [jsonb(model)] : [], devices: [], pool: null,
           room_heating: { room: context } }; break;
         case "get_energy_room_heating_context": data = context; break;
-        case "get_energy_room_heating_fit_windows": data = [window]; break;
+        case "get_energy_room_heating_fit_windows": data = windows; break;
         case "get_energy_room_thermal_interval_capture": data = { sources: [], rows: rows.filter(row =>
           row.start_ts >= String(args.p_from) && row.start_ts < String(args.p_to)) }; break;
         case "get_energy_room_passive_heat": case "get_energy_doorway_probes": data = []; break;
@@ -88,13 +91,29 @@ function fixture() {
     assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
     return response;
   };
-  return { db, tick, rows, window, context, now, reads, writes,
+  return { db, tick, rows, window, windows, context, now, reads, writes,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
     corruptCapture: () => { capture = "corrupt"; },
     replaceModel: () => { assert(model); model.model_revision++; },
+    setVisits: (value: unknown) => { visits = value; },
   };
 }
+
+Deno.test("the claimed private visit journal keeps a superseded window behind an unvisited candidate", async () => {
+  const f = fixture();
+  await f.tick(); // Persist the separate general attempt.
+  await f.tick(); // Capture the first candidate.
+  f.replaceModel();
+  assertEquals(await (await f.tick()).json(), { superseded: true });
+  f.windows.push({ ...f.window, window_key: "5", band_c: 5, fingerprint: "synthetic-other-window" });
+  f.setVisits({ binding: f.context.binding, implementation: ROOM_WINDOW_IMPLEMENTATION,
+    windows: { [f.window.window_key]: new Date(f.now).toISOString() } });
+  assertEquals(await (await f.tick()).json(), { checkpointed: true });
+  const envelope = f.progress?.metadata as { capture: unknown };
+  assertEquals(parseRoomBandMetadata(envelope.capture)?.window.window_key, "5");
+  assertEquals(f.writes.length, 1, "visit scheduling never publishes an unfinished fit");
+});
 
 Deno.test("the real room worker checkpoints eighteen cells without publishing partial bands and matches a direct fit", async () => {
   const f = fixture();

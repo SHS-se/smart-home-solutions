@@ -65,6 +65,18 @@ export interface HeatingFitWindow {
 // and the compact, full-dependency SQL fingerprint change.
 export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:pooled_band_general_freshness_v5`;
 
+function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
+  const result = new Map<string, number>();
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    !("binding" in value) || value.binding !== binding ||
+    !("implementation" in value) || value.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
+    !("windows" in value) || !value.windows || typeof value.windows !== "object" || Array.isArray(value.windows)) return result;
+  for (const [key, at] of Object.entries(value.windows)) {
+    if (typeof at === "string" && Number.isFinite(Date.parse(at))) result.set(key, Date.parse(at));
+  }
+  return result;
+}
+
 function inputRevision(windows: HeatingFitWindow[]): string {
   return JSON.stringify(windows.map(window => [window.window_key, window.from_at, window.to_at, window.fingerprint])
     .sort((a, b) => a[0].localeCompare(b[0])));
@@ -107,6 +119,7 @@ export async function prepareStoredRoomHeating(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, context: RoomHeatingContext,
   previous: StoredDeviceModel | undefined, location: { latitude: number; longitude: number } | null, now: number,
+  windowVisits?: unknown,
 ): Promise<RoomHeatingPreparation> {
   const current = readRoomHeatingBands(previous?.heating_bands);
   const attemptedAt = new Date(now).toISOString();
@@ -139,16 +152,24 @@ export async function prepareStoredRoomHeating(
   const evidenceChanged = (window: HeatingFitWindow) =>
     !library.window_attempts?.[window.window_key]?.startsWith(`${ROOM_WINDOW_IMPLEMENTATION}:`) ||
     Date.parse(window.evidence_updated_at) > Date.parse(library.window_evidence_updated_at?.[window.window_key] ?? "1970-01-01");
+  // Capturing a window counts as a scheduling visit even if its numerical
+  // scratch is later superseded. This private journal is not fitted evidence.
+  const visits = roomWindowVisitTimes(windowVisits, context.binding);
+  const lastVisit = (key: string): number | undefined => {
+    const published = library.window_last_attempted_at?.[key];
+    const recorded = published !== undefined ? Date.parse(published)
+      : library.window_attempts?.[key] !== undefined ? 0 : undefined;
+    const captured = visits.get(key);
+    return captured === undefined ? recorded : recorded === undefined ? captured : Math.max(captured, recorded);
+  };
   const pending = windows.filter(window => evidenceChanged(window) || library.window_solar_pending?.[window.window_key])
     .sort((a, b) => {
-      const attemptedA = library.window_last_attempted_at?.[a.window_key] !== undefined || library.window_attempts?.[a.window_key] !== undefined;
-      const attemptedB = library.window_last_attempted_at?.[b.window_key] !== undefined || library.window_attempts?.[b.window_key] !== undefined;
+      const visitA = lastVisit(a.window_key), visitB = lastVisit(b.window_key);
+      const attemptedA = visitA !== undefined, attemptedB = visitB !== undefined;
       // First visit every available seasonal window. Later corrected inputs
       // and unfinished solar traversals are fair by last attempt, so a live
       // newest window cannot starve winter before its first completed fit.
-      return Number(attemptedA) - Number(attemptedB) || (attemptedA && attemptedB
-        ? Date.parse(library.window_last_attempted_at?.[a.window_key] ?? "1970-01-01") -
-          Date.parse(library.window_last_attempted_at?.[b.window_key] ?? "1970-01-01") : 0) ||
+      return Number(attemptedA) - Number(attemptedB) || (attemptedA && attemptedB ? visitA - visitB : 0) ||
         Date.parse(b.to_at) - Date.parse(a.to_at) || a.window_key.localeCompare(b.window_key);
     });
   if (!windows.length) {
@@ -326,11 +347,8 @@ export function finalizeStoredRoomBand(metadata: RoomBandMetadata, rows: RoomMea
   } | undefined;
   const attempt = { ...(diagnostic ?? { status: "unidentified", issues: ["insufficient_data"] }),
     ...(sourceFreshness ? { source_freshness: sourceFreshness } : {}) };
-  // Independent bands remain available to inspect even while a broader room
-  // boundary cannot yet be identified. They never masquerade as its reference.
-  const published: Record<string, unknown> | undefined = reference ? undefined : {
-    trained: false, rejection_reason: "general_unidentified", sample_count: attempt.learning?.training_pairs ?? 0,
-  };
+  // The separate general attempt owns the scalar model and its rejection/sample
+  // fields. A band-only publication preserves them even without a reference.
   const diagnosticAttempt = reference ? attempt : { ...attempt, status: "general_unidentified",
     bands_fitted: bands.active.length, issues: [...new Set([...attempt.issues, "general_unidentified"])] };
   bands = { ...bands, ...(reference ? { reference, reference_revision: library.reference_revision ?? crypto.randomUUID() } : {}),
@@ -339,7 +357,7 @@ export function finalizeStoredRoomBand(metadata: RoomBandMetadata, rows: RoomMea
     window_evidence_updated_at: { ...library.window_evidence_updated_at, [window.window_key]: window.evidence_updated_at } };
   // Pooled independent bands evolve without repeatedly fitting a general model
   // across all 400 days or replacing its installed reference coefficients.
-  return { ...published, home_id: homeId, customer_id: customerId, room_key: roomKey,
+  return { home_id: homeId, customer_id: customerId, room_key: roomKey,
     last_attempted_at: attemptedAt, last_fit_attempt: diagnosticAttempt, heating_bands: bands };
 }
 

@@ -10,6 +10,7 @@ interface LearningClaim {
   id: string; home_id: string; customer_id: string; owner_kind: "room" | "pool" | "device"; owner_key: string;
   generation: number; fence: number;
   room_fit_progress?: unknown;
+  room_window_visits?: unknown;
   input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string; banded_heating?: boolean };
 }
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */

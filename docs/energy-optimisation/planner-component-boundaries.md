@@ -70,6 +70,13 @@ Native history chunks are read sequentially within the admitted invocation.
 This bounds a household's learning fan-out without changing observation
 qualification, publication, planning or execution. Pool and device owners keep
 their independent admission behavior.
+The private room job also records visited seasonal windows for the current
+source binding and learning implementation. Capturing a window records a visit;
+discarding superseded numerical scratch does not erase it. Scheduling combines
+these visits with published attempt times so changing recent history cannot
+continually preempt other seasons. Visits never count as completed fits or
+advance accepted-model evidence. Band-only publication preserves the separate
+general model's parameters, rejection reason and sample count.
 An absent pool hardware epoch does not make a fresh fit due. Database contracts
 exercise SQL NULL semantics alongside daily, method-change and hardware-change
 triggers so repeated telemetry cannot silently bypass the calibration cadence.

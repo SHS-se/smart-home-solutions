@@ -1,8 +1,11 @@
 // Independently generated synthetic jobs/captures; no household observations.
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
-import { assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { HEAT_LAG_GRID_H } from "../supabase/functions/_shared/device-learning/room/fit.ts";
-import { parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
+import { fitIndependentRoomBand, parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
+
+import { finalizeStoredRoomBand, ROOM_WINDOW_IMPLEMENTATION, type RoomBandMetadata } from "../supabase/functions/_shared/device-model-learning/room.ts";
+import { syntheticRoomPlant } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
 
 const home = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -10,9 +13,10 @@ const metadata = { implementation: "synthetic-v1", binding: "synthetic-binding",
 const capture = btoa("synthetic-derived-intervals".repeat(12));
 interface Claim {
   id: string; generation: number; fence: number;
+  room_window_visits?: { binding: string; implementation: string; windows: Record<string, string> } | null;
   room_fit_progress: { metadata: object; cursor: number; cells: unknown[]; base_revision: number } | null;
 }
-async function database(admission = true) {
+async function database(admission = true, visits = true) {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA private; CREATE SCHEMA net; CREATE SCHEMA cron; CREATE SCHEMA extensions;
@@ -27,7 +31,8 @@ async function database(admission = true) {
       INSERT INTO net.wakes VALUES($3); SELECT 1::bigint; $$;
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
     CREATE TABLE energy_optimisation_zone_models(home_id uuid,customer_id uuid,room_key text,trained boolean,
-      gain_c_per_wh numeric,last_attempted_at timestamptz,last_fit_attempt jsonb,heating_bands jsonb,
+      gain_c_per_wh numeric,cooling_constant_per_h numeric DEFAULT .05,background_gain_c_per_h numeric DEFAULT 0,
+      sample_count integer NOT NULL DEFAULT 0 CHECK(sample_count>=0),last_attempted_at timestamptz,last_fit_attempt jsonb,heating_bands jsonb,
       PRIMARY KEY(home_id,room_key));
     CREATE TABLE energy_optimisation_pool_model(home_id uuid PRIMARY KEY,customer_id uuid,last_attempted_at timestamptz,
       heat_pump_epoch_start timestamptz,last_fit_attempt jsonb,rated_cop numeric);
@@ -38,6 +43,13 @@ async function database(admission = true) {
     CREATE FUNCTION private.energy_room_heating_contexts(uuid) RETURNS TABLE(room_key text,binding text) LANGUAGE sql AS $$
       SELECT room_key,binding FROM private.synthetic_bindings WHERE home_id=$1 $$;
   `);
+  const originalZoneSchema = await Deno.readTextFile("supabase/migrations/20260812140000_add_thermal_zone_models.sql");
+  const rejection = originalZoneSchema.slice(originalZoneSchema.indexOf("rejection_reason text CHECK"),
+    originalZoneSchema.indexOf("  gain_c_per_wh numeric")).trim().replace(/,$/, "");
+  const completeness = originalZoneSchema.slice(originalZoneSchema.indexOf("CONSTRAINT energy_optimisation_zone_model_complete CHECK"),
+    originalZoneSchema.indexOf("\n);"));
+  await db.exec(`ALTER TABLE energy_optimisation_zone_models ADD COLUMN ${rejection};
+    ALTER TABLE energy_optimisation_zone_models ADD ${completeness};`);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   // Exercise the deployed normal publisher, including its source-binding check,
   // without constructing unrelated electrical/planner migration dependencies.
@@ -46,6 +58,7 @@ async function database(admission = true) {
   await db.exec(publication.slice(start, publication.indexOf("END; $$;", start) + "END; $$;".length));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261118220500_room_fit_progress.sql"));
   if (admission) await db.exec(await Deno.readTextFile("supabase/migrations/20261119011000_room_learning_admission.sql"));
+  if (visits) await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
   // The deployed lifecycle also admits device owners.
   await db.exec("ALTER TABLE private.energy_learning_jobs DROP CONSTRAINT energy_learning_jobs_owner_kind_check; ALTER TABLE private.energy_learning_jobs ADD CHECK(owner_kind IN ('room','pool','device'))");
   await db.exec(`SELECT configure_energy_device_learning('https://example.supabase.co');
@@ -66,9 +79,9 @@ async function release(db: PGlite, j: Claim) {
   return (await db.query<{ ok: boolean }>("SELECT release_energy_room_learning_lane($1,$2,$3) AS ok",
     [j.id,j.generation,j.fence])).rows[0].ok;
 }
-async function checkpoint(db: PGlite, j: Claim, cursor: number, revision = 1) {
+async function checkpoint(db: PGlite, j: Claim, cursor: number, revision = 1, initialMetadata: object = metadata) {
   return (await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) AS ok",
-    [j.id, j.generation, j.fence, revision, cursor, cursor === -1 ? JSON.stringify(metadata) : null,
+    [j.id, j.generation, j.fence, revision, cursor, cursor === -1 ? JSON.stringify(initialMetadata) : null,
       cursor === -1 ? capture : null, cursor === -1 ? null : JSON.stringify({ lag_h: HEAT_LAG_GRID_H[Math.floor(cursor / 2)],
         partition: cursor % 2 ? "full" : "training", fits: { finite: null, equilibrium: null, integrator: null } })])).rows[0].ok;
 }
@@ -306,5 +319,118 @@ Deno.test("room admission adopts an existing invocation and the sweeper wakes on
     assertEquals(notified.filter(row => row.kind === "pool").length, 1, "the existing non-room sweep remains active");
     assertEquals((await db.query("SELECT wake_after>now() AS throttled FROM private.energy_learning_jobs WHERE owner_kind='pool'")).rows,
       [{ throttled: true }], "non-room notification throttling is unchanged");
+  } finally { await db.close(); }
+});
+
+const visitMetadata = (window = "25", binding = "synthetic-binding", implementation = "synthetic-v1", attemptedAt = "2026-01-01T00:00:00Z") =>
+  ({ version: 1, capture: { binding, implementation, window: { window_key: window }, attemptedAt } });
+
+Deno.test("window visits survive superseded scratch without marking evidence complete or changing models", async () => {
+  const db = await database();
+  try {
+    const accepted = (await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows;
+    let j = await claim(db);
+    assertEquals(j.room_window_visits, null);
+    assertEquals(await checkpoint(db, j, -1, 1, visitMetadata()), true);
+    await release(db, j); j = await claim(db);
+    const first = j.room_window_visits!;
+    assertEquals(first.binding, "synthetic-binding");
+    assertEquals(first.implementation, "synthetic-v1");
+    assertEquals(Object.keys(first.windows), ["25"]);
+    assert(Number.isFinite(Date.parse(first.windows["25"])));
+    assertEquals(await reset(db, j, 0), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(j.room_fit_progress, null);
+    assertEquals(j.room_window_visits, first, "a changed capture cannot become an unvisited window again");
+    const oldToken = j;
+    assertEquals(await checkpoint(db, j, -1, 1, visitMetadata("-10")), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(Object.keys(j.room_window_visits!.windows).sort(), ["-10", "25"]);
+    assertEquals(j.room_window_visits!.windows["25"], first.windows["25"]);
+    assertEquals(await checkpoint(db, oldToken, -1, 1, visitMetadata("unowned")), false);
+    const visits = j.room_window_visits;
+    await db.query(`UPDATE private.energy_learning_jobs SET generation=generation+1,fence=fence+1,
+      input='{"changed":true}',lease_until=NULL,wake_after=now() WHERE id=$1`, [j.id]);
+    await release(db, j); j = await claim(db);
+    assertEquals(j.room_fit_progress, null);
+    assertEquals(j.room_window_visits, visits, "generation/input invalidation clears only numerical scratch");
+    assertEquals(await checkpoint(db, j, -1, 1, visitMetadata("0", "synthetic-new-binding")), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(j.room_window_visits!.binding, "synthetic-new-binding");
+    assertEquals(Object.keys(j.room_window_visits!.windows), ["0"]);
+    assertEquals(await reset(db, j, 0), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(await checkpoint(db, j, -1, 1, visitMetadata("5", "synthetic-new-binding", "synthetic-v2")), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(j.room_window_visits!.implementation, "synthetic-v2");
+    assertEquals(Object.keys(j.room_window_visits!.windows), ["5"]);
+    const otherClaim = await claim(db, other);
+    assertEquals(otherClaim.room_window_visits, null);
+    const pool = await claim(db, home, "pool");
+    assertEquals(pool.room_window_visits, null);
+    assertEquals(await checkpoint(db, pool, -1, 1, visitMetadata()), false);
+    assertEquals((await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows, accepted);
+    await db.exec("SET ROLE service_role");
+    await assertRejects(() => db.query("SELECT room_window_visits FROM private.energy_learning_jobs"), Error, "permission denied");
+  } finally { await db.close(); }
+});
+
+Deno.test("window visit migration adopts recognizable captures with safe timestamp handling", async () => {
+  const db = await database(true, false);
+  try {
+    const j = await claim(db), peer = await claim(db, other);
+    assertEquals(await checkpoint(db, j, -1, 1, visitMetadata()), true);
+    assertEquals(await checkpoint(db, peer, -1, 1, visitMetadata("-5", "synthetic-other", "synthetic-v1", "invalid timestamp")), true);
+    await release(db, j); await release(db, peer);
+    const before = (await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows;
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
+    const first = await claim(db), second = await claim(db, other);
+    assertEquals(Date.parse(first.room_window_visits!.windows["25"]), Date.parse("2026-01-01T00:00:00Z"));
+    assert(Number.isFinite(Date.parse(second.room_window_visits!.windows["-5"])));
+    assertEquals(first.room_fit_progress?.cursor, 0);
+    assertEquals(second.room_fit_progress?.cursor, 0);
+    assertEquals((await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows, before);
+  } finally { await db.close(); }
+});
+
+Deno.test("independent band publication preserves the general model SQL domain and completeness", async () => {
+  const db = await database();
+  try {
+    await db.query(`UPDATE energy_optimisation_zone_models SET trained=false,rejection_reason='insufficient_heating',
+      sample_count=37,gain_c_per_wh=NULL,cooling_constant_per_h=NULL WHERE home_id=$1`, [home]);
+    // This is the actual SQL domain: an independent response diagnostic is
+    // not one of the general scalar model's rejection reasons.
+    await assertRejects(() => db.query("UPDATE energy_optimisation_zone_models SET rejection_reason='response_unresolved' WHERE home_id=$1", [home]), Error, "check constraint");
+    await assertRejects(() => db.query("UPDATE energy_optimisation_zone_models SET trained=true WHERE home_id=$1", [home]), Error, "check constraint");
+    const before = (await db.query<Record<string, unknown>>("SELECT model_revision,sample_count,rejection_reason,trained,gain_c_per_wh,cooling_constant_per_h FROM energy_optimisation_zone_models WHERE home_id=$1", [home])).rows[0];
+    let j = await claim(db);
+    const revision = Number(before.model_revision);
+    assertEquals(await checkpoint(db, j, -1, revision), true);
+    await release(db, j); j = await claim(db);
+    for (let cursor=0;cursor<18;cursor++) {
+      assertEquals(await checkpoint(db, j, cursor, revision), true);
+      await release(db, j); j = await claim(db);
+    }
+    const rows = syntheticRoomPlant([3600],240).rows;
+    const from = new Date(rows[0].start_ms).toISOString(), to = new Date(rows.at(-1)!.start_ms+3_600_000).toISOString();
+    const library = { binding:"synthetic-binding", since:from, reference_revision:null, active:[], candidates:[], attempted:{} };
+    const work: RoomBandMetadata = { version:1, implementation:ROOM_WINDOW_IMPLEMENTATION, homeId:home, customerId:home, roomKey:"room",
+      binding:library.binding, baseRevision:revision, attemptedAt:to, pinnedFloor:from,
+      window:{window_key:"-10",band_c:-10,from_at:from,to_at:to,fingerprint:"synthetic-observations",evidence_updated_at:to},
+      library, progressLibrary:library, reference:null, ratedPowerW:500,lastAt:new Date(rows.at(-1)!.start_ms).toISOString(), sourceFreshness:null };
+    const fit = fitIndependentRoomBand(rows, () => true, 500);
+    assert(fit.result.ok, "independent synthetic plant produces an accepted finite band");
+    const model = finalizeStoredRoomBand(work,rows,fit);
+    assertEquals((await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,$4,18,$5::jsonb) AS ok",
+      [j.id,j.generation,j.fence,revision,JSON.stringify(model)])).rows[0].ok,true);
+    await release(db,j);
+    const after = (await db.query<{ model_revision:number;sample_count:number;rejection_reason:string;trained:boolean;gain_c_per_wh:null;cooling_constant_per_h:null;heating_bands:{active:unknown[];diagnostics:Record<string,unknown>};last_fit_attempt:{status:string} }>(
+      "SELECT * FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows[0];
+    assertEquals(after.model_revision,revision+1);
+    for (const key of ["sample_count","rejection_reason","trained","gain_c_per_wh","cooling_constant_per_h"] as const) assertEquals(after[key],before[key]);
+    assertEquals(after.heating_bands.active.length,1);
+    assert(after.heating_bands.diagnostics["-10"]);
+    assertEquals(after.last_fit_attempt.status,"general_unidentified");
+    assertEquals(await scratchCount(db),0);
   } finally { await db.close(); }
 });

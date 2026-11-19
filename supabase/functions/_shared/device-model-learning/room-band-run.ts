@@ -16,7 +16,7 @@ interface Database {
 }
 export interface RoomLearningClaim {
   id: string; home_id: string; customer_id: string; owner_key: string;
-  generation: number; fence: number; room_fit_progress?: unknown;
+  generation: number; fence: number; room_fit_progress?: unknown; room_window_visits?: unknown;
   input: { location?: { latitude: number; longitude: number } | null };
 }
 type RoomLearningStep = { kind: "model"; model: Record<string, unknown> }
@@ -47,7 +47,7 @@ export async function runRoomHeatingLearning(
   const progress = claim.room_fit_progress;
   if (progress == null) {
     const prepared = await prepareStoredRoomHeating(db, claim.home_id, claim.customer_id, claim.owner_key,
-      context, previous, claim.input.location ?? null, now);
+      context, previous, claim.input.location ?? null, now, claim.room_window_visits);
     if (prepared.kind === "model") return prepared;
     const { metadata, rows } = prepared.work;
     if (!rows.length) return { kind: "model", model: finalizeStoredRoomBand(metadata, rows,
