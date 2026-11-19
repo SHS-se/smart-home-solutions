@@ -13,6 +13,7 @@ import { readThermalModel } from '../../../../supabase/functions/_shared/planner
 import { SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
+import { FittedRoomWarnings, LatestRoomSourceEvidence } from './RoomModelEvidence';
 import { formatHeatingRange, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
 
 const learningEvidence = z.object({ observation_hours: z.number().optional(), observation_intervals: z.number().optional() }).passthrough();
@@ -204,6 +205,7 @@ function RoomFits({ model, connections, bands }: {
         {evidence.success && evidence.data.observation_hours !== undefined &&
           ` · ${format(evidence.data.observation_hours)} ${t('observerade timmar', 'observed hours')}`}
     </p>}
+    {selected && <FittedRoomWarnings warnings={selected.warnings} />}
     <RoomScenario key={selected?.revision ?? 'general'} model={fitted} connections={connections} band={selected}
       initialOutdoor={selected ? (selected.observed_min_c + selected.observed_max_c) / 2 : undefined} />
   </>;
@@ -239,6 +241,7 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
         : rejection && THERMAL_REJECTION_EN[rejection] ? t(THERMAL_REJECTION_SV[rejection], THERMAL_REJECTION_EN[rejection])
           : t('Ingen tränad modell har publicerats för rummet ännu.', 'A trained model has yet to be published for this room.')}
     </p>}
+    {room && <LatestRoomSourceEvidence attempt={room.last_fit_attempt} />}
     <Link className="inline-flex min-h-11 items-center font-medium text-primary" to="?tab=setup&section=thermal">
       {t('Visa temperaturhistorik', 'View temperature history')}
     </Link>

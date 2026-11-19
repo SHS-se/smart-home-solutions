@@ -1036,6 +1036,7 @@ test.describe('requesting a replan', () => {
     // Synthetic coefficients and room names exercise the published fit contract.
     const key = 'synthetic-studio';
     let generalAvailable = true;
+    let sourceEvidenceAvailable = true;
     const fit = {
       trained: true, rejection_reason: null, sample_count: 812,
       gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
@@ -1049,10 +1050,16 @@ test.describe('requesting a replan', () => {
     }] }));
     await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => {
       expect(route.request().postDataJSON()).toEqual({ p_home_id: HOME_ID, p_room_key: key });
-      return route.fulfill({ json: { room: { ...fit, trained: generalAvailable, temperature_bands: [{
+      return route.fulfill({ json: { room: { ...fit, trained: generalAvailable,
+        last_attempted_at: '2026-11-18T12:00:00Z',
+        last_fit_attempt: sourceEvidenceAvailable ? { source_freshness: {
+          room: { inferred: 31, unavailable: 2, unverified: 1 },
+          house: { inferred: 17, unavailable: 4, unverified: 3 },
+        } } : null,
+        temperature_bands: [{
         revision: '11111111-1111-4111-8111-111111111111', band_c: -10, observed_min_c: -9, observed_max_c: -6,
         training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z',
-        model: { ...fit, sample_count: 427, time_constant_h: 7 },
+        model: { ...fit, sample_count: 427, time_constant_h: 7 }, warnings: ['insufficient_heating', 'poor_fit'],
       }] }, connections: [
         { key: 'synthetic-corridor', name: 'Test corridor', model: fit, doorway: { weight: .065, usual: -1 } },
         { key: 'synthetic-landing', name: 'Test landing', model: null, doorway: null },
@@ -1063,7 +1070,19 @@ test.describe('requesting a replan', () => {
     await expect(page.getByText('427', { exact: true })).toBeVisible();
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();
     await expect(page.getByText(/2025-01-02.*2025-01-14/)).toBeVisible();
+    const fitWarnings = page.getByTestId('room-fit-warnings');
+    await expect(fitWarnings).toContainText(/begränsade uppvärmningsobservationer|limited observed heating/i);
+    await expect(fitWarnings).toContainText(/förklarade inte|does not closely match/i);
+    const sourceEvidence = page.getByTestId('room-source-evidence');
+    await sourceEvidence.locator('summary').click();
+    await expect(sourceEvidence).toContainText(/annat temperaturintervall|different temperature range/i);
+    await expect(sourceEvidence.getByTestId('source-evidence-room').locator('dd')).toHaveText(['31', '2', '1']);
+    await expect(sourceEvidence.getByTestId('source-evidence-house').locator('dd')).toHaveText(['17', '4', '3']);
+    await expect(sourceEvidence).toContainText(/inte ett bekräftat givarfel|not a confirmed sensor fault/i);
+    await expect(sourceEvidence).toContainText(/inte timmar|not hours/i);
+
     await page.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i }).selectOption('general');
+    await expect(fitWarnings).toHaveCount(0);
     const cycle = page.getByRole('img', { name: /uppskattad uppvärmning och avsvalning|warm-up and cool-down/i });
     const doorway = page.getByRole('img', { name: /uppskattad påverkan på anslutna rum|estimated effect on connected rooms/i });
     await expect(cycle.locator('.recharts-line-curve')).toHaveCount(2);
@@ -1085,11 +1104,18 @@ test.describe('requesting a replan', () => {
     expect(await doorway.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     // Independently fitted bands remain inspectable without a general model.
     generalAvailable = false;
+    sourceEvidenceAvailable = false;
     await page.reload();
     await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
     await expect(page.getByText('427', { exact: true })).toBeVisible();
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();
     await expect(page.locator('option[value="general"]')).toHaveCount(0);
+    await expect(fitWarnings).toBeVisible();
+    await sourceEvidence.locator('summary').click();
+    await expect(sourceEvidence).toContainText(/status är okänd|status is unknown/i);
+    await expect(sourceEvidence.locator('dd')).toHaveCount(0);
+    expect(await sourceEvidence.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+
     await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
     await expect(page.getByText(/utanför observerat intervall|outside observed range/i)).toBeVisible();
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();

@@ -54,6 +54,7 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.exec("SET check_function_bodies=false");
     await db.exec(await Deno.readTextFile("supabase/migrations/20261118190000_native_heating_observations.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119001500_bound_room_history_reads.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119033000_preserve_cleaned_native_energy.sql"));
     await db.exec("SET check_function_bodies=true");
     const start = (await db.query<{ at: string }>("SELECT to_char(date_trunc('hour',now()-interval '1 day'),'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at")).rows[0].at;
     const end = new Date(Date.parse(start) + 3_600_000).toISOString();
@@ -88,8 +89,42 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await write({ ...row, device_energy_kwh: { heater: null } });
     assertEquals(await intervals(), [{ duration_s: 3600, heat_w: 800, heat_attributed: true }]);
     assertEquals(await stamp(), original);
-    // Contradictory counter evidence wins over an accompanying positive value.
-    await write({ ...row, invalidated_device_keys: ["heater"] });
+    // Synthetic producer contract: fine counter timing can be withdrawn while
+    // the independently cleaned whole-hour aggregate remains measured.
+    const cleanedFineRow = (quarter: number, energy: number | null) => ({ ...row, duration_s: 900,
+      source: "recorder_5minute_mean", start: new Date(Date.parse(start) + quarter * 900_000).toISOString(),
+      device_energy_kwh: { heater: energy } });
+    for (let quarter = 0; quarter < 4; quarter++) await write(cleanedFineRow(quarter, 0));
+    const validHour = { ...row, device_energy_kwh: { heater: .3 }, invalidated_device_keys: ["heater"] };
+    await write(validHour);
+    assertEquals((await db.query("SELECT device_energy_kwh FROM energy_heating_observations WHERE duration_s=900 ORDER BY start_ts")).rows,
+      Array.from({ length: 4 }, () => ({ device_energy_kwh: {} })), "old false fine zeros are withdrawn");
+    assertEquals(await intervals(), [{ duration_s: 3600, heat_w: 300, heat_attributed: true }]);
+    const nativeClocks = async () => (await db.query("SELECT start_ts,duration_s,learning_updated_at FROM energy_heating_observations ORDER BY start_ts,duration_s")).rows;
+    const hourClocks = await nativeClocks();
+    await write(validHour);
+    assertEquals(await nativeClocks(), hourClocks, "identical measured hour plus retraction does not churn evidence clocks");
+
+    // Conversely a suspect hourly aggregate must not erase independently
+    // measured quarters. This is the same four-row batch emitted by capture.
+    const validFine = Array.from({ length: 4 }, (_, quarter) => ({ ...cleanedFineRow(quarter, .075), invalidated_device_keys: ["heater"] }));
+    await db.query("SELECT record_energy_heating_observations($1,$2,$3::jsonb)", [home, customer, JSON.stringify(validFine)]);
+    assertEquals((await db.query("SELECT device_energy_kwh FROM energy_heating_observations WHERE duration_s=3600")).rows,
+      [{ device_energy_kwh: {} }], "old coarse energy is withdrawn");
+    assertEquals(await intervals(), Array.from({ length: 4 }, () => ({ duration_s: 900, heat_w: 300, heat_attributed: true })));
+    const fineClocks = await nativeClocks();
+    await db.query("SELECT record_energy_heating_observations($1,$2,$3::jsonb)", [home, customer, JSON.stringify(validFine)]);
+    assertEquals(await nativeClocks(), fineClocks, "identical measured quarters plus retraction do not churn evidence clocks");
+
+    // Genuine withdrawal has no measured replacement and clears both native
+    // resolutions, including the previous measurements at this same interval.
+    await write({ ...row, device_energy_kwh: { heater: null }, invalidated_device_keys: ["heater"] });
+    assertEquals((await db.query("SELECT device_energy_kwh FROM energy_heating_observations")).rows,
+      Array.from({ length: 5 }, () => ({ device_energy_kwh: {} })));
+    const withdrawnClocks = await nativeClocks();
+    await write({ ...row, device_energy_kwh: { heater: null }, invalidated_device_keys: ["heater"] });
+    assertEquals(await nativeClocks(), withdrawnClocks, "an identical null withdrawal is idempotent too");
+    await db.exec("DELETE FROM energy_heating_observations WHERE duration_s=900");
     assertEquals(await intervals(), [{ duration_s: 3600, heat_w: null, heat_attributed: true }]);
     assertEquals(await stamp() === original, false);
     assertEquals((await db.query("SELECT band_c FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)",
