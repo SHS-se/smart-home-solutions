@@ -37,6 +37,11 @@ BEGIN
  last_at:=CASE WHEN TG_OP='DELETE' THEN OLD.valid_to WHEN TG_OP='UPDATE' THEN greatest(OLD.valid_to,NEW.valid_to) ELSE NEW.valid_to END;
  SELECT d.mapping_summary->>'room_key' INTO room FROM energy_optimisation_devices d
  WHERE d.home_id=home AND d.device_key=meter AND d.retired_at IS NULL AND d.category='heating';
+ -- Publication owns the job before its calibration. Match that order so a
+ -- source review cannot deadlock with a completed learner publishing its fit.
+ PERFORM j.id FROM private.energy_learning_jobs j WHERE j.home_id=home
+   AND ((j.owner_kind='room' AND j.owner_key=room) OR (j.owner_kind='device' AND j.owner_key=meter))
+   ORDER BY j.id FOR UPDATE;
  IF room IS NOT NULL THEN
    SELECT private.heating_calibration_overlaps(jsonb_build_object('training_from',m.training_from,'training_to',m.training_to),first_at,last_at)
      INTO general_bad FROM energy_optimisation_zone_models m WHERE m.home_id=home AND m.room_key=room;
