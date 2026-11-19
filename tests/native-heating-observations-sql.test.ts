@@ -214,13 +214,54 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
 
     const lineage = async () => (await db.query<{ sources: { revision: string; assignments: unknown[] } }>(
       "SELECT get_energy_heating_history_sources($1,$2) AS sources", [home, customer])).rows[0].sources;
-    const initialLineage = await lineage();
-    assertEquals(initialLineage.assignments.length, 1);
-    assertEquals(initialLineage.assignments[0], { room_key: "room", target_source_key: source,
+    const previousLineage = await lineage();
+    assertEquals(previousLineage.assignments.length, 1);
+    const previousAssignment = { room_key: "room", target_source_key: source,
       target_device_statistics: row.device_statistics, observed_source_key: former,
       observed_temperature_entity_id: formerEntity, observed_device_statistics: row.device_statistics,
       valid_from: new Date(start).toISOString().replace(".000Z", "+00:00"),
-      valid_to: new Date(end).toISOString().replace(".000Z", "+00:00"), heater_energy_limits_w: { heater: 800 } });
+      valid_to: new Date(end).toISOString().replace(".000Z", "+00:00"), heater_energy_limits_w: { heater: 800 } };
+    assertEquals(previousLineage.assignments[0], previousAssignment);
+
+    const materialLineage = async () => (await db.query<{ fingerprint: string; learning_updated_at: Date }>(
+      "SELECT fingerprint,learning_updated_at FROM private.energy_heating_source_revisions WHERE home_id=$1", [home])).rows[0];
+    const previousMaterial = await materialLineage();
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119053000_historical_heating_power_statistics.sql"));
+    const initialLineage = await lineage();
+    assertEquals(initialLineage.assignments, [{ ...previousAssignment, observed_device_power_statistics: {} }]);
+    assertEquals(initialLineage.revision === previousLineage.revision, false, "the new catalog shape is a one-time resweep");
+    const emptyMaterial = await materialLineage();
+    assertEquals(emptyMaterial.fingerprint === previousMaterial.fingerprint, false);
+    const setPowerStatistics = (map: unknown) => db.query(
+      "UPDATE private.energy_heating_history_sources SET observed_device_power_statistics=$1::jsonb WHERE home_id=$2",
+      [JSON.stringify(map), home]);
+    for (const invalid of [
+      [], null, { other: "sensor.synthetic_unmapped_power" }, { heater: null }, { heater: 800 },
+      { heater: { statistic_id: "sensor.synthetic_power" } }, { heater: " \t\n" },
+    ]) await assertRejects(() => setPowerStatistics(invalid), Error, "Historical power statistic");
+    const powerMap = { heater: "sensor.synthetic_former_power" };
+    await setPowerStatistics(powerMap);
+    const pairedLineage = await lineage(), pairedMaterial = await materialLineage();
+    assertEquals(pairedLineage.assignments, [{ ...previousAssignment, observed_device_power_statistics: powerMap }]);
+    assertEquals(pairedLineage.revision === initialLineage.revision, false);
+    assertEquals(pairedMaterial.fingerprint === emptyMaterial.fingerprint, false);
+    await setPowerStatistics(powerMap);
+    assertEquals(await lineage(), pairedLineage);
+    assertEquals(await materialLineage(), pairedMaterial, "identical reviewed power statistics do not churn evidence");
+    const secondPower = (from: string, to: string) => db.query(`INSERT INTO private.energy_heating_history_sources(
+      home_id,room_key,target_source_key,target_device_statistics,observed_source_key,observed_temperature_entity_id,
+      observed_device_statistics,valid_from,valid_to,basis,heater_energy_limits_w,observed_device_power_statistics)
+      SELECT home_id,room_key,target_source_key,target_device_statistics,observed_source_key,observed_temperature_entity_id,
+        observed_device_statistics,$1,$2,basis,heater_energy_limits_w,'{"heater":"sensor.synthetic_other_power"}'
+      FROM private.energy_heating_history_sources WHERE home_id=$3`, [from, to, home]);
+    const overlappingAt = new Date(Date.parse(start) + 900_000).toISOString();
+    await assertRejects(() => secondPower(overlappingAt, end), Error, "Conflicting historical heating source assignments");
+    await secondPower(end, new Date(Date.parse(end) + 3_600_000).toISOString());
+    assertEquals((await lineage()).assignments.length, 2, "adjacent reviewed epochs can use different power statistics");
+    await db.query("DELETE FROM private.energy_heating_history_sources WHERE home_id=$1 AND valid_from=$2", [home, end]);
+    await setPowerStatistics({});
+    assertEquals(await lineage(), initialLineage);
+
     const beforeIdentity = await window();
     await db.query("UPDATE private.energy_heating_history_sources SET basis='Another reviewed description' WHERE home_id=$1", [home]);
     assertEquals(await lineage(), initialLineage, "descriptive notes do not change source assignments");
