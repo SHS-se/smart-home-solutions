@@ -72,5 +72,19 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     }
     console.error("[ENERGY-LEARNING] attempt failed", detail);
     return Response.json({ error: "learning_failed" }, { status: 500 });
+  } finally {
+    // The home reservation follows the actual invocation, independently of a
+    // job generation being invalidated while its history query is still running.
+    // A terminated worker or lost release is recovered by the existing lease.
+    if (claim?.owner_kind === "room") {
+      try {
+        const released = await db.rpc("release_energy_room_learning_lane", {
+          p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence,
+        });
+        if (released.error) console.error("[ENERGY-LEARNING] room admission release failed", released.error.message);
+      } catch (error) {
+        console.error("[ENERGY-LEARNING] room admission release failed", describeThrown(error));
+      }
+    }
   }
 }

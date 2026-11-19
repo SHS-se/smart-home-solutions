@@ -62,6 +62,14 @@ wakes and expired leases. Read failures remain retriable job failures, rather
 than fabricated statistical rejections. Failed statistical attempts retain the
 previous usable parameters. Publication validates the owner's fence and model
 revision in one transaction and cannot write pool hardware or electrical fields.
+Room learning admits one worker invocation per home, with a fair turn between
+ready rooms. Its separate reservation survives source changes that invalidate
+the ordinary job lease while an older history query is still running. The worker
+releases that reservation on exit; lease expiry recovers a terminated worker.
+Native history chunks are read sequentially within the admitted invocation.
+This bounds a household's learning fan-out without changing observation
+qualification, publication, planning or execution. Pool and device owners keep
+their independent admission behavior.
 An absent pool hardware epoch does not make a fresh fit due. Database contracts
 exercise SQL NULL semantics alongside daily, method-change and hardware-change
 triggers so repeated telemetry cannot silently bypass the calibration cadence.

@@ -107,12 +107,19 @@ export async function historicalIrradiancePoints(options: Parameters<typeof irra
     fetchPoints: async (latitude, longitude) => {
       // Six hours carry the cumulative-mean cycle into the requested window.
       // Include the point at last: its preceding-hour mean covers the final
-      // observation, while the API's endTime itself is exclusive.
-      const result = await fetchFlux("analysis", latitude, longitude, now, fetchImpl, {
-        startTime: new Date(first - 6 * HOUR).toISOString(), endTime: new Date(last + HOUR).toISOString(),
-      });
-      return { points: result.points.filter(point => point.t > first && point.t <= last),
-        expiresAt: expiryFrom(result.response, now) };
+      // observation, while the API's endTime itself is exclusive. The provider's
+      // 31-day limit includes these seven padding hours and hour rounding.
+      const span = (MAX_HISTORICAL_IRRADIANCE_DAYS * 24 - 7) * HOUR;
+      const points: WeatherPoint[] = [], expiries: string[] = [];
+      for (let begin = first; begin < last; begin += span) {
+        const end = Math.min(begin + span, last);
+        const result = await fetchFlux("analysis", latitude, longitude, now, fetchImpl, {
+          startTime: new Date(begin - 6 * HOUR).toISOString(), endTime: new Date(end + HOUR).toISOString(),
+        });
+        points.push(...result.points.filter(point => point.t > begin && point.t <= end));
+        expiries.push(expiryFrom(result.response, now));
+      }
+      return { points, expiresAt: expiries.sort()[0] };
     },
   });
 }

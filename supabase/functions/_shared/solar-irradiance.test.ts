@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { hourlyGfsIrradiance, irradianceForQuarters, historicalIrradiancePoints, irradianceOnto } from "./solar-irradiance.ts";
 
 const at = (hour: string) => Date.parse(`2026-11-13T${hour}:00:00Z`);
@@ -81,6 +81,28 @@ Deno.test("historical irradiance requests bounded analyses with six-hour lookbac
   assertEquals(requests.length, 1);
   assertEquals([...db.rows.values()][0].provider,
     `dynamical_noaa_gfs_shortwave_radiation_analysis_${Date.parse("2025-10-25T02:00:00Z")}_${Date.parse("2025-10-25T06:00:00Z")}`);
+});
+
+Deno.test("a full 31-day archive includes padding within each provider request and joins hourly means without gaps", async () => {
+  const hour = 3_600_000, start = Date.UTC(2025, 9, 1, 2, 15), end = start + 31 * 24 * hour;
+  const db = archiveCache(), requests: { from: number; to: number }[] = [];
+  const options = { supabase: db, latitude: 0, longitude: 0, from: start, to: end,
+    fetchImpl: ((_url, init) => {
+      const query = JSON.parse(String(init?.body)).queries[0];
+      const from = Date.parse(query.startTime), to = Date.parse(query.endTime);
+      requests.push({ from, to });
+      assert(to - from <= 31 * 24 * hour, "provider limit includes lookback and exclusive final hour");
+      const analysisTimes = Array.from({ length: (to - from) / hour }, (_, i) => new Date(from + i * hour).toISOString());
+      return Promise.resolve(Response.json({ results: [{ queryId: "irradiance", analysisTimes,
+        data: { [field]: analysisTimes.map(() => 100) } }] }));
+    }) as typeof fetch };
+  const points = await historicalIrradiancePoints(options);
+  assert(points);
+  assertEquals(requests.length, 2);
+  const first = Math.floor(start / hour) * hour, last = Math.ceil(end / hour) * hour;
+  assertEquals(points, Array.from({ length: (last - first) / hour }, (_, i) => ({ t: first + (i + 1) * hour, v: 100 })));
+  assertEquals(await historicalIrradiancePoints(options), points);
+  assertEquals(requests.length, 2, "one combined cache entry retains the complete requested window");
 });
 
 Deno.test("successful empty archive windows are cached separately from provider failures", async () => {

@@ -28,15 +28,14 @@ export async function readRoomQuarters(
   // Internal hour boundaries preserve the choice between quarters and native hours.
   const chunks = nativeRoomReadWindows(from, to);
   const rows: ThermalQuarterRow[] = [];
-  for (let i = 0; i < chunks.length; i += 4) {
-    const batch = await Promise.all(chunks.slice(i, i + 4).map(async ([from, to]) => {
-      const { data, error } = await db.rpc("get_energy_room_thermal_interval_capture", {
-        p_customer_id: customerId, p_home_id: homeId, p_room_key: roomKey, p_from: from, p_to: to,
-      });
-      if (error) throw new Error(`get_energy_room_thermal_interval_capture: ${error.message}`);
-      return decodeHeatingProbeCapture(data, roomKey);
-    }));
-    for (const chunk of batch) rows.push(...chunk);
+  // A room owns one learning lane. Do not fan that single owner back out into
+  // simultaneous database scans of the household's shared probe history.
+  for (const [from, to] of chunks) {
+    const { data, error } = await db.rpc("get_energy_room_thermal_interval_capture", {
+      p_customer_id: customerId, p_home_id: homeId, p_room_key: roomKey, p_from: from, p_to: to,
+    });
+    if (error) throw new Error(`get_energy_room_thermal_interval_capture: ${error.message}`);
+    rows.push(...decodeHeatingProbeCapture(data, roomKey));
   }
   return rows;
 }
@@ -142,10 +141,11 @@ export async function prepareStoredRoomHeating(
     Date.parse(window.evidence_updated_at) > Date.parse(library.window_evidence_updated_at?.[window.window_key] ?? "1970-01-01");
   const pending = windows.filter(window => evidenceChanged(window) || library.window_solar_pending?.[window.window_key])
     .sort((a, b) => {
-      const attemptedA = library.window_attempts?.[a.window_key] !== undefined;
-      const attemptedB = library.window_attempts?.[b.window_key] !== undefined;
+      const attemptedA = library.window_last_attempted_at?.[a.window_key] !== undefined || library.window_attempts?.[a.window_key] !== undefined;
+      const attemptedB = library.window_last_attempted_at?.[b.window_key] !== undefined || library.window_attempts?.[b.window_key] !== undefined;
       // First visit every available seasonal window. Later corrected inputs
-      // are fair by last attempt, so a live newest window cannot starve winter.
+      // and unfinished solar traversals are fair by last attempt, so a live
+      // newest window cannot starve winter before its first completed fit.
       return Number(attemptedA) - Number(attemptedB) || (attemptedA && attemptedB
         ? Date.parse(library.window_last_attempted_at?.[a.window_key] ?? "1970-01-01") -
           Date.parse(library.window_last_attempted_at?.[b.window_key] ?? "1970-01-01") : 0) ||

@@ -74,13 +74,20 @@ function fixture() {
           progress = null; capture = null; data = true; break;
         }
         case "fail_energy_device_learning": break;
+        case "release_energy_room_learning_lane":
+          assertEquals(args, { p_job_id: "job", p_generation: 1, p_fence: fence });
+          data = true; break;
         default: throw new Error(`Unexpected synthetic RPC ${name}`);
       }
       return { data, error: null };
     },
   };
-  const tick = () => handleDeviceLearning(new Request("https://synthetic.test/learning", { method: "POST",
-    headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => now);
+  const tick = async () => {
+    const response = await handleDeviceLearning(new Request("https://synthetic.test/learning", { method: "POST",
+      headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => now);
+    assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
+    return response;
+  };
   return { db, tick, rows, window, context, now, reads, writes,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
@@ -174,4 +181,12 @@ Deno.test("live running-power diagnostics cannot keep restarting a coherent ther
   assert(band);
   assertEquals(band.model.heating_rate_c_per_h, band.model.gain_c_per_wh * 500);
   assertEquals(f.resets, 0);
+});
+
+Deno.test("lost admission release does not turn an accepted publication into a statistical failure", async () => {
+  const f = fixture();
+  f.fail("release_energy_room_learning_lane");
+  assertEquals(await (await f.tick()).json(), { published: true });
+  assertEquals(f.writes.length, 1);
+  assertEquals(f.reads.includes("fail_energy_device_learning"), false);
 });

@@ -132,6 +132,10 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
         assertStringIncludes(String(args.p_error), "synthetic training read failure");
         return Promise.resolve({ data: null, error: null });
       }
+      if (name === "release_energy_room_learning_lane") {
+        assertEquals(args, { p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence });
+        return Promise.resolve({ data: true, error: null });
+      }
       throw new Error(`Unexpected learning RPC ${name}`);
     },
     from(table: string) { throw new Error(`Unexpected model write ${table}`); },
@@ -142,7 +146,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
   assertEquals(response.status, 500);
   assertEquals(await response.json(), { error: "learning_failed" });
   assertEquals(calls, ["verify_energy_learning_token", "claim_energy_device_learning", "capture_energy_device_models",
-    "get_energy_thermal_training_quarters", "fail_energy_device_learning"]);
+    "get_energy_thermal_training_quarters", "fail_energy_device_learning", "release_energy_room_learning_lane"]);
   // SQL retry/retained-model semantics are independently executed by
   // tests/device-learning-lifecycle.test.ts. Ingest cannot import this worker
   // or its fitting code: tests/planner-component-boundaries.test.ts enforces it.

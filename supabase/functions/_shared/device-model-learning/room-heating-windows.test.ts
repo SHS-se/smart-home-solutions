@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { fitStoredRoomHeating as runRoomPhase, ROOM_WINDOW_IMPLEMENTATION, auxiliaryIntervalMean, bandObservations, readRoomQuarters, nativeRoomReadWindows } from "./room.ts";
+import { fitStoredRoomHeating as runRoomPhase, prepareStoredRoomHeating, ROOM_WINDOW_IMPLEMENTATION, auxiliaryIntervalMean, bandObservations, readRoomQuarters, nativeRoomReadWindows } from "./room.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import { thermalQuarter, type ThermalQuarterRow } from "../thermal-training.ts";
 import type { RoomHeatingBands, RoomHeatingReference } from "../planner/heating-bands.ts";
@@ -131,6 +131,25 @@ Deno.test("a failed recent window cannot prevent historical bootstrap and bands 
   assertEquals(bands(fitted).active.map(band => band.band_c), [-10]);
   // Each selected band reads its observations once per invocation.
   assertEquals(db.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, 5);
+});
+
+Deno.test("unfinished newest-window work cannot starve a winter band that has never been visited", async () => {
+  const recent = history(Date.UTC(2026, 10, 16), 3, .002, 2), winter = history(Date.UTC(2026, 0, 1));
+  const cold = window(winter, "-10"), newest = window(recent, "0", 0);
+  const db = database([cold, newest], [...winter, ...recent]);
+  const initial = await runRoomPhase(db, "home", "customer", "room", context, undefined, null, now);
+  const previous = stored({ ...initial, heating_bands: { ...bands(initial),
+    window_last_attempted_at: { [newest.window_key]: new Date(now - 60_000).toISOString() },
+    window_solar_pending: { [newest.window_key]: true },
+  } });
+  newest.fingerprint = "synthetic-live-arrival";
+  newest.evidence_updated_at = new Date(now).toISOString();
+  const prepared = await prepareStoredRoomHeating(db, "home", "customer", "room", context, previous, null, now);
+  assertEquals(prepared.kind, "band");
+  assert(prepared.kind === "band");
+  assertEquals(prepared.work.metadata.window.window_key, cold.window_key);
+  assertEquals(prepared.work.metadata.library.window_attempts, undefined, "a scheduling turn is not a completed fit");
+  assertEquals(prepared.work.metadata.progressLibrary.window_solar_pending?.[newest.window_key], true);
 });
 
 Deno.test("late older measurements refit a completed window without a newer final timestamp", async () => {
@@ -432,7 +451,7 @@ Deno.test("native chunk captures preserve mixed interval durations and read each
   const captured = await readRoomQuarters(db, "home", "customer", "room", new Date(start).toISOString(), new Date(end).toISOString(), true);
   assertEquals(captured.map(row => ({ start_ts: row.start_ts, duration_s: Number(row.duration_s) })), rows);
   assertEquals(new Set(captured.map(row => row.start_ts)).size, rows.length);
-  assert(maxRunning <= 4);
+  assertEquals(maxRunning, 1, "one admitted room must not multiply database history scans");
   assertEquals(new Set(calls.map(call => call.from)).size, 3);
   assertEquals(calls.length, 3);
 });
