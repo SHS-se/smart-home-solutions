@@ -446,3 +446,16 @@ Omitted revision denotes the pre-revision producer contract. Malformed explicit
 claims fail validation. A collector algorithm change increments the processing
 revision and changes its replay signature; replay, rather than model editing,
 repairs the measured inputs and ordinary learning updates the affected bands.
+
+A reviewed faulty physical meter is a separate input-quality fact: a newer
+producer cannot make that meter reliable merely by reporting a higher processing
+revision. Dated meter exclusions are enforced at canonical thermal and electrical
+learning reads, preserving raw audit values and temperature observations while
+making the heater energy unknown. Dated source lineage resolves legacy electrical
+samples; today's meter must not be projected backwards across a replacement.
+
+Changing a reviewed exclusion withdraws active calibrations whose training spans
+intersect that source period, and queues ordinary refitting for the affected
+owners. General responses with clean training spans remain available, and archived
+revision records are preserved. This is a source reliability decision supported by
+the customer's evidence, not a fitted-error threshold or numerical energy cap.

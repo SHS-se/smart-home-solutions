@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { advanceRoomHeatingBands } from "./heating-bands.ts";
+import { advanceRoomHeatingBands, publishRoomHeatingBandFit } from "./heating-bands.ts";
 import type { RoomMeanQuarter } from "./mean-observations.ts";
 import { publishHeatingBand, roomHeatingBandAt, type RoomHeatingBands } from "../../planner/heating-bands.ts";
 import type { ThermalZoneModel } from "../../planner/models/room/thermal.ts";
@@ -37,6 +37,7 @@ Deno.test("an identified empirical band publishes without beating the general mo
   const fitted = advanceRoomHeatingBands(current, rows.slice(0, 96 * 4), reference, 500);
   assertEquals(fitted.candidates, []);
   const warm = roomHeatingBandAt(fitted.active, 2)!;
+  assert(warm.model.response_family !== "equilibrium");
   assert(warm.model.gain_c_per_wh > .0029);
   assertEquals(roomHeatingBandAt(fitted.active, -7)?.revision, cold.revision);
   const insufficient = rows.map(row => ({ ...row, heat_w: null }));
@@ -70,4 +71,17 @@ Deno.test("historical backfill cannot replace newer evidence in the same weather
   const bands = publishHeatingBand([current], historical);
   assertEquals(roomHeatingBandAt(bands, 2)?.revision, "current");
   assertEquals(roomHeatingBandAt(bands, .5)?.revision, "historical");
+});
+
+Deno.test("published heater evidence dates exclude unknown meter prefixes and suffixes", () => {
+  const measured = observations().slice(0, 8);
+  const rows = [{ ...measured[0], start_ms: start - quarter, heat_w: null }, ...measured,
+    { ...measured.at(-1)!, start_ms: start + 8 * quarter, heat_w: null }];
+  const library: RoomHeatingBands = { reference_revision: "general", binding: "synthetic-room",
+    since: "2025-01-01", active: [], candidates: [], attempted: {} };
+  const fitted = publishRoomHeatingBandFit(library, rows, 0, rows.at(-1)!.start_ms, {
+    result: { ok: true, model: reference }, minC: 1, maxC: 3,
+  });
+  assertEquals(fitted.active[0].training_from, new Date(start).toISOString());
+  assertEquals(fitted.active[0].training_to, new Date(start + 8 * quarter).toISOString());
 });

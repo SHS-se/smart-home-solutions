@@ -892,6 +892,138 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     assertEquals((await db.query(`SELECT device_energy_kwh FROM energy_heating_observations WHERE home_id=$1
       AND room_key='room' AND start_ts=$2 AND device_statistics='{"heater":"sensor.synthetic_replaced_energy"}'::jsonb`, [home, protectedAt])).rows,
       [{ device_energy_kwh: { heater: 5 } }]);
+    // A reviewed unreliable physical meter epoch is excluded independently of
+    // collector revision, while its raw readings and room thermometry survive.
+    await db.exec(`CREATE TABLE energy_optimisation_zone_models(home_id uuid,customer_id uuid,room_key text,
+      training_from timestamptz,training_to timestamptz,trained boolean,rejection_reason text,
+      gain_c_per_wh numeric,cooling_constant_per_h numeric,last_attempted_at timestamptz,last_fit_attempt jsonb,
+      heating_bands jsonb,model_revision bigint DEFAULT 1);
+      CREATE FUNCTION private.advance_synthetic_zone_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN NEW.model_revision:=OLD.model_revision+1; RETURN NEW; END $$;
+      CREATE TRIGGER synthetic_zone_revision BEFORE UPDATE ON energy_optimisation_zone_models
+        FOR EACH ROW EXECUTE FUNCTION private.advance_synthetic_zone_revision();
+      CREATE TABLE private.energy_heating_calibration_revisions(revision text PRIMARY KEY,calibration jsonb);`);
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119143000_exclude_reviewed_unreliable_heating_meters.sql"));
+    const rejectedStatistic = "sensor.synthetic_replaced_energy";
+    const policyFrom = protectedAt;
+    const policyTo = new Date(Date.parse(policyFrom) + 3600_000).toISOString();
+    const reliableFrom = new Date(Date.parse(policyTo) + 86_400_000).toISOString();
+    const reliableTo = new Date(Date.parse(reliableFrom) + 3600_000).toISOString();
+    const badBand = { revision: "synthetic-bad-fit", band_c: -10, training_from: policyFrom, training_to: policyTo };
+    const goodBand = { revision: "synthetic-good-fit", band_c: 5, training_from: reliableFrom, training_to: reliableTo };
+    const library = { active: [badBand, goodBand], candidates: [badBand, goodBand],
+      reference_revision: "synthetic-current-reference", reference: { model: { gain_c_per_wh: .001 } },
+      window_attempts: { "-10": "previous" }, window_evidence_updated_at: { "-10": start },
+      general_attempt: { attempted_at: start }, pending_windows: 0 };
+    await db.query(`INSERT INTO energy_optimisation_zone_models VALUES($1,$2,'room',$3,$4,true,NULL,.001,.1,now(),'{}',$5::jsonb,1),
+      ($1,$2,'unrelated-room',$3,$4,true,NULL,.001,.1,now(),'{}',$5::jsonb,1)`,
+      [home, customer, reliableFrom, reliableTo, JSON.stringify(library)]);
+    await db.query("INSERT INTO private.energy_heating_calibration_revisions VALUES($1,$2::jsonb)",
+      [badBand.revision, JSON.stringify(badBand)]);
+    await db.query(`UPDATE energy_optimisation_device_operating_points SET operating_points=$1::jsonb
+      WHERE home_id=$2 AND device_key='heater'`, [JSON.stringify({ method: "weather_heating_draw_v1", binding,
+        points: [badBand, goodBand], reference: { revision: "older-unknown-window", points: [] },
+        versioned: { attempted: { "-10": start }, evidence_updated_at: { "-10": start }, candidates: [badBand, goodBand] } }), home]);
+    await db.query(`INSERT INTO private.energy_learning_jobs(home_id,customer_id,owner_kind,owner_key,input,pending,generation,fence)
+      VALUES($1,$2,'room','room','{}',false,1,0)`, [home, customer]);
+    const excludedRow = { ...protectedRow, device_statistics: { heater: rejectedStatistic }, heater_energy_limits_w: {}, counter_processing_revision: 10 };
+    await write(excludedRow);
+    await write({ ...excludedRow, start: policyTo, device_energy_kwh: { heater: .2 } });
+    const learningHeat = async (from = policyFrom, to = policyTo) => (await db.query(`SELECT heat_w,room_temperature_c
+      FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)`, [customer, home, from, to])).rows;
+    assertEquals(await learningHeat(), [{ heat_w: 5000, room_temperature_c: 20 }]);
+    await db.query(`INSERT INTO private.energy_heating_meter_exclusions(home_id,device_key,statistic_id,valid_from,valid_to,reason)
+      VALUES($1,'heater',$2,$3,$4,'Synthetic reviewed meter fault')`, [home, rejectedStatistic, policyFrom, policyTo]);
+    assertEquals(await learningHeat(), [{ heat_w: null, room_temperature_c: 20 }]);
+    assertEquals((await db.query(`SELECT device_energy_kwh FROM energy_heating_observations
+      WHERE home_id=$1 AND start_ts=$2 AND device_statistics=$3::jsonb`,
+      [home, policyFrom, JSON.stringify({ heater: rejectedStatistic })])).rows,
+      [{ device_energy_kwh: { heater: 5 } }], "reviewed rejection retains raw audit evidence");
+    await write({ ...excludedRow, counter_processing_revision: 11, device_energy_kwh: { heater: 6 } });
+    assertEquals(await learningHeat(), [{ heat_w: null, room_temperature_c: 20 }], "a new producer cannot override reviewed unreliability");
+    const nextHour = new Date(Date.parse(policyTo) + 3600_000).toISOString();
+    assertEquals(await learningHeat(policyTo, nextHour), [{ heat_w: 200, room_temperature_c: 20 }], "the reliable epoch boundary is half open");
+    const currentRoom = async () => (await db.query<{ heating_bands: typeof library; trained: boolean; gain_c_per_wh: string | null; model_revision: number }>(
+      "SELECT heating_bands,trained,gain_c_per_wh,model_revision FROM energy_optimisation_zone_models WHERE home_id=$1 AND room_key='room'", [home])).rows[0];
+    assertEquals((await currentRoom()).heating_bands.active, [goodBand]);
+    assertEquals((await currentRoom()).heating_bands.candidates, [goodBand]);
+    assertEquals((await currentRoom()).heating_bands.reference_revision, library.reference_revision);
+    assertEquals((await currentRoom()).trained, true, "a current reference trained after the fault is retained");
+    assertEquals(Object.keys((await currentRoom()).heating_bands.window_attempts), []);
+    assertEquals((await currentRoom()).heating_bands.pending_windows, 1);
+    assertEquals((await db.query("SELECT model_revision FROM energy_optimisation_zone_models WHERE room_key='unrelated-room'")).rows,
+      [{ model_revision: 1 }], "a meter review does not churn unrelated room revisions");
+    assertEquals((await db.query("SELECT calibration FROM private.energy_heating_calibration_revisions WHERE revision=$1", [badBand.revision])).rows,
+      [{ calibration: badBand }], "withdrawn calibration revisions remain archived");
+    assertEquals((await db.query("SELECT pending,generation FROM private.energy_learning_jobs WHERE home_id=$1 AND owner_kind='room' AND owner_key='room'", [home])).rows,
+      [{ pending: true, generation: 2 }]);
+    const updatedDraw = (await db.query<{ operating_points: { points: unknown[]; versioned: { candidates: unknown[]; pending_bands: number }; reference?: unknown } }>(
+      "SELECT operating_points FROM energy_optimisation_device_operating_points WHERE home_id=$1 AND device_key='heater'", [home])).rows[0].operating_points;
+    assertEquals(updatedDraw.points, [goodBand]);
+    assertEquals(updatedDraw.versioned.candidates, [goodBand]);
+    assertEquals(updatedDraw.versioned.pending_bands, 1);
+    assertEquals(updatedDraw.reference, undefined);
+    const cleanElectricalReference = { ...goodBand, points: [] };
+    await db.query("UPDATE energy_optimisation_device_operating_points SET operating_points=jsonb_set(operating_points,'{reference}',$1::jsonb) WHERE home_id=$2 AND device_key='heater'",
+      [JSON.stringify(cleanElectricalReference), home]);
+    await db.query("UPDATE private.energy_heating_meter_exclusions SET reason='Synthetic repeated review with unchanged epoch' WHERE home_id=$1 AND statistic_id=$2", [home, rejectedStatistic]);
+    assertEquals((await db.query<{ reference: unknown }>(
+      "SELECT operating_points->'reference' AS reference FROM energy_optimisation_device_operating_points WHERE home_id=$1 AND device_key='heater'", [home])).rows[0].reference,
+      cleanElectricalReference, "an electrical reference with a known disjoint training window survives");
+    const unchangedReviewRevision = (await currentRoom()).model_revision;
+    await db.query("UPDATE private.energy_heating_meter_exclusions SET reason=reason WHERE home_id=$1 AND device_key='heater'", [home]);
+    assertEquals((await currentRoom()).model_revision, unchangedReviewRevision);
+    // Both ordinary electrical quarters and imported hours are masked, even
+    // when an upload arrives after the review and declares a current binding.
+    const rejectedBinding = `climate.synthetic|sensor.synthetic_power|${rejectedStatistic}`;
+    await db.query(`INSERT INTO energy_optimisation_device_slots(device_id,home_id,customer_id,start_ts,energy_kwh,quality)
+      VALUES($1,$2,$3,$4,.2,jsonb_build_object('weather_heating_binding',$5::text))`,
+      [device, home, customer, policyFrom, rejectedBinding]);
+    await db.query(`INSERT INTO energy_optimisation_outdoor_slots(home_id,customer_id,start_ts,temperature_c)
+      VALUES($1,$2,$3,-8)`, [home, customer, policyFrom]);
+    await db.query(`INSERT INTO private.energy_weather_heating_hourly_imports(device_id,home_id,customer_id,start_ts,binding,outdoor_c,watts)
+      VALUES($1,$2,$3,$4,$5,-8,800)`, [device, home, customer, policyFrom, rejectedBinding]);
+    assertEquals((await db.query<{ days: { hours: number }[] }>(
+      "SELECT get_energy_weather_heating_days($1,$2,'heater',$3,$4,$5) AS days",
+      [home, customer, rejectedBinding, policyFrom, policyTo])).rows[0].days.filter(row => row.hours > 0), []);
+    assertEquals((await db.query<{ heater_quarters: unknown[] }>(
+      "SELECT heater_quarters FROM get_energy_room_planning_history($1,$2,ARRAY['room'],$3,$4)",
+      [customer, home, policyFrom, policyTo])).rows[0].heater_quarters, [], "rejected energy is missing from stored-warmth observations");
+    // Dated source assignment identifies old electrical imports even though
+    // today's device statistic is a replacement meter.
+    const electricalFrom = new Date(Date.parse(start) - 30 * 86_400_000).toISOString();
+    const electricalTo = new Date(Date.parse(electricalFrom) + 3600_000).toISOString();
+    const physicalPast = "sensor.synthetic_unreliable_former_energy";
+    await db.query(`INSERT INTO private.energy_heating_history_sources(home_id,room_key,target_source_key,target_device_statistics,
+      observed_source_key,observed_temperature_entity_id,observed_device_statistics,valid_from,valid_to,basis)
+      VALUES($1,'room',$2,$3::jsonb,$4,$5,$6::jsonb,$7,$8,'Synthetic dated counter identity')`,
+      [home, source, JSON.stringify({ heater: rejectedStatistic }), former, formerEntity,
+        JSON.stringify({ heater: physicalPast }), electricalFrom, electricalTo]);
+    await db.query(`INSERT INTO private.energy_weather_heating_hourly_imports(device_id,home_id,customer_id,start_ts,binding,outdoor_c,watts)
+      VALUES($1,$2,$3,$4,$5,-8,700)`, [device, home, customer, electricalFrom, binding]);
+    assertEquals((await draw(electricalFrom, electricalTo)).filter(r => r.hours > 0).length, 1);
+    await db.query(`INSERT INTO private.energy_heating_meter_exclusions(home_id,device_key,statistic_id,valid_from,valid_to,reason)
+      VALUES($1,'heater',$2,$3,$4,'Synthetic former meter reliability review')`, [home, physicalPast, electricalFrom, electricalTo]);
+    assertEquals((await draw(electricalFrom, electricalTo)).filter(r => r.hours > 0), []);
+    // A model whose general training also used excluded evidence cannot leak
+    // back through the scalar reference after its active band is withdrawn.
+    await db.query("UPDATE energy_optimisation_zone_models SET training_from=$1,training_to=$2,trained=true,gain_c_per_wh=.001,cooling_constant_per_h=.1,rejection_reason=NULL,heating_bands=$3::jsonb WHERE home_id=$4 AND room_key='room'",
+      [electricalFrom, electricalTo, JSON.stringify(library), home]);
+    await db.query("UPDATE energy_optimisation_device_operating_points SET operating_points=jsonb_set(operating_points,'{reference}',$1::jsonb) WHERE home_id=$2 AND device_key='heater'",
+      [JSON.stringify({ revision: "synthetic-contaminated-reference", training_from: electricalFrom, training_to: electricalTo, points: [] }), home]);
+    await db.query("UPDATE private.energy_heating_meter_exclusions SET reason='Synthetic additional review' WHERE home_id=$1 AND statistic_id=$2", [home, physicalPast]);
+    assertEquals((await db.query<{ reference: unknown }>(
+      "SELECT operating_points->'reference' AS reference FROM energy_optimisation_device_operating_points WHERE home_id=$1 AND device_key='heater'", [home])).rows[0].reference,
+      null, "an electrical reference whose training overlaps is withdrawn");
+    assertEquals((await currentRoom()).trained, false);
+    assertEquals((await currentRoom()).gain_c_per_wh, null);
+    assertEquals((await currentRoom()).heating_bands.reference_revision, null);
+    assertEquals((await currentRoom()).heating_bands.reference, undefined);
+    await db.query("DELETE FROM private.energy_heating_meter_exclusions WHERE home_id=$1 AND statistic_id=$2", [home, rejectedStatistic]);
+    assertEquals(await learningHeat(), [{ heat_w: 6000, room_temperature_c: 20 }], "removing a review reconsiders retained raw evidence");
+    await db.query(`INSERT INTO private.energy_heating_meter_exclusions(home_id,device_key,statistic_id,valid_from,valid_to,reason)
+      VALUES($1,'heater','sensor.synthetic_different_physical_counter',$2,$3,'Synthetic unrelated physical source')`, [home, policyFrom, policyTo]);
+    assertEquals(await learningHeat(), [{ heat_w: 6000, room_temperature_c: 20 }], "a different physical counter is isolated");
     await db.exec("SET ROLE service_role");
     await assertRejects(() => db.query("SELECT * FROM private.energy_heating_meter_processing"), Error, "permission denied");
     await db.exec("RESET ROLE");

@@ -38,10 +38,13 @@ export function publishRoomHeatingBandFit(
     diagnostics: { ...library.diagnostics, [band]: attempt },
     candidates: library.candidates.filter(candidate => candidate.band_c !== band) };
   if (!fit.result.ok || fit.minC === null || fit.maxC === null) return updated;
-  const last = rows.at(-1)!;
+  // Unknown meter history cannot have trained the response. Its temperatures
+  // stay in discovery, but do not extend the fitted heater-evidence dates.
+  const measured = rows.filter(row => Number.isFinite(row.heat_w) && row.heat_w !== null);
+  const first = measured[0]!, last = measured.at(-1)!;
   const candidate: RoomHeatingBand = {
     revision: crypto.randomUUID(), band_c: band, observed_min_c: fit.minC, observed_max_c: fit.maxC,
-    training_from: new Date(rows[0].start_ms).toISOString(),
+    training_from: new Date(first.start_ms).toISOString(),
     training_to: new Date(last.start_ms + roomIntervalSeconds(last) * 1000).toISOString(),
     model: fit.result.model, learning_evidence: fit.result.learning_evidence,
     warnings: fit.result.warnings ?? [],
