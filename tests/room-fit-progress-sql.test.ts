@@ -58,6 +58,7 @@ async function database(admission = true, visits = true) {
   await db.exec(publication.slice(start, publication.indexOf("END; $$;", start) + "END; $$;".length));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261118220500_room_fit_progress.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261120002000_room_heat_fit_iterations.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261120003000_continue_pending_room_windows.sql"));
   if (admission) await db.exec(await Deno.readTextFile("supabase/migrations/20261119011000_room_learning_admission.sql"));
   if (visits) await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
   // The deployed lifecycle also admits device owners.
@@ -459,5 +460,66 @@ Deno.test("additional heat iterations are fenced, compare their old state and pr
     const saved = (await db.query<{ state: unknown }>("SELECT metadata->'heat_state' AS state FROM private.energy_room_fit_progress WHERE job_id=$1",[j.id])).rows[0];
     assertEquals(saved.state, null, "completed cell clears only numerical scratch");
     assertEquals(await complete(db,j,1), false, "partial inference cannot publish a band");
+  } finally { await db.close(); }
+});
+
+
+Deno.test("a completed band automatically continues remaining room windows and stops when the traversal is drained", async () => {
+  const db = await database(false, false);
+  try {
+    let j = await claim(db);
+    assertEquals(await checkpoint(db,j,-1), true);
+    for (let cursor=0;cursor<ROOM_BAND_FIT_CELL_COUNT;cursor++) { j=await claim(db); assertEquals(await checkpoint(db,j,cursor),true); }
+    j=await claim(db);
+    assertEquals(await complete(db,j,18,{ heating_bands: { binding: "synthetic-binding", active: [], pending_windows: 2 } }),true);
+    assertEquals(await scratchCount(db),0,"completed numerical input is cleared before a new window");
+    const continuing=(await db.query<{ pending:boolean;lease_until:string|null;finished_at:string|null }>(
+      "SELECT pending,lease_until,finished_at FROM private.energy_learning_jobs WHERE id=$1",[j.id])).rows[0];
+    assertEquals(continuing,{pending:true,lease_until:null,finished_at:null});
+    j=await claim(db);
+    assert(j,"continuation is claimable without a planning request");
+    assertEquals(j.room_fit_progress,null);
+    const done=await db.query<{ ok:boolean }>("SELECT publish_energy_device_learning($1,$2,$3,2,$4::jsonb) AS ok",[
+      j.id,j.generation,j.fence,JSON.stringify({home_id:home,customer_id:home,room_key:"room",heating_bands:{binding:"synthetic-binding",active:[],pending_windows:0,
+        window_solar_pending:{"5":true},window_solar_retry_at:{"5":"2099-01-01T00:00:00Z"}}})]);
+    assertEquals(done.rows[0].ok,true);
+    assertEquals((await db.query("SELECT pending FROM private.energy_learning_jobs WHERE id=$1",[j.id])).rows,[{pending:false}]);
+    assertEquals(await claim(db),null,"a drained traversal with a deferred solar retry must not restart itself");
+  } finally { await db.close(); }
+});
+
+Deno.test("continuation cannot revive a removed owner or another source binding", async () => {
+  const db = await database(false, false);
+  try {
+    await db.exec(`UPDATE energy_optimisation_zone_models SET heating_bands='{"binding":"retired-source","pending_windows":3}' WHERE home_id='${home}';
+      UPDATE private.energy_learning_jobs SET pending=false,lease_until=NULL,finished_at=now() WHERE home_id='${home}' AND owner_kind='room';`);
+    assertEquals((await db.query("SELECT pending FROM private.energy_learning_jobs WHERE home_id=$1 AND owner_kind='room'",[home])).rows,[{pending:false}]);
+    await db.exec(`UPDATE energy_optimisation_zone_models SET heating_bands='{"binding":"synthetic-binding","pending_windows":3}' WHERE home_id='${home}';
+      UPDATE private.energy_learning_jobs SET pending=true WHERE home_id='${home}' AND owner_kind='room';
+      UPDATE private.energy_learning_jobs SET pending=false,last_error='Learning owner removed',finished_at=now() WHERE home_id='${home}' AND owner_kind='room';`);
+    assertEquals((await db.query("SELECT pending FROM private.energy_learning_jobs WHERE home_id=$1 AND owner_kind='room'",[home])).rows,[{pending:false}]);
+  } finally { await db.close(); }
+});
+
+Deno.test("band continuation waits for the held home lane, then release or expiry wakes it without a planning request", async () => {
+  const db=await database();
+  try {
+    let j=await claim(db);
+    await db.exec("TRUNCATE net.wakes");
+    const published=await db.query<{ok:boolean}>("SELECT publish_energy_device_learning($1,$2,$3,1,$4::jsonb) AS ok",[
+      j.id,j.generation,j.fence,JSON.stringify({home_id:home,customer_id:home,room_key:"room",
+        heating_bands:{binding:"synthetic-binding",active:[],pending_windows:1}})]);
+    assertEquals(published.rows[0].ok,true);
+    assertEquals(await claim(db),null,"the completed invocation still owns home admission");
+    assertEquals((await db.query("SELECT * FROM net.wakes")).rows,[],"publication cannot start a second room inside its own reservation");
+    assertEquals(await release(db,j),true);
+    assertEquals((await db.query<{n:number}>("SELECT count(*)::int AS n FROM net.wakes WHERE body->>'job_id'=$1",[j.id])).rows[0].n,1);
+    j=await claim(db); assert(j);
+    // A killed continuation cannot require a user click to resume either.
+    await db.query("UPDATE private.energy_room_learning_lanes SET lease_until=now()-interval '1 second' WHERE job_id=$1",[j.id]);
+    await db.query("UPDATE private.energy_learning_jobs SET lease_until=now()-interval '1 second',wake_after=now() WHERE id=$1",[j.id]);
+    await db.exec("TRUNCATE net.wakes; SELECT private.sweep_energy_learning_jobs()");
+    assertEquals((await db.query<{n:number}>("SELECT count(*)::int AS n FROM net.wakes WHERE body->>'job_id'=$1",[j.id])).rows[0].n,1);
+    assert(await claim(db),"the sweeper recovers a terminated continuation");
   } finally { await db.close(); }
 });

@@ -82,7 +82,10 @@ than fabricated statistical rejections. Failed statistical attempts retain the
 previous usable parameters. Publication validates the owner's fence and model
 revision in one transaction and cannot write pool hardware or electrical fields.
 Room learning admits one worker invocation per home, with a fair turn between
-ready rooms. Its separate reservation survives source changes that invalidate
+ready rooms. A successful band publication continues the same fenced job when
+ready seasonal windows remain; a new planning request is not required. The
+worker releases its home reservation before the next window can be claimed,
+and lease expiry recovers a terminated continuation. Its separate reservation survives source changes that invalidate
 the ordinary job lease while an older history query is still running. The worker
 releases that reservation on exit; lease expiry recovers a terminated worker.
 Native history chunks are read sequentially within the admitted invocation.
