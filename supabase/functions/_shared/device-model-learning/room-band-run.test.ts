@@ -48,6 +48,7 @@ function fixture() {
         case "get_energy_room_heating_fit_windows": data = windows; break;
         case "get_energy_room_thermal_interval_capture": data = { sources: [], rows: rows.filter(row =>
           row.start_ts >= String(args.p_from) && row.start_ts < String(args.p_to)) }; break;
+        case "get_energy_room_operation_facts": data = []; break;
         case "get_energy_room_passive_heat": case "get_energy_doorway_probes": data = []; break;
         case "checkpoint_energy_room_fit": {
           assertEquals(args.p_fence, fence);
@@ -59,8 +60,16 @@ function fixture() {
           } else {
             assertEquals(args.p_capture_base64, null); // No re-upload of history for every cell.
             progress.cells.push(jsonb(args.p_cell)); progress.cursor++;
+            const metadata = progress.metadata as Record<string, unknown>; delete metadata.heat_state;
           }
           data = true; break;
+        }
+        case "checkpoint_energy_room_heat_iteration": {
+          assert(progress);
+          assertEquals(args.p_expected_cursor, progress.cursor);
+          const metadata = progress.metadata as Record<string, unknown>;
+          assertEquals(args.p_expected_state, metadata.heat_state ?? null);
+          metadata.heat_state = jsonb(args.p_heat_state); data = true; break;
         }
         case "load_energy_room_fit_capture": data = capture; break;
         case "reset_energy_room_fit": resets++; progress = null; capture = null; data = true; break;
@@ -91,7 +100,15 @@ function fixture() {
     assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
     return response;
   };
-  return { db, tick, rows, window, windows, context, now, reads, writes,
+  const finishCell = async () => {
+    const cursor = progress?.cursor;
+    for (let iteration = 0; iteration < 1000; iteration++) {
+      const response = await tick(); assertEquals(response.status, 200);
+      if (progress?.cursor !== cursor) return response;
+    }
+    throw new Error("Synthetic room cell did not finish bounded iterations");
+  };
+  return { db, tick, finishCell, rows, window, windows, context, now, reads, writes,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
     corruptCapture: () => { capture = "corrupt"; },
@@ -125,7 +142,7 @@ Deno.test("the real room worker checkpoints eighteen cells without publishing pa
   const firstReads = f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length;
   assert(firstReads > 0);
   for (let i = 0; i < ROOM_BAND_FIT_CELL_COUNT; i++) {
-    assertEquals(await (await f.tick()).json(), { checkpointed: true });
+    assertEquals(await (await f.finishCell()).json(), { checkpointed: true });
     assertEquals(f.progress?.cursor, i + 1);
     assertEquals(f.writes.length, 1);
   }
@@ -135,7 +152,8 @@ Deno.test("the real room worker checkpoints eighteen cells without publishing pa
   assertEquals(f.writes.length, 2);
   const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === "revision" ? "generated" : item));
   assertEquals(normalize(f.writes[1]), normalize(expected));
-  assertEquals(f.reads.filter(name => name === "load_energy_room_fit_capture").length, ROOM_BAND_FIT_CELL_COUNT);
+  assertEquals(f.reads.filter(name => name === "load_energy_room_fit_capture").length,
+    f.reads.filter(name => name === "checkpoint_energy_room_heat_iteration").length + ROOM_BAND_FIT_CELL_COUNT);
   assertEquals(f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, 2 * firstReads);
 });
 
@@ -145,10 +163,11 @@ Deno.test("interrupted cells resume, and a material source correction discards o
   const accepted = structuredClone(f.model);
   f.fail("load_energy_room_fit_capture");
   assertEquals((await f.tick()).status, 500);
-  assertEquals(f.progress?.cursor, 1);
+  assert(f.progress !== null);
+  assert(f.progress.cursor <= 1);
   assertEquals(f.model, accepted);
   f.fail(null);
-  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.tick();
+  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();
   f.window.fingerprint = "corrected-source";
   assertEquals(await (await f.tick()).json(), { superseded: true });
   assertEquals(f.resets, 1);
@@ -159,7 +178,7 @@ Deno.test("interrupted cells resume, and a material source correction discards o
 Deno.test("changed effective readings without a native fingerprint change cannot mix fitting cells", async () => {
   const f = fixture();
   await f.tick(); await f.tick();
-  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.tick();
+  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();
   f.rows[80].heat_w = null;
   assertEquals(await (await f.tick()).json(), { superseded: true });
   assertEquals(f.writes.length, 1);
@@ -193,11 +212,12 @@ Deno.test("malformed private capture is discarded while an empty observation cap
 Deno.test("live running-power diagnostics cannot keep restarting a coherent thermal fit", async () => {
   const f = fixture();
   await f.tick(); await f.tick();
-  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.tick();
+  while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();
   for (const row of f.rows) row.active_power_w = 510;
   assertEquals(await (await f.tick()).json(), { published: true });
   const band = (f.model?.heating_bands as RoomHeatingBands).active[0];
   assert(band);
+  assert(band.model.response_family !== "equilibrium");
   assertEquals(band.model.heating_rate_c_per_h, band.model.gain_c_per_wh * 500);
   assertEquals(f.resets, 0);
 });

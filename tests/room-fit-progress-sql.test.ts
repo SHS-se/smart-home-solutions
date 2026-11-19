@@ -57,6 +57,7 @@ async function database(admission = true, visits = true) {
   const start = publication.indexOf("CREATE OR REPLACE FUNCTION public.publish_energy_device_learning(");
   await db.exec(publication.slice(start, publication.indexOf("END; $$;", start) + "END; $$;".length));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261118220500_room_fit_progress.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261120002000_room_heat_fit_iterations.sql"));
   if (admission) await db.exec(await Deno.readTextFile("supabase/migrations/20261119011000_room_learning_admission.sql"));
   if (visits) await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
   // The deployed lifecycle also admits device owners.
@@ -83,7 +84,8 @@ async function checkpoint(db: PGlite, j: Claim, cursor: number, revision = 1, in
   return (await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) AS ok",
     [j.id, j.generation, j.fence, revision, cursor, cursor === -1 ? JSON.stringify(initialMetadata) : null,
       cursor === -1 ? capture : null, cursor === -1 ? null : JSON.stringify({ lag_h: HEAT_LAG_GRID_H[Math.floor(cursor / 2)],
-        partition: cursor % 2 ? "full" : "training", fits: { finite: null, equilibrium: null, integrator: null } })])).rows[0].ok;
+        partition: cursor % 2 ? "full" : "training", additional_heat: { finite: null, equilibrium: null, integrator: null },
+        fits: { finite: null, equilibrium: null, integrator: null } })])).rows[0].ok;
 }
 async function load(db: PGlite, j: Claim, revision = 1) {
   return (await db.query<{ value: string | null }>("SELECT load_energy_room_fit_capture($1,$2,$3,$4) AS value",
@@ -432,5 +434,30 @@ Deno.test("independent band publication preserves the general model SQL domain a
     assert(after.heating_bands.diagnostics["-10"]);
     assertEquals(after.last_fit_attempt.status,"general_unidentified");
     assertEquals(await scratchCount(db),0);
+  } finally { await db.close(); }
+});
+
+
+Deno.test("additional heat iterations are fenced, compare their old state and preserve immutable capture", async () => {
+  const db = await database(false, false);
+  try {
+    let j = await claim(db);
+    assertEquals(await checkpoint(db, j, -1), true);
+    j = await claim(db);
+    const step = async (old: unknown, next: unknown) => (await db.query<{ ok: boolean }>(
+      "SELECT checkpoint_energy_room_heat_iteration($1,$2,$3,1,0,$4::jsonb,$5::jsonb) AS ok",
+      [j.id,j.generation,j.fence,old === null ? null : JSON.stringify(old),JSON.stringify(next)])).rows[0].ok;
+    const first = { version: 2, index: 0, iteration: 1 };
+    assertEquals(await step(null, first), true);
+    j = await claim(db);
+    assertEquals(await load(db, j), capture);
+    assertEquals(await step(null, first), false, "lost reply cannot apply an iteration twice");
+    const next = { ...first, iteration: 2 };
+    assertEquals(await step(first, next), true);
+    j = await claim(db);
+    assertEquals(await checkpoint(db, j, 0), true);
+    const saved = (await db.query<{ state: unknown }>("SELECT metadata->'heat_state' AS state FROM private.energy_room_fit_progress WHERE job_id=$1",[j.id])).rows[0];
+    assertEquals(saved.state, null, "completed cell clears only numerical scratch");
+    assertEquals(await complete(db,j,1), false, "partial inference cannot publish a band");
   } finally { await db.close(); }
 });

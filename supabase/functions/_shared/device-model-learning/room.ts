@@ -1,3 +1,4 @@
+import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.ts";
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
@@ -37,7 +38,12 @@ export async function readRoomQuarters(
     if (error) throw new Error(`get_energy_room_thermal_interval_capture: ${error.message}`);
     rows.push(...decodeHeatingProbeCapture(data, roomKey));
   }
-  return rows;
+  const { data: facts, error: factError } = await db.rpc("get_energy_room_operation_facts", {
+    p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_from: from, p_to: to,
+  });
+  if (factError) throw new Error(`get_energy_room_operation_facts: ${factError.message}`);
+  if (!Array.isArray(facts)) throw new Error("Invalid room operation evidence");
+  return qualifyRoomOperationEvidence(rows, facts);
 }
 
 export function nativeRoomReadWindows(from: string, to: string): [string, string][] {
@@ -63,7 +69,7 @@ export interface HeatingFitWindow {
 
 // Revisit each completed band once to publish the selected response family
 // and evaluate equilibrium forcing in its own temperature coordinates.
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:selected_response_families_v6`;
+export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:regularized_additional_heat_v8`;
 
 function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
   const result = new Map<string, number>();

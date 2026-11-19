@@ -2,7 +2,7 @@ import { readPrivateTestProbe } from "./private-test-probe.ts";
 import { createDeviceLearningReplay, type DeviceLearningReplayInput } from "./device-learning-replay.ts";
 import { handleDeviceLearning } from "./device-learning-worker.ts";
 import { decodeRoomBandFitCapture } from "./device-model-learning/room-band-fit-capture.ts";
-import { finalizeIndependentRoomBand, fitIndependentRoomBandCell, parseRoomBandFitCells,
+import { finalizeIndependentRoomBand, advanceIndependentRoomBandCell, parseRoomHeatFitState, parseRoomBandFitCells,
   prepareIndependentRoomBand, ROOM_BAND_FIT_CELL_COUNT } from "./device-learning/room/mean-observations.ts";
 import { heatingBand } from "./planner/heating-bands.ts";
 
@@ -15,7 +15,7 @@ function record(value: unknown): Record<string, unknown> | null {
 async function roomBandStep(raw: Record<string, unknown>, started: number): Promise<Response> {
   try {
     const { from_at, band_c, ratedPowerW } = raw, capture = record(raw.capture);
-    if (Object.keys(raw).length !== 6 || typeof from_at !== "string" || !Number.isFinite(Date.parse(from_at)) ||
+    if (Object.keys(raw).length !== (Object.hasOwn(raw, "heat_state") ? 7 : 6) || typeof from_at !== "string" || !Number.isFinite(Date.parse(from_at)) ||
       typeof band_c !== "number" || !Number.isFinite(band_c) || heatingBand(band_c) !== band_c ||
       !(ratedPowerW === null || typeof ratedPowerW === "number" && Number.isFinite(ratedPowerW) && ratedPowerW >= 0) ||
       !capture || Object.keys(capture).length !== 2 || typeof capture.base64 !== "string" || typeof capture.sha256 !== "string") {
@@ -25,9 +25,14 @@ async function roomBandStep(raw: Record<string, unknown>, started: number): Prom
     const rows = await decodeRoomBandFitCapture(capture.base64, from_at, capture.sha256);
     const prepared = prepareIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === band_c, ratedPowerW);
     const algorithmStarted = performance.now();
-    const result = cells.length < ROOM_BAND_FIT_CELL_COUNT
-      ? { phase: "cell", index: cells.length, cell: fitIndependentRoomBandCell(prepared, cells.length) }
-      : { phase: "finalize", index: cells.length, fit: finalizeIndependentRoomBand(prepared, cells) };
+    const result = (() => {
+      if (cells.length === ROOM_BAND_FIT_CELL_COUNT) return {
+        phase: "finalize", index: cells.length, fit: finalizeIndependentRoomBand(prepared, cells) };
+      const state = parseRoomHeatFitState(raw.heat_state, cells.length);
+      const step = advanceIndependentRoomBandCell(prepared, cells.length, state);
+      return step.cell ? { phase: "cell", index: cells.length, cell: step.cell } : {
+        phase: "iteration", index: cells.length, heat_state: step.state };
+    })();
     const algorithmElapsed = performance.now() - algorithmStarted;
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(result))));
     return Response.json({ qualification: "test_room_band_step", ...result,

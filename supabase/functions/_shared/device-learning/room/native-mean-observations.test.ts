@@ -268,11 +268,18 @@ Deno.test("too few mean observations cannot interpolate more fitted unknowns int
   assertEquals(fitRoomMeans(rows).ok, false);
 });
 
-Deno.test("an algebraic point fit does not publish when its finite-family AICc is undefined", () => {
-  const result = fitIndependentRoomBand(plant([3600], 8, 0).rows, () => true).result;
-  assert(!result.ok);
-  assertEquals(result.reason, "response_unresolved");
-  assertEquals(result.learning_evidence!.response_selection!.unavailable_reason, "finite_score_undefined");
+Deno.test("a sparse empirical fit is published with limited-evidence warnings instead of an undefined AICc gate", () => {
+  const truth = plant([3600], 8, 0);
+  const result = fitIndependentRoomBand(truth.rows, () => true).result;
+  assert(result.ok);
+  assert(result.model.response_family !== "equilibrium");
+  // Eight observations support an empirical response, not precise recovery
+  // of the generating plant's individual coefficients.
+  assert(result.model.gain_c_per_wh > 0 && Number.isFinite(result.model.gain_c_per_wh));
+  assertEquals(result.model.sample_count, truth.rows.length - 1);
+  assertEquals(result.learning_evidence!.observation_intervals, truth.rows.length);
+  assertEquals(result.learning_evidence!.response_selection!.criterion, "regularized_marginal_bic");
+  assert(result.warnings?.includes("insufficient_samples"));
 });
 
 Deno.test("memoryless observations identify equilibrium ratios, not an arbitrary enormous finite exchange", () => {
@@ -349,10 +356,19 @@ for (const lag of [1, 2]) Deno.test(`one late observed heating pulse can identif
     const house = 21 + .1 * Math.sin(i / 14), outdoor = -3 + .3 * Math.sin(i / 13), watts = i === 180 ? 800 : 0;
     let integral = 0;
     for (let second = 0; second < 3600; second++) {
-      const rate = .0015 * delivered + .03 * (outdoor - temperature) + .02 * (house - temperature) + .6;
-      integral += temperature + rate / 7200;
-      temperature += rate / 3600;
-      delivered += (watts - delivered) / lag / 3600;
+      // Integrate the continuous plant and its mean independently with RK4.
+      // Euler's heater step changes the actual time constant off the tested
+      // lag grid and can create a fictitious deterministic extra-heat tail.
+      const rate = (t: number, d: number) => [.0015 * d + .03 * (outdoor - t) + .02 * (house - t) + .6,
+        (watts - d) / lag];
+      const dt = 1 / 3600, a = rate(temperature, delivered);
+      const b = rate(temperature + a[0] * dt / 2, delivered + a[1] * dt / 2);
+      const c = rate(temperature + b[0] * dt / 2, delivered + b[1] * dt / 2);
+      const d = rate(temperature + c[0] * dt, delivered + c[1] * dt);
+      integral += (temperature + 2 * (temperature + a[0] * dt / 2) +
+        2 * (temperature + b[0] * dt / 2) + temperature + c[0] * dt) / 6;
+      temperature += dt * (a[0] + 2 * b[0] + 2 * c[0] + d[0]) / 6;
+      delivered += dt * (a[1] + 2 * b[1] + 2 * c[1] + d[1]) / 6;
     }
     rows.push({ start_ms: i * 3600000, duration_s: 3600, room_c: integral / 3600,
       house_c: house, outdoor_c: outdoor, heat_w: watts, cooling: false, solar_w_per_m2: null });

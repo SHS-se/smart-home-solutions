@@ -7,7 +7,7 @@ import { encodeRoomBandFitCapture } from "../supabase/functions/_shared/device-m
 import { createDeviceLearningProbe } from "../supabase/functions/_shared/device-learning-probe.ts";
 import {
   evaluateRoomBandFiniteTrial, parseRoomBandFitCells, prepareIndependentRoomBand, ROOM_BAND_FIT_CELL_COUNT,
-  type PreparedIndependentRoomBand, type RoomBandFitCell,
+  type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState,
 } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
 import { heatingBand } from "../supabase/functions/_shared/planner/heating-bands.ts";
 import { PROBE_PROJECT, testProbeServiceKey } from "./planner-probe-auth.ts";
@@ -35,26 +35,35 @@ const differingStages = new Set<number>();
 const profileChoices = new Set<number>();
 let localDesign: PreparedIndependentRoomBand | undefined;
 interface Result {
-  qualification: string; phase: "cell" | "finalize"; index: number; cell?: RoomBandFitCell; fit?: unknown;
+  qualification: string; phase: "cell" | "finalize" | "iteration"; heat_state?: RoomHeatFitState; index: number; cell?: RoomBandFitCell; fit?: unknown;
   capture_sha256: string; result_sha256: string; row_count: number; runtime: string;
   handler_elapsed_ms: number; algorithm_elapsed_ms: number;
 }
 const results: Result[] = [];
 const measurements: Result[] = [];
-function payload(prefix: number, values = cells) {
+function payload(prefix: number, values = cells, heat_state: RoomHeatFitState | null = null) {
   return JSON.stringify({ kind: "room_band_step", from_at, band_c, ratedPowerW,
-    capture: { base64, sha256 }, cells: values.slice(0, prefix) });
+    capture: { base64, sha256 }, cells: values.slice(0, prefix), heat_state });
 }
 async function run(prefix: number, repeat: number): Promise<Result> {
   const body = payload(prefix);
-  const expectedResponse = await probe(new Request(url, { method: "POST", headers, body: payload(prefix, localCells) }));
-  assertEquals(expectedResponse.status, 200);
-  const expected: Result = await expectedResponse.json();
-  const response = localOnly ? expectedResponse : await fetch(url, {
-    method: "POST", headers, body, signal: AbortSignal.timeout(15_000),
-  });
-  const actual: Result = localOnly ? expected : await response.json();
-  assertEquals(response.status, 200, `Room stage ${prefix} HTTP failure: ${JSON.stringify(actual)}`);
+  const execute = async (hosted: boolean, values: RoomBandFitCell[]) => {
+    let state: RoomHeatFitState | null = null, maximumHandler = 0, maximumAlgorithm = 0;
+    for (let iteration = 0; iteration < 10000; iteration++) {
+      const request = new Request(url, { method: "POST", headers, body: payload(prefix, values, state),
+        signal: AbortSignal.timeout(15_000) });
+      const response = hosted ? await fetch(request) : await probe(request);
+      const result: Result = await response.json();
+      assertEquals(response.status, 200, `Room stage ${prefix} HTTP failure: ${JSON.stringify(result)}`);
+      maximumHandler = Math.max(maximumHandler, result.handler_elapsed_ms);
+      maximumAlgorithm = Math.max(maximumAlgorithm, result.algorithm_elapsed_ms);
+      if (result.phase !== "iteration") return { ...result, handler_elapsed_ms: maximumHandler, algorithm_elapsed_ms: maximumAlgorithm };
+      state = result.heat_state!;
+    }
+    throw new Error("Bounded room numerical iterations did not finish");
+  };
+  const expected = await execute(false, localCells);
+  const actual = localOnly ? expected : await execute(true, cells);
   assertEquals(actual.qualification, "test_room_band_step");
   assertEquals(actual.capture_sha256, sha256);
   assertEquals(actual.row_count, rows.length);

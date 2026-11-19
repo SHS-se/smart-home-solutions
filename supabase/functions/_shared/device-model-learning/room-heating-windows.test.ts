@@ -90,7 +90,7 @@ function database(windows: Window[], rows: ThermalQuarterRow[]) {
         const selected = rows.filter(row => row.start_ts >= String(args.p_from) && row.start_ts < String(args.p_to));
         return Promise.resolve({ data: compactCapture(selected), error });
       }
-      if (["get_energy_room_passive_heat", "get_energy_doorway_probes"].includes(name)) return Promise.resolve({ data: [], error });
+      if (["get_energy_room_operation_facts", "get_energy_room_passive_heat", "get_energy_doorway_probes"].includes(name)) return Promise.resolve({ data: [], error });
       throw new Error(`Unexpected RPC ${name}`);
     },
     from(name: string) {
@@ -232,7 +232,7 @@ Deno.test("historical windows add bands while retaining installed reference coef
 Deno.test("a failed history read never marks its window attempted", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10:2026-01");
   const db = database([candidate], rows);
-  for (const operation of ["get_energy_room_heating_fit_windows", "get_energy_room_thermal_interval_capture"]) {
+  for (const operation of ["get_energy_room_heating_fit_windows", "get_energy_room_thermal_interval_capture", "get_energy_room_operation_facts"]) {
     db.fail(operation);
     await assertRejects(async () => await fitStoredRoomHeating(db, "home", "customer", "room", context, undefined, null, now),
       Error, `${operation}: synthetic read failed`);
@@ -630,6 +630,7 @@ Deno.test("native chunk captures preserve mixed interval durations and read each
   let running = 0, maxRunning = 0;
   const model = history(start, 1)[0];
   const db = { async rpc(name: string, args: Record<string, string>) {
+    if (name === "get_energy_room_operation_facts") return { data: [], error: null };
     assertEquals(name, "get_energy_room_thermal_interval_capture");
     assertEquals(args.p_room_key, "room");
     const selected = rows.filter(row => row.start_ts >= args.p_from &&

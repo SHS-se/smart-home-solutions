@@ -2,7 +2,7 @@ import type { RoomMeanQuarter } from "../device-learning/room/mean-observations.
 
 const HISTORY_SECONDS = 400 * 86_400;
 const MAX_ROWS = HISTORY_SECONDS / 900;
-const ROW_BYTES = 54;
+const ROW_BYTES = 70;
 const MAX_BASE64_CHARS = 4 * Math.ceil(MAX_ROWS * ROW_BYTES / 3);
 const DURATION = [undefined, 900, 3600] as const;
 const COOLING = [null, false, true] as const;
@@ -37,6 +37,14 @@ export async function encodeRoomBandFitCapture(rows: readonly RoomMeanQuarter[],
       duration < 0 || cooling < 0 || attributed < 0) throw new Error("Invalid room band capture interval");
     view.setUint32(at, offset, true);
     bytes[at + 4] = duration | cooling << 2 | attributed << 4;
+    if (row.operation_fact !== undefined) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.operation_fact)) {
+        throw new Error("Invalid room operation fact identity");
+      }
+      bytes[at + 4] |= 0x40;
+      const hex = row.operation_fact.replaceAll("-", "");
+      for (let j = 0; j < 16; j++) bytes[at + 54 + j] = parseInt(hex.slice(j * 2, j * 2 + 2), 16);
+    }
     let presence = row.band_forcing_c_per_h === undefined ? FORCING_ABSENT : 0;
     for (let j = 0; j < MEASUREMENTS.length; j++) {
       const field = MEASUREMENTS[j], value = row[field];
@@ -67,7 +75,7 @@ export async function decodeRoomBandFitCapture(base64: string, fromAt: string, s
     const offset = view.getUint32(at, true), start_ms = origin + offset * 1000;
     const tags = bytes[at + 4], presence = bytes[at + 5];
     const duration = tags & 3, cooling = (tags >> 2) & 3, attributed = (tags >> 4) & 3;
-    if (start_ms < from || offset >= HISTORY_SECONDS || tags > 0x3f || presence > 0x7f ||
+    if (start_ms < from || offset >= HISTORY_SECONDS || tags > 0x7f || presence > 0x7f ||
       duration === 3 || cooling === 3 || attributed === 3 || ((presence & FORCING_ABSENT) && (presence & 0x20))) {
       throw new Error("Invalid room band capture interval");
     }
@@ -75,6 +83,10 @@ export async function decodeRoomBandFitCapture(base64: string, fromAt: string, s
     if (readings.some(value => value !== null && !Number.isFinite(value))) throw new Error("Invalid room band capture measurement");
     const [room_c, outdoor_c, house_c, solar_w_per_m2, heat_w, band_forcing_c_per_h] = readings;
     const row: RoomMeanQuarter = { start_ms, room_c, outdoor_c, house_c, solar_w_per_m2, heat_w, cooling: COOLING[cooling] };
+    const operation = Array.from(bytes.subarray(at + 54, at + 70), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (tags & 0x40) row.operation_fact = operation.slice(0, 8) + "-" + operation.slice(8, 12) + "-" +
+      operation.slice(12, 16) + "-" + operation.slice(16, 20) + "-" + operation.slice(20);
+    else if (operation !== "0".repeat(32)) throw new Error("Unexpected room operation fact identity");
     if (duration !== 0) row.duration_s = DURATION[duration];
     if (attributed !== 0) row.heat_attributed = ATTRIBUTED[attributed];
     if (!(presence & FORCING_ABSENT)) row.band_forcing_c_per_h = band_forcing_c_per_h;

@@ -44,6 +44,25 @@ reference projections and the benchmark are not a second executable planner.
 Rust remains the sole search engine. The independently pinned benchmark is
 not changed by this extraction.
 
+Heating-band learning jointly represents positive, persistent unexplained heat
+in each response family's interval-mean coordinates. This is statistical
+attribution, not a measured fireplace input or an inferred observed HVAC mode.
+A source-qualified, dated operating fact can identify heating/off/fan history
+without changing its raw mode flag. Missing electrical observations stay missing.
+Clock-time persistence, kernel-scaled forcing and interval-specific noise preserve
+native hourly and quarter-hour observations. Penalized observed marginal
+likelihood selects the response; chronological prediction remains a diagnostic.
+A proper scaled inverse-chi-squared variance prior with one degree of freedom
+prevents the mixture's unbounded zero-noise likelihood. Its empirical reference
+is the pooled mean-square observed temperature change, fixed per band and
+training/full partition across every response family and lag. This reference
+measures total observed variation, not sensor precision. The same regularization
+and noise classes apply to the Gaussian baseline and additional-heat model.
+The planner receives the fitted heater response and never assumes future
+unmetered heat. Published evidence contains aggregates; interval attribution
+traces are ephemeral diagnostic output. Bounded numerical iterations share the
+room's existing immutable capture, lease fence and atomic publication.
+
 ### Capture and publication
 
 ```ts

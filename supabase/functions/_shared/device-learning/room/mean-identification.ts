@@ -12,7 +12,13 @@ export interface RoomIntegratorResponse {
 }
 
 export interface RoomResponseSelection {
-  criterion: "conditional_aicc";
+  criterion: "conditional_aicc" | "chronological_predictive_likelihood" | "regularized_marginal_bic";
+  finite_marginal_bic?: number | null;
+  equilibrium_marginal_bic?: number | null;
+  integrator_marginal_bic?: number | null;
+  finite_predictive_nll?: number | null;
+  equilibrium_predictive_nll?: number | null;
+  integrator_predictive_nll?: number | null;
   selected: "finite_response" | "equilibrium_response" | "integrator_response" | "unavailable";
   observation_pairs: number;
   finite_parameters: number | null;

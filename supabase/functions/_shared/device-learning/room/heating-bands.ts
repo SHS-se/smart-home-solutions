@@ -1,3 +1,4 @@
+import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
 import { fitIndependentRoomBand, type RoomMeanQuarter } from "./mean-observations.ts";
 import { roomIntervalSeconds } from "./mean-evidence.ts";
 import { heatingBand, publishHeatingBand, type RoomHeatingBand, type RoomHeatingBands } from "../../planner/heating-bands.ts";
@@ -13,7 +14,7 @@ export function advanceRoomHeatingBands(
   const rows = observations.filter(row => row.start_ms >= Date.parse(library.since));
   const newest = new Map<number, number>();
   for (const row of rows) {
-    if (row.outdoor_c == null || row.room_c == null || row.heat_w == null || row.cooling !== false) continue;
+    if (row.outdoor_c == null || row.room_c == null || row.heat_w == null || !roomHeatingDirectionKnown(row)) continue;
     if (row.heat_w > 0) newest.set(heatingBand(row.outdoor_c), row.start_ms);
   }
   const eligible = [...newest].filter(([band, at]) => at > Date.parse(library.attempted[band] ?? library.since))

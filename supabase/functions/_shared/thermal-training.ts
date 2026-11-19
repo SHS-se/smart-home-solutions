@@ -75,6 +75,7 @@ export interface ThermalQuarterRow {
   start_ts: string;
   room_temperature_c: number | null;
   cooling: boolean | null;
+  operation_fact?: string;
   duration_s?: 900 | 3600;
   source?: string;
   heat_attributed?: boolean;
@@ -98,6 +99,7 @@ export const thermalQuarter = (row: ThermalQuarterRow): RoomMeanQuarter => ({
   solar_w_per_m2: reading(row.solar_w_per_m2),
   heat_w: reading(row.heat_w),
   cooling: row.cooling,
+  ...(row.operation_fact ? { operation_fact: row.operation_fact } : {}),
   duration_s: row.duration_s ?? 900,
   heat_attributed: row.heat_attributed ?? false,
 });

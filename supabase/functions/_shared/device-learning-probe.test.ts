@@ -75,7 +75,13 @@ Deno.test("room numerical probe computes exactly one production cell and finaliz
     return result;
   };
   for (let index = 0; index < ROOM_BAND_FIT_CELL_COUNT; index++) {
-    const result = await run();
+    let result = await run();
+    for (let iteration = 0; result.phase === "iteration" && iteration < 1000; iteration++) {
+      const response = await probe(new Request("https://probe.test", { method: "POST", headers: { authorization: "Bearer private" },
+        body: JSON.stringify({ kind: "room_band_step", from_at, band_c: 0, ratedPowerW: 800,
+          capture: { base64, sha256 }, cells, heat_state: result.heat_state }) }));
+      assertEquals(response.status, 200); result = await response.json();
+    }
     assertEquals(result.phase, "cell");
     assertEquals(result.index, index);
     assertEquals(result.cell, fitIndependentRoomBandCell(prepared, index));

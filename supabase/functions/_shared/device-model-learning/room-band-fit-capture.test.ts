@@ -13,11 +13,12 @@ Deno.test("room fit capture retains original mixed interval means and nullable t
     { ...basic, start_ms: start + 900_000, duration_s: 900, room_c: null, house_c: null, heat_w: null,
       cooling: null, band_forcing_c_per_h: null, heat_attributed: true },
     { ...basic, start_ms: start + 3_600_000, duration_s: 3600, outdoor_c: null, solar_w_per_m2: null,
-      heat_w: 253.315, band_forcing_c_per_h: .000000001, cooling: true, heat_attributed: false },
+      heat_w: 253.315, band_forcing_c_per_h: .000000001, cooling: true, heat_attributed: false,
+      operation_fact: "01234567-89ab-4cde-8f01-23456789abcd" },
   ];
   const capture = await encodeRoomBandFitCapture(rows, from);
   assertEquals(capture.row_count, 3);
-  assertEquals(capture.base64.length, 216);
+  assertEquals(capture.base64.length, 280);
   const decoded = await decodeRoomBandFitCapture(capture.base64, from, capture.sha256);
   assertEquals(decoded, rows);
   assertEquals(Object.is(decoded[0].solar_w_per_m2, -0), true);
@@ -37,7 +38,7 @@ Deno.test("room fit capture digest changes on explicit missing forcing or change
 });
 
 Deno.test("room fit transport enforces interval flags even when the digest matches", async () => {
-  const bytes = new Uint8Array(54);
+  const bytes = new Uint8Array(70);
   bytes[4] = 3; // Reserved resolution code.
   const base64 = btoa(String.fromCharCode(...bytes));
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));

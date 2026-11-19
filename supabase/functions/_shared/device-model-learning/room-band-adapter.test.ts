@@ -52,6 +52,7 @@ function fixture(passive = false) {
       afterCapture();
       return Promise.resolve({ data, error: null });
     }
+    if (name === "get_energy_room_operation_facts") return Promise.resolve({ data: [], error: null });
     if (name === "get_energy_room_passive_heat") return Promise.resolve({ data: passive ? [{
       room_key: "room", device_key: "synthetic-passive", quarters: Array.from({ length: rows.length * 4 },
         (_, i) => [start + i * hour / 4, passiveWatts]),

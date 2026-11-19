@@ -1,3 +1,5 @@
+import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
+import { initializeExternalHeat, inferExternalHeat, updateExternalHeat, type ExternalHeatParameters, type ExternalHeatResidual } from "./external-heat.ts";
 import { MeanFeatureWorkspace } from "./mean-features.ts";
 import { compareFiniteRoomResponse, conditionalAicc, type RoomResponseSelection } from "./mean-identification.ts";
 import { solveNonnegativeNuisance } from "./mean-nuisance.ts";
@@ -27,19 +29,21 @@ export interface RoomMeanQuarter {
   /** Measured mean electrical input; null means unobserved, never OFF. */
   heat_w: number | null;
   cooling: boolean | null;
+  /** Dated, source-qualified direction evidence, separate from observed mode. */
+  operation_fact?: string;
   /** Explicit shared-meter attribution, with raw totals retained upstream. */
   heat_attributed?: boolean;
   band_forcing_c_per_h?: number | null;
 }
 export const ROOM_MEAN_LEARNING_METHOD = "interval_mean_transition_holdout_v1" as const;
-export const ROOM_MEAN_IMPLEMENTATION = "native_interval_qr_v2" as const;
+export const ROOM_MEAN_IMPLEMENTATION = "native_interval_qr_v3" as const;
 export const ROOM_EXCHANGE_FAMILY = "house_outdoor_solar_v1" as const;
 export interface RoomLearningEvidence {
   method: typeof ROOM_MEAN_LEARNING_METHOD;
   family: typeof ROOM_EXCHANGE_FAMILY;
   implementation?: typeof ROOM_MEAN_IMPLEMENTATION;
   observation: "quarter_mean" | "interval_mean";
-  selection: "chronological_transition_mse";
+  selection: "chronological_transition_mse" | "chronological_predictive_likelihood" | "regularized_marginal_bic";
   training_pairs: number;
   validation_pairs: number;
   validation_mse_c2: number | null;
@@ -52,8 +56,25 @@ export interface RoomLearningEvidence {
   residual_degrees_of_freedom?: number;
   attributed_heater_intervals?: number;
   response_selection?: RoomResponseSelection;
+  operation_evidence?: { constrained_intervals: number; fan_or_cooling_flag_intervals: number; revisions: string[] };
+  additional_heat?: { method: "positive_residual_hmm_v2"; selected: boolean; iterations: number; converged: boolean; failure: RoomObservationFit["failure"];
+    parameters: ExternalHeatParameters; validation_nll: number | null; plain_validation_nll: number | null;
+    expected_intervals: number; expected_hours: number; episode_count: number;
+    mean_forcing: number; forcing_unit: "C/h" | "C"; heater_equivalent_wh: number | null;
+    clean_noise_c: number;
+    variance_regularization: { family: "scaled_inverse_chi_squared"; degrees_of_freedom: 1;
+      reference_c2: number; source: "pooled_observed_transition_mean_square" };
+    prediction_error_scope: "heater_only_no_future_external_heat" };
+
 }
-export type RoomMeanFitResult<Model extends ThermalZoneModel = ThermalZoneModel> = ThermalFitResult<Model> & { learning_evidence?: RoomLearningEvidence };
+export interface RoomHeatAttributionInterval {
+  from_ms: number; to_ms: number; probability: number; forcing: number; forcing_unit: "C/h" | "C"; heat_w: number;
+}
+export type RoomMeanFitResult<Model extends ThermalZoneModel = ThermalZoneModel> = ThermalFitResult<Model> & {
+  learning_evidence?: RoomLearningEvidence;
+  /** Ephemeral diagnostic; publication retains aggregates, never this trace. */
+  additional_heat_intervals?: RoomHeatAttributionInterval[];
+};
 const finite = (v: number | null): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** Heating input's contribution to the change between adjacent quarter means. */
@@ -68,7 +89,11 @@ interface Term extends Equation { index: number; delivered: number }
 interface Design { system: Equation[]; count: number }
 const RESPONSE_FAMILIES = ["finite", "equilibrium", "integrator"] as const;
 type ResponseFamily = typeof RESPONSE_FAMILIES[number];
-interface RoomBandFitSummary { k: number; beta: number[]; mse: number; n: number; dof: number }
+export interface RoomObservationFit {
+  kind: "gaussian" | "additional_heat";
+  parameters: ExternalHeatParameters; iterations: number; converged: boolean; failure: "iteration_limit" | "likelihood_decreased" | "profile_unresolved" | null; nll: number; objective: number; initial: [number, number][];
+}
+interface RoomBandFitSummary { k: number; beta: number[]; mse: number; n: number; dof: number; observation_fit?: RoomObservationFit }
 interface FitEvaluation extends RoomBandFitSummary {
   lag: number;
   solar: boolean;
@@ -90,6 +115,7 @@ export interface RoomBandFitCell {
   lag_h: number;
   partition: "training" | "full";
   fits: Record<ResponseFamily, RoomBandFitSummary | null>;
+  additional_heat: Record<ResponseFamily, RoomBandFitSummary | null>;
 }
 
 interface BandFit {
@@ -128,12 +154,12 @@ function visitTransitions(rows: RoomMeanQuarter[], from: number, lag: number, so
     const q = rows[i], next = rows[i + 1];
     const currentClass = roomIntervalSeconds(q) === 900 ? 0 : 1;
     const nextClass = roomIntervalSeconds(next) === 900 ? 0 : 1;
-    const powerKnown = finite(q.heat_w) && q.heat_w >= 0 && q.cooling === false;
+    const powerKnown = finite(q.heat_w) && q.heat_w >= 0 && roomHeatingDirectionKnown(q);
     const contiguous = next.start_ms === q.start_ms + roomIntervalSeconds(q) * 1000;
     const sameBand = !band || (finite(q.outdoor_c) && finite(next.outdoor_c) &&
       band.outdoor(q.outdoor_c) && band.outdoor(next.outdoor_c));
     if (powerKnown && contiguous && finite(next.heat_w) && next.heat_w >= 0 &&
-      finite(q.room_c) && finite(next.room_c) && next.cooling === false &&
+      finite(q.room_c) && finite(next.room_c) && roomHeatingDirectionKnown(next) &&
       finite(q.house_c) && finite(next.house_c) && finite(q.outdoor_c) && finite(next.outdoor_c) &&
       (!solar || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2))) &&
       (!band || (sameBand && q.band_forcing_c_per_h !== null && next.band_forcing_c_per_h !== null))) {
@@ -157,14 +183,17 @@ function transitionPairs(k: number, lag: number) {
     : roomMeanPair(current, next)));
 }
 
-const FEATURE_WIDTH = 14;
+const FEATURE_WIDTH = 15;
 
 /** Compress each lag once for exchange-profile evaluation. Candidate fits
  * keep only coefficients and initial states, with no saved raw transitions. */
 function prepareDesign(rows: RoomMeanQuarter[], lag: number, solar: boolean, band?: BandFit,
-  workspace = new MeanFeatureWorkspace(rows.length, FEATURE_WIDTH)): (k: number) => Design {
+  workspace = new MeanFeatureWorkspace(rows.length, FEATURE_WIDTH), latent?: {
+    mean: Map<number, number>; variance: Map<number, number>; precision: Map<number, number>;
+  }): (k: number) => Design {
   workspace.reset();
   const values = Array<number>(FEATURE_WIDTH).fill(0);
+  const latentVariance = new Float64Array(4);
   visitTransitions(rows, 0, lag, solar, band, (index, segment, delivered, initialShare, pairIndex) => {
     const q = rows[index], next = rows[index + 1];
     values[0] = delivered;
@@ -181,7 +210,11 @@ function prepareDesign(rows: RoomMeanQuarter[], lag: number, solar: boolean, ban
     values[11] = next.house_c!;
     values[12] = band ? q.band_forcing_c_per_h ?? 0 : 0;
     values[13] = band ? next.band_forcing_c_per_h ?? 0 : 0;
-    workspace.add(pairIndex, segment, lag > 0 ? initialShare : 0, values);
+    values[14] = latent?.mean.get(index) ?? 0;
+    const precision = latent?.precision.get(index) ?? 1, weight = Math.sqrt(precision);
+    latentVariance[pairIndex] += precision * (latent?.variance.get(index) ?? 0);
+    if (weight !== 1) for (let j = 0; j < FEATURE_WIDTH; j++) values[j] *= weight;
+    workspace.add(pairIndex, segment, lag > 0 ? initialShare * weight : 0, values);
   });
   const features = workspace.factor(), count = workspace.count;
   return k => {
@@ -192,7 +225,15 @@ function prepareDesign(rows: RoomMeanQuarter[], lag: number, solar: boolean, ban
         x: [pair.memory * v[0] + pair.currentHeat * v[1] + pair.nextHeat * v[2], (pair.L + pair.nextForcing) * v[3],
           pair.L * v[4] + pair.nextForcing * v[5], ...(solar ? [pair.L * v[6] + pair.nextForcing * v[7]] : [])],
         y: v[8] - pair.alpha * v[9] - exchangeScale * (pair.L * v[10] + pair.nextForcing * v[11]) -
-          (k === Infinity ? 0 : pair.L * v[12]) - (k === Infinity ? 0 : pair.nextForcing * v[13]) };
+          (k === Infinity ? 0 : pair.L * v[12]) - (k === Infinity ? 0 : pair.nextForcing * v[13]) -
+          (pair.L + pair.nextForcing) * v[14] };
+    });
+    // Expected latent-input variance changes with k through its observation
+    // kernel. Preserve it in Q as orthogonal residual-only equations; the
+    // physical solve must not gain by treating posterior means as measured.
+    latentVariance.forEach((variance, kind) => {
+      if (variance > 0) system.push({ segment: -1, z: 0, x: Array<number>(solar ? 4 : 3).fill(0),
+        y: (pairs[kind].L + pairs[kind].nextForcing) * Math.sqrt(variance) });
     });
     return { system, count };
   };
@@ -398,6 +439,8 @@ function heldOut(fit: FitEvaluation, rows: RoomMeanQuarter[], split: number, com
   const first = Math.max(0, split - 1);
   const initial = band ? new Map<number, number>() : new Map(fit.initial);
   const errors = new Float64Array(rows.length - first).fill(NO_ERROR);
+  const residuals = new Float64Array(errors.length), segments = new Int32Array(errors.length);
+  const exposures = new Float64Array(errors.length), durations = new Float64Array(errors.length), classes = Array<string>(errors.length);
   let count = 0;
   visitTerms(rows, fit, offset, band, t => {
     if (t.index < first) return;
@@ -411,10 +454,15 @@ function heldOut(fit: FitEvaluation, rows: RoomMeanQuarter[], split: number, com
       return;
     }
     if (!comparable[t.index]) return;
-    errors[t.index - first] = (residual - t.z * (initial.get(t.segment) ?? 0)) ** 2;
+    const error = residual - t.z * (initial.get(t.segment) ?? 0);
+    errors[t.index - first] = error ** 2;
+    residuals[t.index - first] = error; segments[t.index - first] = t.segment;
+    exposures[t.index - first] = t.x[1];
+    durations[t.index - first] = (roomIntervalHours(rows[t.index]) + roomIntervalHours(rows[t.index + 1])) / 2;
+    classes[t.index - first] = `${roomIntervalSeconds(rows[t.index])}/${roomIntervalSeconds(rows[t.index + 1])}`;
     count++;
   });
-  return count ? errors : null;
+  return count ? { errors, residuals, segments, exposures, durations, classes } : null;
 }
 
 function scoreCandidates<T extends { training: FitEvaluation | null }>(candidates: T[], rows: RoomMeanQuarter[],
@@ -428,14 +476,28 @@ function scoreCandidates<T extends { training: FitEvaluation | null }>(candidate
   // An unknown stored-heat state consumes its first transition. Compare on
   // the intersection so that no model is scored on an inferred state.
   const common: number[] = [];
-  for (let i = 0, n = withValidation[0]?.length ?? 0; i < n; i++) {
-    if (withValidation.every(values => values[i] !== NO_ERROR)) common.push(i);
+  for (let i = 0, n = withValidation[0]?.errors.length ?? 0; i < n; i++) {
+    if (withValidation.every(values => values.errors[i] !== NO_ERROR)) common.push(i);
   }
   return candidates.map((candidate, i) => {
     const values = errors[i];
+    let segment = -1, previous = -2, sourceSegment = -1;
+    const residuals: ExternalHeatResidual[] = common.map(index => {
+      const source = values?.segments[index] ?? -1;
+      if (index !== previous + 1 || source !== sourceSegment) segment++;
+      previous = index; sourceSegment = source;
+      return { residual_c: values?.residuals[index] ?? 0, segment,
+        forcing_scale: values?.exposures[index] ?? 1, duration_h: values?.durations[index] ?? 1,
+        noise_class: String(values?.classes[index] ?? "default") };
+    });
+    const training = candidate.training;
+    const nll = !values || !common.length || !training ? null : training.observation_fit
+      ? inferExternalHeat(residuals, stationaryExternalPrior(training.observation_fit.parameters), { causal: true }).nll
+      : common.reduce((sum, index) => sum + .5 * (Math.log(2 * Math.PI * Math.max(Number.EPSILON, training.mse)) +
+        values.errors[index] / Math.max(Number.EPSILON, training.mse)), 0);
     return { ...candidate, validation: {
-      mse: values && common.length ? common.reduce((sum, index) => sum + values[index], 0) / common.length : null,
-      count: values ? common.length : 0,
+      mse: values && common.length ? common.reduce((sum, index) => sum + values.errors[index], 0) / common.length : null,
+      count: values ? common.length : 0, nll,
     } };
   });
 }
@@ -445,7 +507,7 @@ function chronologicalSplit(rows: RoomMeanQuarter[], band?: BandFit): number {
   // A cold band may occur entirely in the final third of the calendar. Its
   // held-out period must follow its own earlier evidence, not other weather.
   const selected = rows.flatMap((row, index) => finite(row.outdoor_c) && band.outdoor(row.outdoor_c) &&
-    finite(row.room_c) && finite(row.house_c) && finite(row.heat_w) && row.heat_w >= 0 && row.cooling === false
+    finite(row.room_c) && finite(row.house_c) && finite(row.heat_w) && row.heat_w >= 0 && roomHeatingDirectionKnown(row)
     ? [{ index, hours: roomIntervalHours(row) }] : []);
   const target = selected.reduce((total, row) => total + row.hours, 0) * 2 / 3;
   let hours = 0;
@@ -523,7 +585,7 @@ function prepareMeanFit(quarters: RoomMeanQuarter[], ratedPowerW: number | null,
   // weather episodes. New warm-season samples cannot rewrite cold evidence.
   const include = band ? (row: RoomMeanQuarter) => finite(row.outdoor_c) && band.outdoor(row.outdoor_c) : undefined;
   const { rows, count } = prepareRoomMeanEvidence(observed, include);
-  const usable = rows.filter(r => finite(r.room_c) && finite(r.heat_w) && r.heat_w >= 0 && r.cooling === false &&
+  const usable = rows.filter(r => finite(r.room_c) && finite(r.heat_w) && r.heat_w >= 0 && roomHeatingDirectionKnown(r) &&
     (!include || include(r)));
   const covered = usable.filter(r => finite(r.house_c) && finite(r.outdoor_c));
   const withSun = covered.filter(r => finite(r.solar_w_per_m2));
@@ -538,8 +600,19 @@ function prepareMeanFit(quarters: RoomMeanQuarter[], ratedPowerW: number | null,
   const observation = rows.some(row => roomIntervalSeconds(row) !== 900) ? "interval_mean" as const : "quarter_mean" as const;
   const evidence = { implementation: ROOM_MEAN_IMPLEMENTATION, ...(count ? { estimated_temperature_readings: count } : {}),
     observation_intervals: covered.length, observation_hours: observationHours, heated_hours: heatedHours,
-    attributed_heater_intervals: covered.filter(row => row.heat_attributed).length };
+    attributed_heater_intervals: covered.filter(row => row.heat_attributed).length,
+    operation_evidence: { constrained_intervals: covered.filter(row => row.operation_fact !== undefined).length,
+      fan_or_cooling_flag_intervals: covered.filter(row => row.operation_fact !== undefined && row.cooling === true).length,
+      revisions: [...new Set(covered.flatMap(row => row.operation_fact ? [row.operation_fact] : []))].sort() } };
+  const referenceNoise = (input: RoomMeanQuarter[]) => {
+    let sum = 0, count = 0;
+    visitTransitions(input, 0, 0, solar, band, index => {
+      sum += (input[index + 1].room_c! - input[index].room_c!) ** 2; count++;
+    });
+    return Math.max(Number.EPSILON, count ? sum / count : 0);
+  };
   return { rows, trainingRows, validationRows, usable, solar, split, observation, evidence, hours, ratedPowerW,
+    noiseReference: { training: referenceNoise(trainingRows), full: referenceNoise(rows) },
     workspace: new MeanFeatureWorkspace(rows.length, FEATURE_WIDTH) };
 }
 
@@ -556,7 +629,9 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
   if (!candidates.length) return { ok: false, reason: usable.length ? "singular" : "insufficient_samples", sample_count: usable.length,
     learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation, selection: "chronological_transition_mse",
       training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null, ...evidence } };
-  const scored = scoreCandidates(candidates, rows, validationRows, split, solar, band);
+  const allScored = scoreCandidates(candidates, rows, validationRows, split, solar, band);
+  const isAdditional = (fit: FitEvaluation | null) => fit?.observation_fit?.kind === "additional_heat";
+  const scored = allScored.filter(c => !isAdditional(c.full));
   // Retain the finite family's held-out policy. The limiting family includes
   // EVERY lag under the family-selection criterion: a short holdout cannot
   // hide a better nested limiting comparator by picking another lag first.
@@ -603,19 +678,96 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
     if (responseSelection.selected === "equilibrium_response") chosen = equilibrium!;
     else if (responseSelection.selected === "integrator_response") chosen = integrator!;
   }
+  const marginalScore = (c: typeof allScored[number]) => {
+    const fit = c.full;
+    const nll = fit.observation_fit?.objective ?? .5 * fit.n * (Math.log(2 * Math.PI * Math.max(Number.EPSILON, fit.mse)) + 1);
+    // Physical coefficients, nuisance initial heater states, selected lag and
+    // noise variance; HMM adds external scale, two transitions and one initial
+    // probability. Integrate latent heat: never count fitted shifts as data.
+    const parameters = fit.n - fit.dof + 2 + (fit.observation_fit ? (fit.observation_fit.kind === "additional_heat" ? 4 : 0) +
+      Math.max(0, Object.keys(fit.observation_fit.parameters.sigma_by_class ?? {}).length - 1) : 0);
+    return 2 * nll + parameters * Math.log(fit.n);
+  };
+  // Full-data identification owns publication. An unavailable earlier fit
+  // makes chronological validation unavailable, never discards later data.
+  const latentScored = allScored.filter(c => isAdditional(c.full));
+  if (band) {
+    const comparable = allScored;
+    chosen = comparable.reduce((best, c) => marginalScore(c) < marginalScore(best) ? c : best);
+    const bestFamily = (family: ResponseFamily) => comparable.filter(c => c.family === family)
+      .reduce<(typeof comparable)[number] | null>((best, c) => !best || marginalScore(c) < marginalScore(best) ? c : best, null);
+    responseSelection = { ...responseSelection!, criterion: "regularized_marginal_bic",
+      finite_marginal_bic: bestFamily("finite") ? marginalScore(bestFamily("finite")!) : null,
+      equilibrium_marginal_bic: bestFamily("equilibrium") ? marginalScore(bestFamily("equilibrium")!) : null,
+      integrator_marginal_bic: bestFamily("integrator") ? marginalScore(bestFamily("integrator")!) : null,
+      selected: chosen.family === "finite" ? "finite_response" : chosen.family === "integrator" ? "integrator_response" : "equilibrium_response",
+      unavailable_reason: null, finite_predictive_nll: bestFamily("finite")?.validation.nll ?? null,
+      equilibrium_predictive_nll: bestFamily("equilibrium")?.validation.nll ?? null,
+      integrator_predictive_nll: bestFamily("integrator")?.validation.nll ?? null,
+      finite_lag_h: bestFamily("finite")?.full.lag ?? null,
+      equilibrium_lag_h: bestFamily("equilibrium")?.full.lag ?? null,
+      integrator_lag_h: bestFamily("integrator")?.full.lag ?? null,
+      steady_response: (() => { const f = bestFamily("equilibrium")?.full; return f ? {
+        heater_c_per_w: f.beta[0], outdoor_share: f.beta[2], offset_c: f.beta[1], solar_c_per_wm2: f.solar ? f.beta[3] : null } : null; })(),
+      integrator_response: (() => { const f = bestFamily("integrator")?.full; return f ? {
+        heater_c_per_wh: f.beta[0], background_c_per_h: f.beta[1], solar_c_per_h_per_wm2: f.solar ? f.beta[3] : null } : null; })(),
+      equilibrium_validation_pairs: bestFamily("equilibrium")?.validation.count ?? 0,
+      equilibrium_validation_mse_c2: bestFamily("equilibrium")?.validation.mse ?? null,
+      integrator_validation_pairs: bestFamily("integrator")?.validation.count ?? 0,
+      integrator_validation_mse_c2: bestFamily("integrator")?.validation.mse ?? null };
+  }
   const fit = chosen.full;
   const learning: RoomLearningEvidence = {
     method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation, selection: "chronological_transition_mse",
     training_pairs: chosen.training?.n ?? 0, validation_pairs: chosen.validation.count,
     validation_mse_c2: chosen.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
     ...evidence, residual_degrees_of_freedom: fit.dof,
+    ...(responseSelection?.criterion === "regularized_marginal_bic" ? { selection: "regularized_marginal_bic" as const } : {}),
     ...(responseSelection ? { response_selection: responseSelection } : {}),
   };
   if (responseSelection?.selected === "unavailable" &&
     (responseSelection.unavailable_reason !== "limiting_families_unidentified" || !selected)) {
     return { ok: false, reason: "response_unresolved", sample_count: fit.n, learning_evidence: learning };
   }
-  let initialStates = fit.initial;
+  let initialStates = fit.observation_fit ? new Map(fit.observation_fit.initial) : fit.initial;
+  let attribution: RoomHeatAttributionInterval[] | undefined;
+  if (latentScored.length) {
+    const diagnostics = isAdditional(fit) ? chosen : latentScored.reduce((best, c) => marginalScore(c) < marginalScore(best) ? c : best);
+    const full = diagnostics.full, external = full.observation_fit!;
+    const residuals = externalResiduals(rows, full, new Map(external.initial), band);
+    const inference = inferExternalHeat(residuals, external.parameters);
+    const episodes: { from_ms: number; to_ms: number; probability: number }[] = [];
+    let episode: typeof episodes[number] | undefined, mass = 0, length = 0;
+    residuals.forEach((residual, i) => {
+      const row = rows[residual.index], previous = residuals[i - 1];
+      if (inference.external_probability[i] > .5) {
+        if (!episode || !previous || previous.segment !== residual.segment || residual.index !== previous.index + 1) {
+          episode = { from_ms: row.start_ms, to_ms: row.start_ms, probability: 0 }; episodes.push(episode); mass = 0; length = 0;
+        }
+        episode.to_ms = rows[residual.index + 1].start_ms + roomIntervalSeconds(rows[residual.index + 1]) * 1000;
+        mass += inference.external_probability[i]; length++; episode.probability = mass / length;
+      } else episode = undefined;
+    });
+    const unit = full.family === "equilibrium" ? "C" as const : "C/h" as const;
+    attribution = residuals.map((residual, i) => ({ from_ms: rows[residual.index].start_ms,
+      to_ms: rows[residual.index + 1].start_ms, probability: inference.external_probability[i],
+      forcing: inference.expected_c[i] / residual.forcing_scale, forcing_unit: unit, heat_w: rows[residual.index].heat_w! }));
+    const hours = attribution.map(row => (row.to_ms - row.from_ms) / 3_600_000);
+    const observedHours = hours.reduce((sum, value) => sum + value, 0);
+    const integratedForcing = attribution.reduce((sum, row, i) => sum + row.forcing * hours[i], 0);
+    learning.additional_heat = { method: "positive_residual_hmm_v2", selected: isAdditional(fit),
+      iterations: external.iterations, converged: external.converged, failure: external.failure, parameters: external.parameters,
+      validation_nll: diagnostics.validation.nll,
+      plain_validation_nll: scored.find(c => c.family === diagnostics.family && c.full.lag === full.lag)?.validation.nll ?? null,
+      expected_intervals: inference.external_probability.reduce((sum, p) => sum + p, 0),
+      expected_hours: attribution.reduce((sum, row, i) => sum + row.probability * hours[i], 0),
+      episode_count: episodes.length, mean_forcing: integratedForcing / observedHours,
+      forcing_unit: unit, heater_equivalent_wh: full.beta[0] > 0 ? integratedForcing / full.beta[0] : null,
+      clean_noise_c: external.parameters.sigma_c,
+      variance_regularization: { family: "scaled_inverse_chi_squared", degrees_of_freedom: 1,
+        reference_c2: external.parameters.noise_reference_c2!, source: "pooled_observed_transition_mean_square" },
+      prediction_error_scope: "heater_only_no_future_external_heat" };
+  }
   if (!initialStates) {
     // Staged bands keep only scalar fits. Recover the selected family's own
     // nuisance states with exactly its original design and constraints.
@@ -662,7 +814,8 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
     heat_loss_w_per_c: gain > 0 ? fit.k / gain : null, time_constant_h: fit.k > 0 ? 1 / fit.k : null,
     heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
   };
-  return { ok: true, model, ...(warnings.length ? { warnings } : {}), learning_evidence: learning };
+  return { ok: true, model, ...(warnings.length ? { warnings } : {}), learning_evidence: learning,
+    ...(attribution ? { additional_heat_intervals: attribution } : {}) };
 }
 
 export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW?: number | null,
@@ -695,7 +848,7 @@ export type PreparedIndependentRoomBand = ReturnType<typeof prepareIndependentRo
 function fitSummary(fit: Fit | null): RoomBandFitSummary | null {
   if (!fit) return null;
   const { k, beta, mse, n, dof } = fit;
-  return { k, beta, mse, n, dof };
+  return { k, beta, mse, n, dof, ...(fit.observation_fit ? { observation_fit: fit.observation_fit } : {}) };
 }
 
 function prepareBandFitCell(prepared: PreparedIndependentRoomBand, index: number) {
@@ -708,14 +861,191 @@ function prepareBandFitCell(prepared: PreparedIndependentRoomBand, index: number
 }
 
 /** One cell shares its observation design across the three response families. */
-export function fitIndependentRoomBandCell(prepared: PreparedIndependentRoomBand, index: number): RoomBandFitCell {
+function plainRoomBandFitCell(prepared: PreparedIndependentRoomBand, index: number): RoomBandFitCell {
   const { cell, lag, rows, solar, band, design } = prepareBandFitCell(prepared, index);
-  return { ...cell, fits: {
+  return { ...cell, additional_heat: { finite: null, equilibrium: null, integrator: null }, fits: {
     finite: fitSummary(fitCandidate(rows, lag, solar, band, design)),
     equilibrium: fitSummary(estimate(design(Infinity), 1, lag, solar, band, "equilibrium")),
     // At k=0 both nonnegative exchange rates vanish, removing outdoor share.
     integrator: fitSummary(estimate(design(0), 0, lag, solar, { outdoor: band.outdoor, house: 0 }, "integrator")),
   } };
+}
+
+/** A cell's empirical additional-heat fit is a resumable ECM solve. One step
+ * performs one physical profile update, so a long historical fit never needs
+ * to complete its whole iteration path in one Edge invocation. */
+export interface RoomHeatFitState {
+  version: 2; index: number; cell: RoomBandFitCell; family_index: number;
+  working: RoomBandFitSummary | null; observation_kind: "gaussian" | "additional_heat";
+}
+const EXTERNAL_FIT_MAX_ITERATIONS = 200;
+const EXTERNAL_FIT_LOG_TOLERANCE = 1e-7;
+
+function stationaryExternalPrior(parameters: ExternalHeatParameters): ExternalHeatParameters {
+  const a = parameters.transition[0][1], b = parameters.transition[1][0], total = a + b;
+  return total > 0 ? { ...parameters, initial: [b / total, a / total] } : parameters;
+}
+
+function externalResiduals(rows: RoomMeanQuarter[], fit: FitEvaluation, initial: Map<number, number>, band?: BandFit) {
+  const result: (ExternalHeatResidual & { index: number; forcing_scale: number })[] = [];
+  let segment = -1, previous = -2, sourceSegment = -1;
+  visitTerms(rows, fit, 0, band, t => {
+    if (t.segment !== sourceSegment || t.index !== previous + 1) segment++;
+    sourceSegment = t.segment; previous = t.index;
+    result.push({ index: t.index, segment, forcing_scale: t.x[1],
+      duration_h: (roomIntervalHours(rows[t.index]) + roomIntervalHours(rows[t.index + 1])) / 2,
+      noise_class: `${roomIntervalSeconds(rows[t.index])}/${roomIntervalSeconds(rows[t.index + 1])}`,
+      residual_c: t.y - t.x.reduce((sum, x, j) => sum + x * fit.beta[j], 0) - t.z * (initial.get(t.segment) ?? 0) });
+  });
+  return result;
+}
+
+function parseObservationFit(value: unknown): RoomObservationFit {
+  const fields = fitRecord(value), parameters = fitRecord(fields?.parameters);
+  if (!fields || !parameters || Object.keys(fields).length !== 8 ||
+    (fields.kind !== "gaussian" && fields.kind !== "additional_heat") ||
+    (fields.failure !== null && fields.failure !== "iteration_limit" && fields.failure !== "likelihood_decreased" && fields.failure !== "profile_unresolved") ||
+    typeof fields.iterations !== "number" || !Number.isSafeInteger(fields.iterations) || fields.iterations < 0 ||
+    fields.iterations > EXTERNAL_FIT_MAX_ITERATIONS || typeof fields.converged !== "boolean" ||
+    typeof fields.nll !== "number" || !Number.isFinite(fields.nll) ||
+    typeof fields.objective !== "number" || !Number.isFinite(fields.objective) || !Array.isArray(fields.initial) ||
+    fields.initial.some(pair => !Array.isArray(pair) || pair.length !== 2 ||
+      !Number.isSafeInteger(pair[0]) || pair[0] < 0 || !Number.isFinite(pair[1]) || pair[1] < 0)) {
+    throw new Error("Invalid staged external heat fit");
+  }
+  // The numerical owner validates probabilities, scales and normalization.
+  inferExternalHeat([{ residual_c: 0, segment: 0 }], parameters as unknown as ExternalHeatParameters);
+  return { kind: fields.kind as RoomObservationFit["kind"], parameters: parameters as unknown as ExternalHeatParameters, iterations: fields.iterations,
+    converged: fields.converged, failure: fields.failure as RoomObservationFit["failure"], nll: fields.nll, objective: fields.objective, initial: fields.initial as [number, number][] };
+}
+
+export function parseRoomHeatFitState(value: unknown, index: number): RoomHeatFitState | null {
+  if (value == null) return null;
+  const fields = fitRecord(value), cell = fitRecord(fields?.cell), expected = BAND_CELL_GRID[index];
+  const fits = fitRecord(cell?.fits), additional = fitRecord(cell?.additional_heat);
+  if (!expected || !fields || Object.keys(fields).length !== 6 || fields.version !== 2 ||
+    (fields.observation_kind !== "gaussian" && fields.observation_kind !== "additional_heat") || fields.index !== index ||
+    typeof fields.family_index !== "number" || !Number.isInteger(fields.family_index) || fields.family_index < 0 || fields.family_index > 2 ||
+    !cell || Object.keys(cell).length !== 4 || cell.lag_h !== expected.lag_h || cell.partition !== expected.partition ||
+    !fits || Object.keys(fits).length !== 3 || !additional || Object.keys(additional).length !== 3) {
+    throw new Error("Invalid additional heat iteration checkpoint");
+  }
+  const decoded = (source: Record<string, unknown>) => ({ finite: parseFitSummary(source.finite, "finite"),
+    equilibrium: parseFitSummary(source.equilibrium, "equilibrium"), integrator: parseFitSummary(source.integrator, "integrator") });
+  const family = RESPONSE_FAMILIES[fields.family_index];
+  const working = parseFitSummary(fields.working, family);
+  if (working && !working.observation_fit) throw new Error("Missing additional heat iteration parameters");
+  return { version: 2, index, family_index: fields.family_index,
+    observation_kind: fields.observation_kind as RoomHeatFitState["observation_kind"], cell: { ...expected, fits: decoded(fits), additional_heat: decoded(additional) }, working };
+}
+
+function roomHeatFitMicrostep(prepared: PreparedIndependentRoomBand, index: number,
+  previous: RoomHeatFitState | null = null): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
+  const state: RoomHeatFitState = previous ? structuredClone(previous) : {
+    version: 2, index, cell: plainRoomBandFitCell(prepared, index), family_index: 0, working: null, observation_kind: "gaussian",
+  };
+  if (state.index !== index) throw new Error("Additional heat iteration belongs to another cell");
+  const { lag_h: lag, partition } = state.cell;
+  const rows = partition === "training" ? prepared.trainingRows : prepared.rows;
+  const { solar, band, workspace } = prepared;
+  while (state.family_index < RESPONSE_FAMILIES.length) {
+    const family = RESPONSE_FAMILIES[state.family_index], plain = state.cell.fits[family];
+    if (!plain) { state.family_index++; state.observation_kind = "gaussian"; continue; }
+    const physical = (latent?: Parameters<typeof prepareDesign>[5], fixed?: RoomBandFitSummary) => {
+      const design = prepareDesign(rows, lag, solar, band, workspace, latent);
+      const localBand = family === "integrator" ? { ...band, house: 0 } : band;
+      return fixed ? estimate(design(family === "equilibrium" ? Infinity : fixed.k), fixed.k, lag, solar, localBand, family)
+        : family === "finite" ? fitCandidate(rows, lag, solar, band, design)
+        : estimate(design(family === "equilibrium" ? Infinity : 0), family === "equilibrium" ? 1 : 0, lag, solar, localBand, family);
+    };
+    let working = state.working;
+    if (!working) {
+      const fit = plain.observation_fit ? { ...plain, family, lag, solar, roundoff: 0,
+        initial: new Map(plain.observation_fit.initial) } : physical(undefined, plain);
+      if (!fit) { state.family_index++; state.observation_kind = "gaussian"; continue; }
+      const residuals = externalResiduals(rows, fit, fit.initial, band);
+      if (!residuals.length) { state.family_index++; state.observation_kind = "gaussian"; continue; }
+      let parameters = initializeExternalHeat(residuals);
+      // A candidate-independent unit-information calibration regularizes the
+      // mixture's otherwise unbounded zero-noise likelihood. It describes
+      // observed transition variation, never measured sensor precision.
+      parameters.noise_reference_c2 = prepared.noiseReference[partition];
+      if (state.observation_kind === "gaussian") {
+        parameters.initial = [1, 0]; parameters.transition = [[1, 0], [0, 1]];
+      }
+      if (state.observation_kind === "gaussian" && fit.mse <= fit.roundoff) {
+        parameters = updateExternalHeat(residuals, parameters).parameters;
+        const exact = inferExternalHeat(residuals, parameters);
+        state.cell.fits[family] = { ...plain, observation_fit: { kind: "gaussian", parameters,
+          iterations: 1, converged: true, failure: null, nll: exact.nll, objective: exact.objective, initial: [...fit.initial] } };
+        state.family_index++; continue;
+      }
+      const initialInference = inferExternalHeat(residuals, parameters);
+      working = { ...plain, observation_fit: { kind: state.observation_kind, parameters, iterations: 0, converged: false, failure: null,
+        nll: initialInference.nll, objective: initialInference.objective, initial: [...fit.initial] } };
+    }
+    const evaluation: FitEvaluation = { ...working, family, lag, solar };
+    const external = working.observation_fit!;
+    const residuals = externalResiduals(rows, evaluation, new Map(external.initial), band);
+    const update = updateExternalHeat(residuals, external.parameters);
+    const latent = { mean: new Map<number, number>(), variance: new Map<number, number>(), precision: new Map<number, number>() };
+    residuals.forEach((residual, i) => {
+      const scale = residual.forcing_scale, mean = update.inference.expected_c[i] / scale;
+      latent.mean.set(residual.index, mean);
+      latent.variance.set(residual.index, Math.max(0, update.inference.second_moment_c2[i] / (scale * scale) - mean * mean));
+      const sigma = update.parameters.sigma_by_class?.[residual.noise_class!] ?? update.parameters.sigma_c;
+      latent.precision.set(residual.index, 1 / (sigma * sigma));
+    });
+    const next = physical(latent);
+    if (!next) {
+      const completed = { ...working, observation_fit: { ...external, failure: "profile_unresolved" as const, converged: false } };
+      if (state.observation_kind === "gaussian") { state.cell.fits[family] = completed; state.observation_kind = "additional_heat"; }
+      else { state.cell.additional_heat[family] = completed; state.family_index++; state.observation_kind = "gaussian"; }
+      state.working = null; continue;
+    }
+    const nextResiduals = externalResiduals(rows, next, next.initial, band);
+    const inference = inferExternalHeat(nextResiduals, update.parameters);
+    const iterations = external.iterations + 1;
+    const improvement = external.objective - inference.objective;
+    const arithmeticTolerance = Number.EPSILON * 64 * residuals.length * (1 + Math.abs(external.objective));
+    const decreased = improvement < -arithmeticTolerance;
+    const converged = !decreased && Math.abs(improvement) <= EXTERNAL_FIT_LOG_TOLERANCE * (1 + Math.abs(external.objective));
+    const failure = decreased ? "likelihood_decreased" as const :
+      !converged && iterations === EXTERNAL_FIT_MAX_ITERATIONS ? "iteration_limit" as const : null;
+    const summary: RoomBandFitSummary = { ...fitSummary(next)!,
+      mse: nextResiduals.reduce((sum, r) => sum + r.residual_c ** 2, 0) / nextResiduals.length,
+      observation_fit: { kind: state.observation_kind, parameters: update.parameters, iterations, converged, failure, nll: inference.nll, objective: inference.objective, initial: [...next.initial] } };
+    if (converged || failure !== null) {
+      const completed = decreased ? { ...working, observation_fit: {
+        ...external, failure: "likelihood_decreased" as const, converged: false } } : summary;
+      if (state.observation_kind === "gaussian") { state.cell.fits[family] = completed; state.observation_kind = "additional_heat"; }
+      else { state.cell.additional_heat[family] = completed; state.family_index++; state.observation_kind = "gaussian"; }
+      state.working = null;
+    } else state.working = summary;
+    if (state.family_index < RESPONSE_FAMILIES.length) return { cell: null, state };
+  }
+  return { cell: state.cell, state: null };
+}
+
+/** The elapsed budget bounds batches of pure numerical work; the capture
+ * and fence stay with the caller. A single physical profile is the atomic
+ * work unit, independently CPU-qualified on a full 400-day capture. */
+export function advanceIndependentRoomBandCell(prepared: PreparedIndependentRoomBand, index: number,
+  state: RoomHeatFitState | null = null): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
+  const started = performance.now();
+  let step = roomHeatFitMicrostep(prepared, index, state);
+  while (!step.cell && performance.now() - started < 200) step = roomHeatFitMicrostep(prepared, index, step.state);
+  return step;
+}
+
+/** Offline callers run exactly the same deterministic checkpoint steps. */
+export function fitIndependentRoomBandCell(prepared: PreparedIndependentRoomBand, index: number): RoomBandFitCell {
+  let state: RoomHeatFitState | null = null;
+  for (;;) {
+    const step = advanceIndependentRoomBandCell(prepared, index, state);
+    if (step.cell) return step.cell;
+    state = step.state;
+  }
 }
 
 /** Evaluate one exchange point for cross-runtime numerical qualification. */
@@ -733,7 +1063,7 @@ function fitRecord(value: unknown): Record<string, unknown> | null {
 function parseFitSummary(value: unknown, family: ResponseFamily): RoomBandFitSummary | null {
   if (value === null) return null;
   const fields = fitRecord(value);
-  if (!fields || Object.keys(fields).length !== 5) throw new Error("Invalid staged room band fit summary");
+  if (!fields || Object.keys(fields).length !== ("observation_fit" in fields ? 6 : 5)) throw new Error("Invalid staged room band fit summary");
   const { k, beta, mse, n, dof } = fields;
   if (typeof k !== "number" || !Number.isFinite(k) ||
     (family === "finite" ? k <= 0 : k !== (family === "equilibrium" ? 1 : 0)) ||
@@ -742,7 +1072,8 @@ function parseFitSummary(value: unknown, family: ResponseFamily): RoomBandFitSum
     typeof n !== "number" || !Number.isSafeInteger(n) || typeof dof !== "number" || !Number.isSafeInteger(dof) || dof <= 0 || n < dof) {
     throw new Error("Invalid staged room band fit summary");
   }
-  return { k, beta, mse, n, dof };
+  const observation_fit = fields.observation_fit === undefined ? undefined : parseObservationFit(fields.observation_fit);
+  return { k, beta, mse, n, dof, ...(observation_fit ? { observation_fit } : {}) };
 }
 
 /** Decode a stored prefix in production order. A null score is a completed fit. */
@@ -750,9 +1081,14 @@ export function parseRoomBandFitCells(input: unknown): RoomBandFitCell[] {
   if (!Array.isArray(input) || input.length > ROOM_BAND_FIT_CELL_COUNT) throw new Error("Invalid staged room band fit prefix");
   return Array.from(input, (entry, i) => {
     const cell = fitRecord(entry), expected = BAND_CELL_GRID[i], fits = fitRecord(cell?.fits);
-    if (cell?.lag_h !== expected.lag_h || cell?.partition !== expected.partition || Object.keys(cell).length !== 3 ||
+    if (cell?.lag_h !== expected.lag_h || cell?.partition !== expected.partition || Object.keys(cell).length !== 4 ||
       !fits || Object.keys(fits).length !== 3) throw new Error("Invalid staged room band fit cell");
-    return { ...expected, fits: {
+    const additional = fitRecord(cell.additional_heat);
+    if (!additional || Object.keys(additional).length !== 3) throw new Error("Invalid staged additional-heat fit");
+    return { ...expected, additional_heat: {
+      finite: parseFitSummary(additional.finite, "finite"), equilibrium: parseFitSummary(additional.equilibrium, "equilibrium"),
+      integrator: parseFitSummary(additional.integrator, "integrator"),
+    }, fits: {
       finite: parseFitSummary(fits.finite, "finite"),
       equilibrium: parseFitSummary(fits.equilibrium, "equilibrium"),
       integrator: parseFitSummary(fits.integrator, "integrator"),
@@ -770,8 +1106,8 @@ export function finalizeIndependentRoomBand(prepared: PreparedIndependentRoomBan
     if (training.lag_h !== lag || full.lag_h !== lag || training.partition !== "training" || full.partition !== "full") {
       throw new Error("Room band fit cells are out of order");
     }
-    for (const family of RESPONSE_FAMILIES) {
-      const trained = training.fits[family], complete = full.fits[family];
+    for (const kind of ["fits", "additional_heat"] as const) for (const family of RESPONSE_FAMILIES) {
+      const trained = training[kind][family], complete = full[kind][family];
       const columns = solar ? 4 : 3;
       if ((trained && trained.beta.length !== columns) || (complete && complete.beta.length !== columns)) {
         throw new Error("Room band fit cells have different observation designs");
