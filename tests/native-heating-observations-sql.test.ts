@@ -56,6 +56,15 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119001500_bound_room_history_reads.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119033000_preserve_cleaned_native_energy.sql"));
     await db.exec("SET check_function_bodies=true");
+    const originalWindows = (await db.query<{ definition: string }>(
+      "SELECT pg_get_functiondef('get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure) AS definition")).rows[0].definition;
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261119080000_reduce_heating_learning_spills.sql"));
+    const memorySettings = (await db.query<{ settings: string[] }>(`SELECT proconfig AS settings
+      FROM pg_proc WHERE oid IN (
+        'get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure,
+        'get_energy_room_thermal_interval_capture(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure)`)).rows;
+    assertEquals(memorySettings.length, 2);
+    assertEquals(memorySettings.every(row => row.settings.includes("work_mem=32MB")), true);
     const start = (await db.query<{ at: string }>("SELECT to_char(date_trunc('hour',now()-interval '1 day'),'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at")).rows[0].at;
     const end = new Date(Date.parse(start) + 3_600_000).toISOString();
     const row = { room_key: "room", source_key: source, device_statistics: { heater: "sensor.synthetic_energy" },
@@ -725,6 +734,12 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.query("UPDATE energy_optimisation_device_operating_points SET operating_points=jsonb_set(operating_points,'{versioned,pending_bands}','2')");
     assertEquals(await enqueue(), 1);
     assertEquals(await enqueue(), 0);
+    // Compare the optimized discovery against the previous canonical digest
+    // after exercising native corrections, dated lineage, probe changes and
+    // legacy gaps. A read optimization must not trigger model replacement.
+    const optimized = await window();
+    await db.exec(originalWindows);
+    assertEquals(await window(), optimized);
     await db.exec("SET ROLE anon");
     await assertRejects(intervals, Error, "permission denied");
     await assertRejects(draw, Error, "permission denied");
