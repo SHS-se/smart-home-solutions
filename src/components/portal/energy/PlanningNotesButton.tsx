@@ -18,6 +18,7 @@ export default function PlanningNotesButton({ warnings, charted }: {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const notes = actionablePlanningWarnings(warnings)
+    .filter(warning => warning.code !== 'ev_usage_history_estimated')
     .filter(warning => !(warning.code === 'comfort_shortfall' && charted.includes(warning.scope)));
   if (!notes.length) return null;
   const error = notes.some(warning => warning.severity === 'error');
