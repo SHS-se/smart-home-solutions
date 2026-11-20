@@ -63,6 +63,15 @@ unmetered heat. Published evidence contains aggregates; interval attribution
 traces are ephemeral diagnostic output. Bounded numerical iterations share the
 room's existing immutable capture, lease fence and atomic publication.
 
+Chronological likelihood uses the learned episode-entry distribution, advanced
+over the unscored prefix and scoring-mask gaps in native clock time. A scoring
+mask is not a new physical episode, and a residual used to infer heater storage
+cannot also condition the hidden-heat score. Evidence names this diagnostic
+policy as `validation_initial: learned_episode_elapsed_v1`; older unversioned
+likelihoods used a stationary prior and are not the same validation experiment.
+This diagnostic correction does not change physical fitting or marginal-BIC
+selection and does not invalidate completed numerical fits.
+
 ### Capture and publication
 
 ```ts
@@ -84,6 +93,14 @@ revision in one transaction and cannot write pool hardware or electrical fields.
 Room learning admits one worker invocation per home, with a fair turn between
 ready rooms. A successful band publication continues the same fenced job when
 ready seasonal windows remain; a new planning request is not required. The
+database fixes `room_history_to` once per room generation. Both its history
+ceiling and 400-day floor remain fixed across claims, retries and continuations;
+newer measurements stay stored for the next ordinary refit. Whole native
+intervals must end within that scope. Corrections and late arrivals inside the
+scope still qualify normally. Audit timestamps, solar retry readiness and
+leases use the current wall clock. Migration preserves in-flight captures and
+their numerical prefixes; this scope never restricts uploads or live planning.
+The
 worker releases its home reservation before the next window can be claimed,
 and lease expiry recovers a terminated continuation. Its separate reservation survives source changes that invalidate
 the ordinary job lease while an older history query is still running. The worker

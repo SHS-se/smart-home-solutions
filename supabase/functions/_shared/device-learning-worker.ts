@@ -1,6 +1,6 @@
 import { captureDeviceModels } from "./device-model-store.ts";
 import { fitStoredRoom } from "./device-model-learning/room.ts";
-import { runRoomHeatingLearning } from "./device-model-learning/room-band-run.ts";
+import { roomLearningClock, runRoomHeatingLearning } from "./device-model-learning/room-band-run.ts";
 import { fitStoredPool } from "./device-model-learning/pool.ts";
 import { fitStoredWeatherHeating } from "./device-model-learning/weather-heating.ts";
 import { fitStoredDevice } from "./device-model-learning/device.ts";
@@ -9,6 +9,7 @@ import { describeThrown } from "./ha-api-contract.ts";
 interface LearningClaim {
   id: string; home_id: string; customer_id: string; owner_kind: "room" | "pool" | "device"; owner_key: string;
   generation: number; fence: number;
+  room_history_to: string | null;
   room_fit_progress?: unknown;
   room_window_visits?: unknown;
   input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string; banded_heating?: boolean };
@@ -32,6 +33,8 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     claim = result.data;
     if (!claim) return Response.json({ claimed: false });
     const started = performance.now();
+    const wallNow = now();
+    const roomWork = claim.owner_kind === "room" ? { clock: roomLearningClock(claim.room_history_to, wallNow) } : null;
     const models = await captureDeviceModels(db, claim.home_id);
     const previous = claim.owner_kind === "room" ? models.rooms.find(row => row.room_key === claim!.owner_key)
       : claim.owner_kind === "device" ? models.devices.find(row => row.device_key === claim!.owner_key) : models.pool;
@@ -43,12 +46,13 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
       if (history.error) throw new Error(history.error.message);
       roomHeating = history.data ?? roomHeating;
     }
-    const roomStep = claim.owner_kind === "room" && roomHeating
-      ? await runRoomHeatingLearning(db, claim, roomHeating, previous ?? undefined, now()) : null;
+    const roomStep = roomWork && roomHeating
+      ? await runRoomHeatingLearning(db, claim, roomHeating, previous ?? undefined, roomWork.clock) : null;
     if (roomStep?.kind === "handled") return Response.json(roomStep.result);
-    const row = claim.owner_kind === "room"
+    const row = roomWork
       ? roomStep?.kind === "model" ? roomStep.model
-        : await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
+        : await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null,
+          roomWork.clock)
       : claim.owner_kind === "device"
       ? claim.input.weather_heating_binding
         ? await fitStoredWeatherHeating(db, claim.home_id, claim.customer_id, claim.owner_key,

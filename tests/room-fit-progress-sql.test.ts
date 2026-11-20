@@ -13,10 +13,11 @@ const metadata = { implementation: "synthetic-v1", binding: "synthetic-binding",
 const capture = btoa("synthetic-derived-intervals".repeat(12));
 interface Claim {
   id: string; generation: number; fence: number;
+  room_history_to: string | null;
   room_window_visits?: { binding: string; implementation: string; windows: Record<string, string> } | null;
   room_fit_progress: { metadata: object; cursor: number; cells: unknown[]; base_revision: number } | null;
 }
-async function database(admission = true, visits = true) {
+async function database(admission = true, visits = true, horizon = true) {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA private; CREATE SCHEMA net; CREATE SCHEMA cron; CREATE SCHEMA extensions;
@@ -61,6 +62,7 @@ async function database(admission = true, visits = true) {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261120003000_continue_pending_room_windows.sql"));
   if (admission) await db.exec(await Deno.readTextFile("supabase/migrations/20261119011000_room_learning_admission.sql"));
   if (visits) await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
+  if (horizon) await db.exec(await Deno.readTextFile("supabase/migrations/20261120004000_bound_room_learning_traversals.sql"));
   // The deployed lifecycle also admits device owners.
   await db.exec("ALTER TABLE private.energy_learning_jobs DROP CONSTRAINT energy_learning_jobs_owner_kind_check; ALTER TABLE private.energy_learning_jobs ADD CHECK(owner_kind IN ('room','pool','device'))");
   await db.exec(`SELECT configure_energy_device_learning('https://example.supabase.co');
@@ -468,6 +470,8 @@ Deno.test("a completed band automatically continues remaining room windows and s
   const db = await database(false, false);
   try {
     let j = await claim(db);
+    const historyTo = j.room_history_to;
+    assert(historyTo);
     assertEquals(await checkpoint(db,j,-1), true);
     for (let cursor=0;cursor<ROOM_BAND_FIT_CELL_COUNT;cursor++) { j=await claim(db); assertEquals(await checkpoint(db,j,cursor),true); }
     j=await claim(db);
@@ -478,6 +482,7 @@ Deno.test("a completed band automatically continues remaining room windows and s
     assertEquals(continuing,{pending:true,lease_until:null,finished_at:null});
     j=await claim(db);
     assert(j,"continuation is claimable without a planning request");
+    assertEquals(j.room_history_to, historyTo, "band publication cannot slide the generation's observation horizon");
     assertEquals(j.room_fit_progress,null);
     const done=await db.query<{ ok:boolean }>("SELECT publish_energy_device_learning($1,$2,$3,2,$4::jsonb) AS ok",[
       j.id,j.generation,j.fence,JSON.stringify({home_id:home,customer_id:home,room_key:"room",heating_bands:{binding:"synthetic-binding",active:[],pending_windows:0,
@@ -485,6 +490,33 @@ Deno.test("a completed band automatically continues remaining room windows and s
     assertEquals(done.rows[0].ok,true);
     assertEquals((await db.query("SELECT pending FROM private.energy_learning_jobs WHERE id=$1",[j.id])).rows,[{pending:false}]);
     assertEquals(await claim(db),null,"a drained traversal with a deferred solar retry must not restart itself");
+  } finally { await db.close(); }
+});
+
+for (const invalidTimestamp of ["not-a-date", "2025-01-02T00:00:00+99:00", "2025-01-01T00:00:00 Foo/Bar"]) Deno.test(`room horizon rollout preserves staged work with malformed scratch ${invalidTimestamp}`, async () => {
+  const db = await database(true, true, false);
+  try {
+    const j = await claim(db);
+    const staged = { capture: { attemptedAt: "2025-01-02T00:00:00Z", window: { to_at: "2025-01-02T00:15:00Z" } } };
+    assertEquals(await checkpoint(db, j, -1, 1, staged), true);
+    const invalid = await claim(db, other);
+    assertEquals(await checkpoint(db, invalid, -1, 1, { capture: { attemptedAt: invalidTimestamp, window: { to_at: "infinity" } } }), true);
+    const before = (await db.query("SELECT generation,fence,input FROM private.energy_learning_jobs WHERE id=$1", [j.id])).rows;
+    const scratch = (await db.query("SELECT * FROM private.energy_room_fit_progress WHERE job_id=$1", [j.id])).rows;
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261120004000_bound_room_learning_traversals.sql"));
+    assertEquals((await db.query("SELECT generation,fence,input FROM private.energy_learning_jobs WHERE id=$1", [j.id])).rows, before);
+    assertEquals((await db.query("SELECT * FROM private.energy_room_fit_progress WHERE job_id=$1", [j.id])).rows, scratch);
+    const horizon = async () => (await db.query<{ at: string }>("SELECT room_history_to::text AS at FROM private.energy_learning_jobs WHERE id=$1", [j.id])).rows[0].at;
+    assertEquals(Date.parse(await horizon()), Date.parse(staged.capture.window.to_at));
+    assert((await db.query<{ finite: boolean }>("SELECT isfinite(room_history_to) AS finite FROM private.energy_learning_jobs WHERE id=$1",
+      [invalid.id])).rows[0].finite, "unrecognizable disposable timestamps cannot break deployment");
+    await db.query("UPDATE private.energy_learning_jobs SET room_history_to='2099-01-01',fence=fence+1,lease_until=NULL,wake_after=now() WHERE id=$1", [j.id]);
+    assertEquals(Date.parse(await horizon()), Date.parse(staged.capture.window.to_at), "retry/claim clocks and direct assignments cannot move the ceiling");
+    await db.query("UPDATE private.energy_learning_jobs SET generation=generation+1,input=$2::jsonb WHERE id=$1",
+      [j.id, JSON.stringify({ synthetic_source_change: true })]);
+    assert(Date.parse(await horizon()) > Date.parse(staged.capture.window.to_at));
+    assertEquals((await db.query("SELECT room_history_to FROM private.energy_learning_jobs WHERE owner_kind='pool'")).rows, [{ room_history_to: null }]);
+    assertEquals((await db.query<{ allowed: boolean }>("SELECT has_function_privilege('authenticated','private.capture_room_learning_horizon()','EXECUTE') AS allowed")).rows[0].allowed, false);
   } finally { await db.close(); }
 });
 

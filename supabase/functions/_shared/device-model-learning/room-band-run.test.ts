@@ -21,6 +21,8 @@ function fixture() {
     room_temperature_c: row.room_c, outdoor_temperature_c: row.outdoor_c, house_temperature_c: row.house_c,
     solar_w_per_m2: row.solar_w_per_m2, heat_w: row.heat_w, cooling: row.cooling, probe_values: null }));
   const now = source.at(-1)!.start_ms + 3_600_000;
+  let wallNow = now;
+  let historyTo: string | null = new Date(now).toISOString();
   const context = { binding: "synthetic-binding", observed_since: rows[0].start_ts };
   const window = { window_key: "-10", band_c: -10, from_at: rows[0].start_ts,
     to_at: new Date(now).toISOString(), fingerprint: "synthetic-window", evidence_updated_at: new Date(now).toISOString() };
@@ -30,7 +32,7 @@ function fixture() {
   let progress: { metadata: unknown; cells: unknown[]; cursor: number; base_revision: number } | null = null;
   let capture: string | null = null, fence = 0;
   let failRpc: string | null = null;
-  const reads: string[] = [], writes: Record<string, unknown>[] = [];
+  const reads: string[] = [], writes: Record<string, unknown>[] = [], failures: Record<string, unknown>[] = [];
   let resets = 0;
   const db = {
     async rpc(name: string, args: Record<string, unknown>) {
@@ -41,6 +43,7 @@ function fixture() {
         case "verify_energy_learning_token": data = true; break;
         case "claim_energy_device_learning": data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
           owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress),
+          room_history_to: historyTo,
           room_window_visits: jsonb(visits) }; break;
         case "capture_energy_device_models": data = { rooms: model ? [jsonb(model)] : [], devices: [], pool: null,
           room_heating: { room: context } }; break;
@@ -85,7 +88,7 @@ function fixture() {
           model = jsonb({ ...model, ...patch, model_revision: (model?.model_revision ?? 0) + 1 });
           progress = null; capture = null; data = true; break;
         }
-        case "fail_energy_device_learning": break;
+        case "fail_energy_device_learning": failures.push(args); break;
         case "release_energy_room_learning_lane":
           assertEquals(args, { p_job_id: "job", p_generation: 1, p_fence: fence });
           data = true; break;
@@ -96,7 +99,7 @@ function fixture() {
   };
   const tick = async () => {
     const response = await handleDeviceLearning(new Request("https://synthetic.test/learning", { method: "POST",
-      headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => now);
+      headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => wallNow);
     assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
     return response;
   };
@@ -108,14 +111,61 @@ function fixture() {
     }
     throw new Error("Synthetic room cell did not finish bounded iterations");
   };
-  return { db, tick, finishCell, rows, window, windows, context, now, reads, writes,
+  return { db, tick, finishCell, rows, window, windows, context, now, reads, writes, failures,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
     corruptCapture: () => { capture = "corrupt"; },
     replaceModel: () => { assert(model); model.model_revision++; },
     setVisits: (value: unknown) => { visits = value; },
+    setWallNow: (value: number) => { wallNow = value; },
+    setHistoryTo: (value: string | null) => { historyTo = value; },
   };
 }
+
+Deno.test("a missing room horizon is a retriable owner failure preserving accepted models and staged work", async () => {
+  for (const staged of [false, true]) {
+    const f = fixture();
+    assertEquals((await f.tick()).status, 200);
+    if (staged) assertEquals((await f.tick()).status, 200);
+    const model = structuredClone(f.model), progress = structuredClone(f.progress);
+    f.setHistoryTo(null);
+    assertEquals((await f.tick()).status, 500);
+    assertEquals(f.failures.at(-1)?.p_error, "Room learning claim has no history horizon");
+    assertEquals(f.model, model);
+    assertEquals(f.progress, progress);
+    assertEquals(f.reads.at(-1), "release_energy_room_learning_lane");
+  }
+});
+
+Deno.test("a room traversal drains despite continuous newer observations and advancing wall time", async () => {
+  const f = fixture(), rpc = f.db.rpc.bind(f.db), hour = 3_600_000;
+  const historyReads: number[] = [];
+  f.db.rpc = (name, args) => {
+    if (name === "get_energy_room_heating_fit_windows") {
+      const to = Date.parse(String(args.p_to)); historyReads.push(to);
+      assert(to <= f.now, "the generation ceiling cannot follow the worker clock");
+      const eligible = f.rows.filter(row => Date.parse(row.start_ts) >= Date.parse(String(args.p_from)) &&
+        Date.parse(row.start_ts) + Number(row.duration_s) * 1000 <= to);
+      return Promise.resolve({ data: eligible.length ? [{ ...f.window,
+        to_at: new Date(Date.parse(eligible.at(-1)!.start_ts) + hour).toISOString(),
+        fingerprint: `synthetic-count:${eligible.length}`,
+      }] : [], error: null });
+    }
+    return rpc(name, args);
+  };
+  let completed = false;
+  for (let step = 0; step < 1000; step++) {
+    f.setWallNow(f.now + (step + 2) * hour);
+    f.rows.push({ ...f.rows[0], start_ts: new Date(f.now + (step + 1) * hour).toISOString() });
+    assertEquals((await f.tick()).status, 200);
+    const library = f.model?.heating_bands as RoomHeatingBands | undefined;
+    if (library?.active.length && library.pending_windows === 0) { completed = true; break; }
+  }
+  assert(completed, "future uploads must not keep the generation immediately runnable");
+  assert(historyReads.length > 4);
+  assertEquals(f.resets, 0);
+  assert(f.rows.length > 240, "newer measured observations remain stored for a later generation");
+});
 
 Deno.test("the claimed private visit journal keeps a superseded window behind an unvisited candidate", async () => {
   const f = fixture();
@@ -136,7 +186,7 @@ Deno.test("the real room worker checkpoints eighteen cells without publishing pa
   const f = fixture();
   assertEquals((await f.tick()).status, 200); // Separate general fit.
   assertEquals(f.writes.length, 1);
-  const expected = await fitStoredRoomHeating(f.db, "home", "customer", "room", f.context, f.model, null, f.now);
+  const expected = await fitStoredRoomHeating(f.db, "home", "customer", "room", f.context, f.model, null, { historyTo: f.now, wallNow: f.now });
   f.reads.length = 0;
   assertEquals(await (await f.tick()).json(), { checkpointed: true }); // Immutable capture only.
   const firstReads = f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length;

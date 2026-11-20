@@ -41,6 +41,41 @@ export interface ExternalHeatInference {
   transition_counts_by_duration: { duration_h: number; counts: [[number, number], [number, number]] }[];
 }
 
+export interface ExternalHeatValidationResidual extends ExternalHeatResidual {
+  /** Clock elapsed since the true eligible episode began, before score masks. */
+  elapsed_h: number;
+}
+
+/** Score held-out outcomes without treating an evaluation mask as a new
+ * physical episode. Unscored prefixes are marginalized, not conditioned on a
+ * residual used to fit heater storage. The learned entry distribution evolves
+ * over the omitted clock time; stationarity is only its long-time limit. */
+export function scoreExternalHeatEpisodes(rows: readonly ExternalHeatValidationResidual[], parameters: ExternalHeatParameters):
+  { nll: number; predictive_log_density: number[] } {
+  const densities: number[] = [];
+  let nll = 0;
+  for (let from = 0; from < rows.length;) {
+    let to = from + 1;
+    while (to < rows.length && rows[to].segment === rows[from].segment) to++;
+    const group = rows.slice(from, to);
+    if (group.some((row, i) => !Number.isFinite(row.elapsed_h) || row.elapsed_h < 0 ||
+      (i > 0 && row.elapsed_h <= group[i - 1].elapsed_h))) throw new Error("Invalid validation episode clock");
+    const elapsed = group[0].elapsed_h;
+    const transition = elapsed > 0 ? externalHeatTransition(parameters, elapsed) : null;
+    const initial: [number, number] = transition ? [
+      parameters.initial[0] * transition[0][0] + parameters.initial[1] * transition[1][0],
+      parameters.initial[0] * transition[0][1] + parameters.initial[1] * transition[1][1],
+    ] : parameters.initial;
+    const inferred = inferExternalHeat(group.map((row, i) => ({ ...row,
+      ...(i > 0 ? { duration_h: row.elapsed_h - group[i - 1].elapsed_h } : {}),
+    })), { ...parameters, initial }, { causal: true });
+    nll += inferred.nll;
+    densities.push(...inferred.predictive_log_density);
+    from = to;
+  }
+  return { nll, predictive_log_density: densities };
+}
+
 const LOG_SQRT_TWO_PI = .5 * Math.log(2 * Math.PI);
 const LOG_HALF = Math.log(.5);
 const log = (value: number) => value === 0 ? -Infinity : Math.log(value);

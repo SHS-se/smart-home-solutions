@@ -64,7 +64,7 @@ function fixture(passive = false) {
     passiveWatts: (value: number) => { passiveWatts = value; } };
 }
 async function prepare(f = fixture()) {
-  const prepared = await prepareStoredRoomHeating(f.db, "home", "customer", "room", context, f.previous, null, now);
+  const prepared = await prepareStoredRoomHeating(f.db, "home", "customer", "room", context, f.previous, null, { historyTo: now, wallNow: now });
   assert(prepared.kind === "band");
   return prepared.work;
 }
@@ -92,7 +92,7 @@ Deno.test("direct adapter and explicit capture-fit-finalize composition publish 
   const f = fixture(), { metadata, rows } = await prepare(f);
   const fit = fitIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c, metadata.ratedPowerW);
   const completed = finalizeStoredRoomBand(metadata, rows, fit);
-  const direct = await fitStoredRoomHeating(f.db, "home", "customer", "room", context, f.previous, null, now);
+  const direct = await fitStoredRoomHeating(f.db, "home", "customer", "room", context, f.previous, null, { historyTo: now, wallNow: now });
   assertEquals(withoutNewRevision(completed), withoutNewRevision(direct));
   assertEquals((completed.heating_bands as RoomHeatingBands).active.length, 1);
 });

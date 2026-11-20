@@ -50,6 +50,7 @@ Deno.test("joint band fit separates extra heat from heater gain with fan, heater
   // offset must not become an invented positive fireplace forecast.
   assertAlmostEquals(fitted.model.background_gain_c_per_h! + fitted.model.gain_c_per_wh * 12, .02, .003);
   const evidence = fitted.learning_evidence?.additional_heat;
+  assertEquals(fitted.learning_evidence?.validation_initial, "learned_episode_elapsed_v1");
   assert(evidence?.selected && evidence.converged);
   assert(evidence.validation_nll! < evidence.plain_validation_nll!);
   const inside = rows.map(row => fitted.additional_heat_intervals!.some(interval =>
@@ -75,6 +76,35 @@ Deno.test("band thermal and external training fits do not see future held-out ro
   const actual = fitIndependentRoomBandCell(first, 2), futureChanged = fitIndependentRoomBandCell(second, 2);
   assert(actual.additional_heat.finite?.observation_fit?.converged);
   assertEquals(actual, futureChanged);
+});
+
+Deno.test("band validation uses learned entry priors after a real gap without changing full-data physics or BIC", () => {
+  const { rows } = plant(true);
+  // Independently generated synthetic episodes. The chronological holdout
+  // begins after a true gap; common-support lag masks omit its first pair.
+  rows.slice(400).forEach(row => { row.start_ms += 3_600_000; });
+  const prepared = prepareIndependentRoomBand(rows, () => true, 500);
+  const cells = Array.from({ length: ROOM_BAND_FIT_CELL_COUNT }, (_, i) => fitIndependentRoomBandCell(prepared, i));
+  const priors = ([clean, extra]: [number, number]) => {
+    const changed = structuredClone(cells);
+    for (const cell of changed.filter(cell => cell.partition === "training")) {
+      for (const fit of Object.values(cell.additional_heat)) {
+        if (fit?.observation_fit) fit.observation_fit.parameters.initial = [clean, extra];
+      }
+    }
+    return finalizeIndependentRoomBand(prepared, changed).result;
+  };
+  // A counterfactual training entry distribution isolates the diagnostic
+  // adapter. No full fit, physical coefficient or validation outcome changes.
+  const clean = priors([.999, .001]), extra = priors([.001, .999]);
+  assert(clean.ok && extra.ok);
+  assertEquals(clean.model, extra.model);
+  const a = clean.learning_evidence!, b = extra.learning_evidence!;
+  assert(a.additional_heat?.selected && b.additional_heat?.selected);
+  assert(Math.abs(a.additional_heat.validation_nll! - b.additional_heat.validation_nll!) > .01);
+  for (const family of ["finite", "equilibrium", "integrator"] as const) {
+    assertEquals(a.response_selection![`${family}_marginal_bic`], b.response_selection![`${family}_marginal_bic`]);
+  }
 });
 
 Deno.test("measured solar and neighboring warmth fit without an invented external-heat episode", () => {

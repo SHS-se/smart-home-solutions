@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
-import { externalHeatEmission, externalHeatTransition, inferExternalHeat, initializeExternalHeat, updateExternalHeat,
+import { externalHeatEmission, externalHeatTransition, inferExternalHeat, initializeExternalHeat, scoreExternalHeatEpisodes, updateExternalHeat,
   type ExternalHeatParameters, type ExternalHeatResidual } from "./external-heat.ts";
 
 /** Independently generated synthetic observations; no captured household data. */
@@ -9,6 +9,52 @@ function generator(seed: number) {
   return { uniform, normal };
 }
 const residuals = (values: number[], segment = 0) => values.map(residual_c => ({ residual_c, segment }));
+
+Deno.test("validation carries learned episode-entry heat over an unscored prefix instead of assuming stationarity", () => {
+  const parameters: ExternalHeatParameters = { sigma_c: .1, external_mean_c: .5,
+    initial: [.1, .9], transition: [[.999999, .000001], [.25, .75]] };
+  const residual = .4, elapsed = .625;
+  const stationary = .000001 / .250001;
+  const external = stationary + (.9 - stationary) * Math.pow(1 - .250001, elapsed);
+  const cleanDensity = Math.exp(-.5 * (residual / .1) ** 2) / (.1 * Math.sqrt(2 * Math.PI));
+  const externalDensity = quadrature(residual, .1, .5).density;
+  const scored = scoreExternalHeatEpisodes([{ residual_c: residual, segment: 0, elapsed_h: elapsed }], parameters);
+  assertAlmostEquals(scored.nll, -Math.log((1 - external) * cleanDensity + external * externalDensity), 1e-10);
+  const wrong = inferExternalHeat(residuals([residual]), { ...parameters, initial: [1 - stationary, stationary] }, { causal: true });
+  assert(wrong.nll > scored.nll + 5);
+  assertAlmostEquals(scoreExternalHeatEpisodes([{ residual_c: residual, segment: 0, elapsed_h: 0 }], parameters).nll,
+    -Math.log(.1 * cleanDensity + .9 * externalDensity), 1e-10);
+});
+
+Deno.test("validation mask holes advance the existing episode clock without conditioning on omitted nuisance outcomes", () => {
+  const parameters: ExternalHeatParameters = { sigma_c: .15, external_mean_c: .7,
+    initial: [.2, .8], transition: [[.97, .03], [.12, .88]] };
+  const rows = [{ residual_c: .8, segment: 0, elapsed_h: 0 }, { residual_c: .6, segment: 0, elapsed_h: 3.75 }];
+  const scored = scoreExternalHeatEpisodes(rows, parameters);
+  const direct = inferExternalHeat([{ residual_c: .8, segment: 0 }, { residual_c: .6, segment: 0, duration_h: 3.75 }], parameters, { causal: true });
+  assertEquals(scored.predictive_log_density, direct.predictive_log_density);
+  assertEquals(scored.nll, direct.nll);
+  const changed = scoreExternalHeatEpisodes([rows[0], { ...rows[1], residual_c: -20 }], parameters);
+  assertEquals(changed.predictive_log_density[0], scored.predictive_log_density[0]);
+  const reset = scoreExternalHeatEpisodes([rows[0], { ...rows[1], segment: 1, elapsed_h: 0 }], parameters);
+  assertAlmostEquals(reset.predictive_log_density[1], inferExternalHeat(residuals([.6]), parameters, { causal: true }).predictive_log_density[0], 1e-12);
+  assert(Math.abs(reset.predictive_log_density[1] - scored.predictive_log_density[1]) > .01);
+});
+
+Deno.test("validation episode clocks retain mixed native durations and genuine data gaps", () => {
+  const parameters: ExternalHeatParameters = { sigma_c: .2, external_mean_c: .8,
+    initial: [.35, .65], transition: [[.92, .08], [.2, .8]] };
+  const rows = [{ residual_c: .3, segment: 1, elapsed_h: .625 }, { residual_c: -.1, segment: 2, elapsed_h: 1.25 }];
+  let expected = 0;
+  for (const row of rows) {
+    const occupancy = .08 / .28 + (.65 - .08 / .28) * Math.pow(.72, row.elapsed_h);
+    const clean = Math.exp(-.5 * (row.residual_c / .2) ** 2) / (.2 * Math.sqrt(2 * Math.PI));
+    expected -= Math.log((1 - occupancy) * clean + occupancy * quadrature(row.residual_c, .2, .8).density);
+  }
+  assertAlmostEquals(scoreExternalHeatEpisodes(rows, parameters).nll, expected, 1e-10);
+  assertThrows(() => scoreExternalHeatEpisodes([{ ...rows[0], elapsed_h: -1 }], parameters));
+  assertThrows(() => scoreExternalHeatEpisodes([rows[0], rows[0]], parameters));
+});
 
 /** Independent Simpson integration of the positive latent input, with no
  * truncated-normal formulas or HMM implementation used by the oracle. */

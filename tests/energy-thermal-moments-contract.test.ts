@@ -114,6 +114,7 @@ Deno.test("the training quarters cast every numeric column they return", () => {
 Deno.test("a failed training read belongs to its durable learning attempt and never publishes a rejection", async () => {
   const calls: string[] = [];
   const claim = { id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
+    room_history_to: "2026-01-01T00:00:00Z",
     owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 3, input: { location: null } };
   const db = {
     rpc(name: string, args: Record<string, unknown>) {

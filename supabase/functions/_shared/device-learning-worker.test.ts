@@ -26,7 +26,7 @@ Deno.test("read failures remain retriable failures, never statistical rejections
     if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
     if (name === "claim_energy_device_learning") return Promise.resolve({ error: null, data: {
       id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
-      owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 7, input: {},
+      owner_kind: "room", room_history_to: "2026-01-01T00:00:00Z", owner_key: "synthetic-room", generation: 2, fence: 7, input: {},
     } });
     if (name === "capture_energy_device_models") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
     return Promise.resolve({ data: null, error: null });
@@ -45,7 +45,7 @@ Deno.test("room admission is released even when failure persistence itself loses
     if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
     if (name === "claim_energy_device_learning") return Promise.resolve({ data: {
       id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
-      owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 7, input: {},
+      owner_kind: "room", room_history_to: "2026-01-01T00:00:00Z", owner_key: "synthetic-room", generation: 2, fence: 7, input: {},
     }, error: null });
     if (name === "capture_energy_device_models") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
     if (name === "fail_energy_device_learning") throw new Error("synthetic lost failure reply");
@@ -71,4 +71,40 @@ Deno.test("room admission does not change independent pool and device failure ha
     assertEquals(calls.at(-1), "fail_energy_device_learning");
     assertEquals(calls.includes("release_energy_room_learning_lane"), false);
   }
+});
+
+Deno.test("a room without a heating context uses its generation horizon and current audit clock", async () => {
+  const cutoff = Date.UTC(2026, 0, 1), wallNow = cutoff + 4 * 86_400_000;
+  const history: Record<string, unknown>[] = [], published: Record<string, unknown>[] = [];
+  const response = await handleDeviceLearning(request(), {
+    rpc(name: string, args: Record<string, unknown>) {
+      if (name === "get_energy_thermal_training_quarters") {
+        history.push(args);
+        return { eq() { return this; }, range() { return Promise.resolve({ data: [], error: null }); } };
+      }
+      if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
+      if (name === "claim_energy_device_learning") return Promise.resolve({ data: {
+        id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
+        owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 7,
+        room_history_to: new Date(cutoff).toISOString(), input: {},
+      }, error: null });
+      if (name === "capture_energy_device_models") return Promise.resolve({ data: {
+        rooms: [], devices: [], pool: null, room_heating: {},
+      }, error: null });
+      if (name === "publish_energy_device_learning") {
+        published.push(args.p_model as Record<string, unknown>);
+        return Promise.resolve({ data: true, error: null });
+      }
+      if (name === "release_energy_room_learning_lane") return Promise.resolve({ data: true, error: null });
+      throw new Error(`Unexpected synthetic RPC ${name}`);
+    },
+    from() {
+      return { select() { return this; }, eq() { return this; }, is() { return this; },
+        limit() { return Promise.resolve({ data: [{ mapping_summary: { room_name: "Synthetic room" } }], error: null }); } };
+    },
+  }, () => wallNow);
+  assertEquals(response.status, 200);
+  assertEquals(history.map(row => row.p_to), [new Date(cutoff).toISOString()]);
+  assertEquals(history.map(row => row.p_from), [new Date(cutoff - 21 * 86_400_000).toISOString()]);
+  assertEquals(published[0].last_attempted_at, new Date(wallNow).toISOString());
 });

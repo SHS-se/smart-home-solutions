@@ -112,6 +112,8 @@ export type RoomHeatingPreparation =
   | { kind: "model"; model: Record<string, unknown> }
   | { kind: "band"; work: RoomBandWork };
 
+export interface RoomLearningClock { historyTo: number; wallNow: number }
+
 /** Synchronous/offline callers compose the same capture and completion seams. */
 export async function fitStoredRoomHeating(...args: Parameters<typeof prepareStoredRoomHeating>): Promise<Record<string, unknown>> {
   const prepared = await prepareStoredRoomHeating(...args);
@@ -124,12 +126,14 @@ export async function fitStoredRoomHeating(...args: Parameters<typeof prepareSto
 export async function prepareStoredRoomHeating(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, context: RoomHeatingContext,
-  previous: StoredDeviceModel | undefined, location: { latitude: number; longitude: number } | null, now: number,
+  previous: StoredDeviceModel | undefined, location: { latitude: number; longitude: number } | null, clock: RoomLearningClock,
   windowVisits?: unknown,
 ): Promise<RoomHeatingPreparation> {
   const current = readRoomHeatingBands(previous?.heating_bands);
+  const now = clock.wallNow;
   const attemptedAt = new Date(now).toISOString();
-  const floor = new Date(now - 400 * 86_400_000).toISOString();
+  const historyTo = new Date(clock.historyTo).toISOString();
+  const floor = new Date(clock.historyTo - 400 * 86_400_000).toISOString();
   const library: RoomHeatingBands = current?.binding === context.binding ? { ...current, since: context.observed_since &&
     Date.parse(context.observed_since) < Date.parse(current.since) ? context.observed_since : current.since } : {
     binding: context.binding, since: context.observed_since ?? floor,
@@ -144,7 +148,7 @@ export async function prepareStoredRoomHeating(
   const installed = library.reference ? { ...library.reference,
     training_to: library.reference.training_to ?? (typeof previous?.training_to === "string" ? previous.training_to : undefined) }
     : previousModel ? roomReference(previousModel, previous) : undefined;
-  const readWindows = async (to = attemptedAt,
+  const readWindows = async (to = historyTo,
     from = new Date(Math.max(Date.parse(library.since), Date.parse(floor))).toISOString()): Promise<HeatingFitWindow[]> => {
     const { data, error } = await db.rpc("get_energy_room_heating_fit_windows", {
       p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey,
@@ -183,7 +187,7 @@ export async function prepareStoredRoomHeating(
   if (!windows.length) {
     // Keep the standard recent attempt and its explicit diagnostics when no
     // heating window exists; absence of recent heating never erases a model.
-    const row = await fitStoredRoom(db, homeId, customerId, roomKey, location, now, library.since, true, context.binding);
+    const row = await fitStoredRoom(db, homeId, customerId, roomKey, location, clock, library.since, true, context.binding);
     const model = row.trained ? readThermalModel(row) : null;
     return { kind: "model", model: { ...row, heating_bands: { ...library, pending_windows: 0,
       ...(model ? { reference_revision: crypto.randomUUID(), reference: roomReference(model, row) } : {}) } } };
@@ -386,19 +390,20 @@ export async function fitStoredRoom(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string,
   location: { latitude: number; longitude: number } | null,
-  now: number = Date.now(),
+  clock: RoomLearningClock,
   bindingSince?: string,
   native = false,
   heatingBinding?: string,
 ): Promise<Record<string, unknown>> {
-  const trainingTo = new Date(now).toISOString();
-  const trainingFrom = new Date(Math.max(now - TRAINING_WINDOW_DAYS * 86_400_000,
+  const trainingTo = new Date(clock.historyTo).toISOString();
+  const trainingFrom = new Date(Math.max(clock.historyTo - TRAINING_WINDOW_DAYS * 86_400_000,
     bindingSince ? Date.parse(bindingSince) : -Infinity)).toISOString();
   if (native && heatingBinding) await repairNativeRoomSolar(db, homeId, customerId, roomKey, heatingBinding,
-    location, trainingFrom, trainingTo, now);
+    location, trainingFrom, trainingTo, clock.wallNow);
   else if (!native) await repairRoomSolar(db, homeId, location, trainingFrom, trainingTo);
   const captured = await loadRoomObservations(db, homeId, customerId, roomKey, trainingFrom, trainingTo, native);
-  return await fitLoadedRoom(db, homeId, customerId, roomKey, trainingFrom, trainingTo, captured);
+  return { ...await fitLoadedRoom(db, homeId, customerId, roomKey, trainingFrom, trainingTo, captured),
+    last_attempted_at: new Date(clock.wallNow).toISOString() };
 }
 
 async function repairNativeRoomSolar(

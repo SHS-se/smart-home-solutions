@@ -76,8 +76,15 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const intervals = async () => (await db.query("SELECT duration_s,heat_w,heat_attributed FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
       [customer, home, start, end])).rows;
     const stamp = async () => (await db.query<{ at: string }>("SELECT learning_updated_at::text AS at FROM energy_heating_observations WHERE start_ts=$1", [start])).rows[0].at;
+    const cutoff = new Date(Date.parse(start) + 45 * 60_000).toISOString();
+    const boundedWindows = async () => (await db.query("SELECT * FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)",
+      [home, customer, start, cutoff])).rows;
+    assertEquals(await boundedWindows(), []);
     assertEquals(await write(row), { accepted: 1, accepted_by_source: [{ room_key: "room", source_key: source, accepted: 1 }] });
     assertEquals(await intervals(), [{ duration_s: 3600, heat_w: 800, heat_attributed: true }]);
+    assertEquals(await boundedWindows(), [], "a late native hour crossing the generation ceiling cannot expand discovery");
+    assertEquals((await db.query("SELECT * FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
+      [customer, home, start, cutoff])).rows, [], "a whole native hour is not split into invented quarters");
     // The gap query uses current lineage and real missing coverage, independently
     // of thermal evidence revisions. Its cursor wraps only to remaining holes.
     const solarBinding = (await db.query<{ binding: string }>(

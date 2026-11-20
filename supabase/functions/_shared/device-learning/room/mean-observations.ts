@@ -1,5 +1,5 @@
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
-import { initializeExternalHeat, inferExternalHeat, updateExternalHeat, type ExternalHeatParameters, type ExternalHeatResidual } from "./external-heat.ts";
+import { initializeExternalHeat, inferExternalHeat, scoreExternalHeatEpisodes, updateExternalHeat, type ExternalHeatParameters, type ExternalHeatResidual, type ExternalHeatValidationResidual } from "./external-heat.ts";
 import { MeanFeatureWorkspace } from "./mean-features.ts";
 import { compareFiniteRoomResponse, conditionalAicc, type RoomResponseSelection } from "./mean-identification.ts";
 import { solveNonnegativeNuisance } from "./mean-nuisance.ts";
@@ -47,6 +47,7 @@ export interface RoomLearningEvidence {
   training_pairs: number;
   validation_pairs: number;
   validation_mse_c2: number | null;
+  validation_initial?: "learned_episode_elapsed_v1";
   selected_boundary: "house_outdoor" | null;
   selected_lag_h: number | null;
   estimated_temperature_readings?: number;
@@ -439,7 +440,7 @@ function heldOut(fit: FitEvaluation, rows: RoomMeanQuarter[], split: number, com
   const first = Math.max(0, split - 1);
   const initial = band ? new Map<number, number>() : new Map(fit.initial);
   const errors = new Float64Array(rows.length - first).fill(NO_ERROR);
-  const residuals = new Float64Array(errors.length), segments = new Int32Array(errors.length);
+  const residuals = new Float64Array(errors.length);
   const exposures = new Float64Array(errors.length), durations = new Float64Array(errors.length), classes = Array<string>(errors.length);
   let count = 0;
   visitTerms(rows, fit, offset, band, t => {
@@ -456,13 +457,13 @@ function heldOut(fit: FitEvaluation, rows: RoomMeanQuarter[], split: number, com
     if (!comparable[t.index]) return;
     const error = residual - t.z * (initial.get(t.segment) ?? 0);
     errors[t.index - first] = error ** 2;
-    residuals[t.index - first] = error; segments[t.index - first] = t.segment;
+    residuals[t.index - first] = error;
     exposures[t.index - first] = t.x[1];
     durations[t.index - first] = (roomIntervalHours(rows[t.index]) + roomIntervalHours(rows[t.index + 1])) / 2;
     classes[t.index - first] = `${roomIntervalSeconds(rows[t.index])}/${roomIntervalSeconds(rows[t.index + 1])}`;
     count++;
   });
-  return count ? { errors, residuals, segments, exposures, durations, classes } : null;
+  return count ? { errors, residuals, exposures, durations, classes } : null;
 }
 
 function scoreCandidates<T extends { training: FitEvaluation | null }>(candidates: T[], rows: RoomMeanQuarter[],
@@ -479,20 +480,27 @@ function scoreCandidates<T extends { training: FitEvaluation | null }>(candidate
   for (let i = 0, n = withValidation[0]?.errors.length ?? 0; i < n; i++) {
     if (withValidation.every(values => values.errors[i] !== NO_ERROR)) common.push(i);
   }
+  const episodes = new Int32Array(validationRows.length).fill(-1), elapsed = new Float64Array(validationRows.length);
+  if (candidates.some(candidate => candidate.training?.observation_fit)) {
+    let episode = -1, previous = -2, sourceSegment = -1, clock = 0;
+    visitTransitions(validationRows, 0, 0, solar, band, (index, segment) => {
+      if (index !== previous + 1 || segment !== sourceSegment) { episode++; clock = 0; }
+      else clock += (roomIntervalHours(validationRows[index]) + roomIntervalHours(validationRows[index + 1])) / 2;
+      episodes[index] = episode; elapsed[index] = clock;
+      previous = index; sourceSegment = segment;
+    });
+  }
   return candidates.map((candidate, i) => {
     const values = errors[i];
-    let segment = -1, previous = -2, sourceSegment = -1;
-    const residuals: ExternalHeatResidual[] = common.map(index => {
-      const source = values?.segments[index] ?? -1;
-      if (index !== previous + 1 || source !== sourceSegment) segment++;
-      previous = index; sourceSegment = source;
-      return { residual_c: values?.residuals[index] ?? 0, segment,
+    const residuals: ExternalHeatValidationResidual[] = common.map(index => {
+      const at = index + Math.max(0, split - 1);
+      return { residual_c: values?.residuals[index] ?? 0, segment: episodes[at], elapsed_h: elapsed[at],
         forcing_scale: values?.exposures[index] ?? 1, duration_h: values?.durations[index] ?? 1,
         noise_class: String(values?.classes[index] ?? "default") };
     });
     const training = candidate.training;
     const nll = !values || !common.length || !training ? null : training.observation_fit
-      ? inferExternalHeat(residuals, stationaryExternalPrior(training.observation_fit.parameters), { causal: true }).nll
+      ? scoreExternalHeatEpisodes(residuals, training.observation_fit.parameters).nll
       : common.reduce((sum, index) => sum + .5 * (Math.log(2 * Math.PI * Math.max(Number.EPSILON, training.mse)) +
         values.errors[index] / Math.max(Number.EPSILON, training.mse)), 0);
     return { ...candidate, validation: {
@@ -722,6 +730,7 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
     training_pairs: chosen.training?.n ?? 0, validation_pairs: chosen.validation.count,
     validation_mse_c2: chosen.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
     ...evidence, residual_degrees_of_freedom: fit.dof,
+    ...(band ? { validation_initial: "learned_episode_elapsed_v1" as const } : {}),
     ...(responseSelection?.criterion === "regularized_marginal_bic" ? { selection: "regularized_marginal_bic" as const } : {}),
     ...(responseSelection ? { response_selection: responseSelection } : {}),
   };
@@ -880,11 +889,6 @@ export interface RoomHeatFitState {
 }
 const EXTERNAL_FIT_MAX_ITERATIONS = 200;
 const EXTERNAL_FIT_LOG_TOLERANCE = 1e-7;
-
-function stationaryExternalPrior(parameters: ExternalHeatParameters): ExternalHeatParameters {
-  const a = parameters.transition[0][1], b = parameters.transition[1][0], total = a + b;
-  return total > 0 ? { ...parameters, initial: [b / total, a / total] } : parameters;
-}
 
 function externalResiduals(rows: RoomMeanQuarter[], fit: FitEvaluation, initial: Map<number, number>, band?: BandFit) {
   const result: (ExternalHeatResidual & { index: number; forcing_scale: number })[] = [];

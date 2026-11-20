@@ -8,7 +8,7 @@ import {
 import { decodeRoomBandFitCapture, encodeRoomBandFitCapture } from "./room-band-fit-capture.ts";
 import {
   ROOM_WINDOW_IMPLEMENTATION, finalizeStoredRoomBand, parseRoomBandMetadata,
-  prepareStoredRoomHeating, recaptureStoredRoomBand,
+  prepareStoredRoomHeating, recaptureStoredRoomBand, type RoomLearningClock,
 } from "./room.ts";
 
 interface Database {
@@ -21,6 +21,12 @@ export interface RoomLearningClaim {
 }
 type RoomLearningStep = { kind: "model"; model: Record<string, unknown> }
   | { kind: "handled"; result: { checkpointed?: boolean; published?: boolean; superseded?: boolean } };
+
+export function roomLearningClock(historyTo: string | null, wallNow: number): RoomLearningClock {
+  const parsed = typeof historyTo === "string" ? Date.parse(historyTo) : NaN;
+  if (!Number.isFinite(parsed)) throw new Error("Room learning claim has no history horizon");
+  return { historyTo: parsed, wallNow };
+}
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const sameFreshness = (a: ProbeFreshnessReport | null, b: ProbeFreshnessReport | null) =>
@@ -31,7 +37,7 @@ const sameFreshness = (a: ProbeFreshnessReport | null, b: ProbeFreshnessReport |
  * Scratch is private job progress, never an accepted model or measured history. */
 export async function runRoomHeatingLearning(
   db: Database, claim: RoomLearningClaim, context: RoomHeatingContext,
-  previous: StoredDeviceModel | undefined, now: number,
+  previous: StoredDeviceModel | undefined, clock: RoomLearningClock,
 ): Promise<RoomLearningStep> {
   const revision = previous?.model_revision ?? 0;
   const basis = { p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence, p_revision: revision };
@@ -47,7 +53,7 @@ export async function runRoomHeatingLearning(
   const progress = claim.room_fit_progress;
   if (progress == null) {
     const prepared = await prepareStoredRoomHeating(db, claim.home_id, claim.customer_id, claim.owner_key,
-      context, previous, claim.input.location ?? null, now, claim.room_window_visits);
+      context, previous, claim.input.location ?? null, clock, claim.room_window_visits);
     if (prepared.kind === "model") return prepared;
     const { metadata, rows } = prepared.work;
     if (!rows.length) return { kind: "model", model: finalizeStoredRoomBand(metadata, rows,
