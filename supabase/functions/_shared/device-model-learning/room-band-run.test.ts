@@ -167,6 +167,30 @@ Deno.test("a room traversal drains despite continuous newer observations and adv
   assert(f.rows.length > 240, "newer measured observations remain stored for a later generation");
 });
 
+Deno.test("pre-fix over-horizon scratch resets without changing accepted models or valid checkpoints", async () => {
+  for (const overrun of [false, true]) {
+    const f = fixture();
+    // Simulate a legacy reader which used to expand discovery past the frozen
+    // generation. An in-horizon capture is the unchanged control case.
+    if (overrun) f.window.to_at = new Date(f.now + 900_000).toISOString();
+    await f.tick(); await f.tick();
+    assert(f.progress);
+    const accepted = structuredClone(f.model), publications = f.writes.length;
+    f.window.to_at = new Date(f.now).toISOString(); // The corrected SQL reader.
+    assertEquals(await (await f.tick()).json(), overrun ? { superseded: true } : { checkpointed: true });
+    assertEquals(f.model, accepted);
+    assertEquals(f.writes.length, publications);
+    assertEquals(f.resets, Number(overrun));
+    if (overrun) {
+      assertEquals(f.progress, null);
+      assertEquals(await (await f.tick()).json(), { checkpointed: true });
+      const envelope = f.progress?.metadata as { capture: unknown };
+      assertEquals(parseRoomBandMetadata(envelope.capture)?.window.to_at, new Date(f.now).toISOString());
+      assertEquals(f.resets, 1, "only the incompatible scratch is discarded");
+    } else assert(f.progress, "a valid capture continues without recapture");
+  }
+});
+
 Deno.test("the claimed private visit journal keeps a superseded window behind an unvisited candidate", async () => {
   const f = fixture();
   await f.tick(); // Persist the separate general attempt.

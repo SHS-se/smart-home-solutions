@@ -60,6 +60,7 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
       "SELECT pg_get_functiondef('get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure) AS definition")).rows[0].definition;
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119080000_reduce_heating_learning_spills.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119103000_seek_missing_heating_irradiance.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122000500_complete_legacy_training_intervals.sql"));
     const memorySettings = (await db.query<{ settings: string[] }>(`SELECT proconfig AS settings
       FROM pg_proc WHERE oid IN (
         'get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure,
@@ -85,6 +86,88 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     assertEquals(await boundedWindows(), [], "a late native hour crossing the generation ceiling cannot expand discovery");
     assertEquals((await db.query("SELECT * FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
       [customer, home, start, cutoff])).rows, [], "a whole native hour is not split into invented quarters");
+
+    // Independently generated synthetic mixed-resolution capture. The newest
+    // legacy quarter is not a complete observation at an off-grid ceiling.
+    await db.exec("BEGIN");
+    await db.query("UPDATE energy_optimisation_devices SET first_seen_at=$1 WHERE id=$2", [start, device]);
+    const legacyBase = end;
+    const legacyStarts = Array.from({ length: 3 }, (_, i) => new Date(Date.parse(legacyBase) + i * 900_000).toISOString());
+    for (const [i, at] of legacyStarts.entries()) {
+      await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',$3,$4,0)", [home, customer, at, 20 + i / 10]);
+      await db.query("INSERT INTO energy_optimisation_outdoor_slots(home_id,customer_id,start_ts,temperature_c,solar_w_per_m2) VALUES($1,$2,$3,2,0)", [home, customer, at]);
+      if (i !== 1) await db.query("INSERT INTO energy_optimisation_device_slots(device_id,home_id,customer_id,start_ts,energy_kwh) VALUES($1,$2,$3,$4,.2)", [device, home, customer, at]);
+    }
+    const legacyCeiling = new Date(Date.parse(legacyBase) + 21 * 60_000 + 33_000).toISOString();
+    const legacyIntervals = async (to = legacyCeiling) => (await db.query<{ start_ts: Date; heat_w: number | null }>(
+      "SELECT start_ts,heat_w FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)", [customer, home, legacyBase, to])).rows;
+    const legacyWindows = async (to = legacyCeiling) => (await db.query<{
+      fingerprint: string; evidence_updated_at: Date; to_at: Date;
+    }>("SELECT fingerprint,evidence_updated_at,to_at FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)",
+      [home, customer, legacyBase, to])).rows;
+    assertEquals((await legacyIntervals()).map(r => r.start_ts.toISOString()), [legacyStarts[0]],
+      "an incomplete legacy quarter must not extend the frozen learning ceiling");
+    const directLegacy = async (to = legacyCeiling) => (await db.query<{ start_ts: Date; heat_w: number | null }>(
+      "SELECT start_ts,heat_w FROM get_energy_thermal_training_quarters($1,$2,$3,$4)", [customer, home, legacyBase, to])).rows;
+    assertEquals(await directLegacy(), await legacyIntervals(), "legacy and mixed-resolution learning agree about complete quarters");
+    const discovered = await legacyWindows();
+    assertEquals(discovered.length, 1);
+    assertEquals(discovered[0].to_at.toISOString(), legacyStarts[1]);
+    assertEquals(await legacyWindows(discovered[0].to_at.toISOString()), discovered,
+      "a discovered band's fingerprint is stable when revalidated at its own end");
+    // A missing middle thermometer stays a hole; unavailable energy stays NULL.
+    const threeQuarterEnd = new Date(Date.parse(legacyBase) + 45 * 60_000).toISOString();
+    assertEquals((await legacyIntervals(threeQuarterEnd)).map(r => r.heat_w), [800, null, 800]);
+    await db.query("DELETE FROM energy_optimisation_thermal_slots WHERE start_ts=$1", [legacyStarts[1]]);
+    assertEquals((await legacyIntervals(threeQuarterEnd)).map(r => r.start_ts.toISOString()), [legacyStarts[0], legacyStarts[2]]);
+    await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',$3,20.1,0)", [home, customer, legacyStarts[1]]);
+    await db.query("DELETE FROM energy_optimisation_device_slots WHERE start_ts=$1", [legacyStarts[0]]);
+    assertEquals((await legacyIntervals()).map(r => r.heat_w), [null], "an unavailable counter is not zero consumption");
+    await db.query("INSERT INTO energy_optimisation_device_slots(device_id,home_id,customer_id,start_ts,energy_kwh) VALUES($1,$2,$3,$4,.2)",
+      [device, home, customer, legacyStarts[0]]);
+    const beforeLate = await legacyWindows();
+    await write({ ...row, start: legacyBase, outdoor_temperature_c: 2 });
+    assertEquals(await legacyWindows(), beforeLate,
+      "a native hour ending beyond the captured band cannot suppress its completed legacy quarters");
+    const lateQuarter = { ...row, start: legacyStarts[1], duration_s: 900, source: "recorder_5minute_mean",
+      room_temperature_c: 20.15, outdoor_temperature_c: 2, solar_w_per_m2: 0, device_energy_kwh: {}, heater_energy_limits_w: {} };
+    await write(lateQuarter);
+    const lateProbe = { source_key: source, area_key: "room", mean: 20.15, unchanged: false,
+      joint_unchanged: false, cohort_key: null, reported: true, unavailable: false };
+    await db.query("SELECT record_energy_heating_probe_observations($1,$2,$3::jsonb)",
+      [home, customer, JSON.stringify([{ start: legacyStarts[1], duration_s: 900, probes: [lateProbe] }])]);
+    assertEquals(await legacyWindows(), beforeLate,
+      "late native and probe facts beyond the frozen ceiling cannot substitute for an incomplete legacy quarter");
+    assertEquals(await legacyWindows(beforeLate[0].to_at.toISOString()), beforeLate);
+    assertEquals((await legacyIntervals(legacyStarts[2])).map(r => r.heat_w), [800, null],
+      "the newest complete quarter is admitted at its exact end without fabricating unavailable energy");
+    await write({ ...lateQuarter, start: legacyStarts[0], device_energy_kwh: { heater: .1 } });
+    const corrected = await legacyWindows();
+    assertEquals(corrected[0].fingerprint === beforeLate[0].fingerprint, false,
+      "a genuine late replacement inside scope still invalidates the earlier capture");
+    assertEquals(await legacyWindows(corrected[0].to_at.toISOString()), corrected);
+    // Legacy timestamps can have fractional seconds; retain their declared
+    // 900-second interval instead of silently rounding it or the cutoff.
+    const fractionalAt = new Date(Date.parse(legacyBase) + 60 * 60_000 + 123).toISOString();
+    const fractionalEnd = new Date(Date.parse(fractionalAt) + 900_000).toISOString();
+    await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',$3,20.3,0)", [home, customer, fractionalAt]);
+    const fractionalRead = async (to: string) => (await db.query("SELECT start_ts FROM get_energy_room_thermal_intervals($1,$2,'room',$3,$4)",
+      [customer, home, fractionalAt, to])).rows;
+    assertEquals(await fractionalRead(new Date(Date.parse(fractionalEnd) - 123).toISOString()), [],
+      "an aligned cutoff must not admit a fractional-start interval ending beyond it");
+    assertEquals((await fractionalRead(fractionalEnd)).length, 1);
+    await db.query("INSERT INTO energy_optimisation_outdoor_slots(home_id,customer_id,start_ts,temperature_c) VALUES($1,$2,$3,2)",
+      [home, customer, fractionalAt]);
+    const fractionalWindows = async (to: string) => (await db.query<{ to_at: Date; fingerprint: string; evidence_updated_at: Date }>(
+      "SELECT to_at,fingerprint,evidence_updated_at FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)",
+      [home, customer, fractionalAt, to])).rows;
+    const fractionalWindow = await fractionalWindows(new Date(Date.parse(fractionalEnd) + 1000).toISOString());
+    assertEquals(fractionalWindow[0].to_at.toISOString(), fractionalEnd);
+    assertEquals(await fractionalWindows(fractionalEnd), fractionalWindow, "fractional ends round-trip through real discovery and revalidation");
+    assertEquals((await directLegacy(new Date(Date.parse(fractionalEnd) - 123).toISOString())).some(r => r.start_ts.toISOString() === fractionalAt), false);
+    assertEquals((await directLegacy(fractionalEnd)).some(r => r.start_ts.toISOString() === fractionalAt), true);
+    await db.exec("ROLLBACK");
+
     // The gap query uses current lineage and real missing coverage, independently
     // of thermal evidence revisions. Its cursor wraps only to remaining holes.
     const solarBinding = (await db.query<{ binding: string }>(

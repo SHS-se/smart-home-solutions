@@ -650,6 +650,56 @@ Deno.test("native chunk captures preserve mixed interval durations and read each
   assertEquals(calls.length, 3);
 });
 
+Deno.test("complete intervals crossing internal chunk seams survive once without widening the global scope", async () => {
+  const start = Date.UTC(2025, 9, 1), seam = start + 10 * 24 * hour;
+  for (const partialStart of [false, true]) {
+    const from = start + (partialStart ? hour / 4 : 0), to = seam + hour + 21 * 60_000;
+    const model = history(start, 1)[0];
+    // Independently generated synthetic legacy quarter, with an exact
+    // fractional timestamp whose complete end crosses the batching seam.
+    const crossing = { ...model, start_ts: new Date(seam - hour / 4 + 123).toISOString(), duration_s: 900 as const };
+    const inputs: ThermalQuarterRow[] = [
+      { ...model, start_ts: new Date(start).toISOString(), duration_s: 3600 },
+      ...Array.from({ length: 3 }, (_, q) => ({ ...model,
+        start_ts: new Date(start + q * hour / 4).toISOString(), duration_s: 900 as const })),
+      { ...model, start_ts: new Date(seam - hour).toISOString(), duration_s: 3600 },
+      ...Array.from({ length: 3 }, (_, q) => ({ ...model,
+        start_ts: new Date(seam - hour + q * hour / 4).toISOString(), duration_s: 900 as const })),
+      crossing,
+      { ...model, start_ts: new Date(seam).toISOString(), duration_s: 3600 },
+      { ...model, start_ts: new Date(to - 5 * 60_000).toISOString(), duration_s: 900 },
+    ];
+    // This reader exposes the same native-hour-over-incomplete-fine choice
+    // as the canonical SQL. Extra rows outside the global start could change it.
+    const canonical = (begin: number, end: number) => {
+      const eligible = inputs.filter(row => Date.parse(row.start_ts) >= begin &&
+        Date.parse(row.start_ts) + row.duration_s! * 1000 <= end);
+      const coarse = eligible.filter(row => row.duration_s === 3600 && eligible.filter(fine =>
+        fine.duration_s === 900 && Math.floor(Date.parse(fine.start_ts) / hour) * hour === Date.parse(row.start_ts)).length < 4);
+      return eligible.filter(row => row.duration_s === 3600 ? coarse.includes(row) : !coarse.some(hourRow =>
+        Date.parse(hourRow.start_ts) <= Date.parse(row.start_ts) &&
+        Date.parse(row.start_ts) < Date.parse(hourRow.start_ts) + hour))
+        .sort((a, b) => Date.parse(a.start_ts) - Date.parse(b.start_ts));
+    };
+    const calls: { from: number; to: number }[] = [];
+    const db = { async rpc(name: string, args: Record<string, string>) {
+      if (name === "get_energy_room_operation_facts") return { data: [], error: null };
+      assertEquals(name, "get_energy_room_thermal_interval_capture");
+      const begin = Date.parse(args.p_from), end = Date.parse(args.p_to);
+      assert(begin >= from && end <= to, "query overlap is bounded by the actual frozen scope");
+      calls.push({ from: begin, to: end });
+      return { data: compactCapture(canonical(begin, end)), error: null };
+    } };
+    const captured = await readRoomQuarters(db, "home", "customer", "room", new Date(from).toISOString(), new Date(to).toISOString(), true);
+    assertEquals(captured.map(row => row.start_ts), canonical(from, to).map(row => row.start_ts));
+    assertEquals(captured.filter(row => row.start_ts === crossing.start_ts).length, 1);
+    assertEquals(captured.filter(row => Date.parse(row.start_ts) >= seam - hour && Date.parse(row.start_ts) < seam)
+      .map(row => row.duration_s), [900, 900, 900, 900], "complete fine evidence wins over its native hour across the seam");
+    assertEquals(calls.length, 2, "overlap adds no extra round trips");
+    assertEquals(new Set(captured.map(row => row.start_ts)).size, captured.length);
+  }
+});
+
 Deno.test("material changes during a bounded band capture keep its revision pending instead of publishing mixed inputs", async () => {
   const rows = history(Date.UTC(2026, 0, 1)), candidate = window(rows, "-10");
   const base = database([candidate], rows);

@@ -75,6 +75,7 @@ export async function runRoomHeatingLearning(
     metadata.implementation !== ROOM_WINDOW_IMPLEMENTATION || metadata.binding !== context.binding ||
     metadata.homeId !== claim.home_id || metadata.customerId !== claim.customer_id || metadata.roomKey !== claim.owner_key ||
     metadata.baseRevision !== revision || progress.base_revision !== revision ||
+    Date.parse(metadata.window.to_at) > clock.historyTo ||
     typeof envelope.sha256 !== "string" || !Number.isInteger(envelope.row_count)) return await reset(cursor);
   let cells;
   try { cells = parseRoomBandFitCells(progress.cells); }

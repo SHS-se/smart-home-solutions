@@ -17,6 +17,8 @@ import { readRoomDoorwayModel, type RoomDoorwayModel } from "../planner/models/r
 import { qualifyProbeFreshness, type ProbeFreshnessReport } from "../device-learning/room/source-freshness.ts";
 import { decodeHeatingProbeCapture } from "../heating-probe-wire.ts";
 
+const HOUR_MS = 3_600_000;
+
 export async function readRoomQuarters(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, from: string, to: string, native = false,
@@ -26,17 +28,26 @@ export async function readRoomQuarters(
       p_customer_id: customerId, p_home_id: homeId, p_from: from, p_to: to,
     }).eq("room_key", roomKey).range(first, last));
   // Each bounded capture is one JSON response with a shared probe dictionary.
-  // Internal hour boundaries preserve the choice between quarters and native hours.
+  // Logical hour boundaries own rows by their starts. Query one supported
+  // native interval around the seam so complete fractional-start quarters and
+  // the canonical fine/hour resolution choice survive internal batching.
   const chunks = nativeRoomReadWindows(from, to);
+  const scopeFrom = Date.parse(from), scopeTo = Date.parse(to);
   const rows: ThermalQuarterRow[] = [];
   // A room owns one learning lane. Do not fan that single owner back out into
   // simultaneous database scans of the household's shared probe history.
-  for (const [from, to] of chunks) {
+  for (const [chunkFrom, chunkTo] of chunks) {
+    const begin = Date.parse(chunkFrom), end = Date.parse(chunkTo);
     const { data, error } = await db.rpc("get_energy_room_thermal_interval_capture", {
-      p_customer_id: customerId, p_home_id: homeId, p_room_key: roomKey, p_from: from, p_to: to,
+      p_customer_id: customerId, p_home_id: homeId, p_room_key: roomKey,
+      p_from: new Date(Math.max(scopeFrom, begin - HOUR_MS)).toISOString(),
+      p_to: new Date(Math.min(scopeTo, end + HOUR_MS)).toISOString(),
     });
     if (error) throw new Error(`get_energy_room_thermal_interval_capture: ${error.message}`);
-    rows.push(...decodeHeatingProbeCapture(data, roomKey));
+    rows.push(...decodeHeatingProbeCapture(data, roomKey).filter(row => {
+      const start = Date.parse(row.start_ts);
+      return start >= begin && start < end && start + (row.duration_s ?? 900) * 1000 <= scopeTo;
+    }));
   }
   const { data: facts, error: factError } = await db.rpc("get_energy_room_operation_facts", {
     p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_from: from, p_to: to,
@@ -47,7 +58,7 @@ export async function readRoomQuarters(
 }
 
 export function nativeRoomReadWindows(from: string, to: string): [string, string][] {
-  const hour = 3_600_000, finish = Date.parse(to), windows: [string, string][] = [];
+  const hour = HOUR_MS, finish = Date.parse(to), windows: [string, string][] = [];
   let start = Date.parse(from);
   if (!Number.isFinite(start) || !Number.isFinite(finish)) throw new Error("Invalid native history range");
   while (start < finish) {
