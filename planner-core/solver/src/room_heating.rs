@@ -176,6 +176,62 @@ impl ProjectionMemo {
         self.cursor = 0;
     }
 }
+fn committed_projection(
+    q: &Quarter,
+    thermostats: &[Thermostat],
+    initial: State,
+    targets: &mut [f64],
+    committed: &mut Projection,
+) {
+    let passive = temperature(q.transition, initial, 0.);
+    let committed_relay: f64 = q
+        .relay_w
+        .iter()
+        .enumerate()
+        .map(|(j, w)| {
+            if q.fixed_relays[j] == Some(true) {
+                *w
+            } else {
+                0.
+            }
+        })
+        .sum();
+    if let Some(room) = q.room_target.as_ref() {
+        for (j, t) in thermostats.iter().enumerate() {
+            targets[j] = if room.fixed_c.is_some()
+                || room.fixed_switches[j].is_some()
+                || q.fixed_targets_c[j].is_some()
+            {
+                room_device_target(room, q, j, t, room.fixed_c.unwrap_or(room.preferred_c))
+            } else if t.relay {
+                -f64::MAX
+            } else {
+                t.minimum_c
+            };
+        }
+    }
+    let has_commitment = q.room_target.as_ref().is_some_and(|room| {
+        room.fixed_c.is_some() || room.fixed_switches.iter().any(Option::is_some)
+    }) || q.fixed_targets_c.iter().any(Option::is_some)
+        || q.fixed_relays.iter().any(Option::is_some);
+    let minimum_can_heat = thermostats
+        .iter()
+        .any(|t| initial.temperature.min(passive) + t.sensor_offset_c < t.minimum_c);
+    if has_commitment || minimum_can_heat {
+        project(
+            &q.physics,
+            thermostats,
+            initial,
+            targets,
+            committed_relay,
+            committed,
+        );
+    } else {
+        committed.peak = 0.;
+        committed.state.temperature = passive;
+    }
+}
+
 fn score(
     q: &Quarter,
     bounds: RoomBounds,
@@ -380,53 +436,13 @@ impl<'a> Search<'a> {
                 (index(initial.temperature.max(full) + t.sensor_offset_c + 0.5) + 1).min(last);
             self.targets[j] = q.fixed_targets_c[j].unwrap_or(t.minimum_c);
         }
-        let committed_relay: f64 = q
-            .relay_w
-            .iter()
-            .enumerate()
-            .map(|(j, w)| {
-                if q.fixed_relays[j] == Some(true) {
-                    *w
-                } else {
-                    0.
-                }
-            })
-            .sum();
-        if let Some(room) = room {
-            for (j, t) in self.thermostats.iter().enumerate() {
-                self.targets[j] = if room.fixed_c.is_some()
-                    || room.fixed_switches[j].is_some()
-                    || q.fixed_targets_c[j].is_some()
-                {
-                    room_device_target(room, q, j, t, room.fixed_c.unwrap_or(room.preferred_c))
-                } else if t.relay {
-                    -f64::MAX
-                } else {
-                    t.minimum_c
-                };
-            }
-        }
-        let has_commitment = room.is_some_and(|room| {
-            room.fixed_c.is_some() || room.fixed_switches.iter().any(Option::is_some)
-        }) || q.fixed_targets_c.iter().any(Option::is_some)
-            || q.fixed_relays.iter().any(Option::is_some);
-        let minimum_can_heat = self
-            .thermostats
-            .iter()
-            .any(|t| initial.temperature.min(passive) + t.sensor_offset_c < t.minimum_c);
-        if has_commitment || minimum_can_heat {
-            project(
-                &q.physics,
-                self.thermostats,
-                initial,
-                &self.targets,
-                committed_relay,
-                &mut self.committed,
-            );
-        } else {
-            self.committed.peak = 0.;
-            self.committed.state.temperature = passive;
-        }
+        committed_projection(
+            q,
+            self.thermostats,
+            initial,
+            &mut self.targets,
+            &mut self.committed,
+        );
         let mut best_score = f64::INFINITY;
         let mut best_watts = f64::INFINITY;
         let (first_room, last_room) = if SHARED {
@@ -889,8 +905,129 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     if reachable.is_some() && search.unreached {
         return Ok(None);
     }
+    if quarters
+        .iter()
+        .all(|q| q.room_target.is_some() && q.relay_w.is_empty())
+        && !quarters.is_empty()
+    {
+        if let Some(reference) = literal_schedule(input, &quarter_thermostats) {
+            if !dominates_reference(input, &result, &reference) {
+                result = reference;
+            }
+        }
+    }
     Ok(Some(result))
 }
+
+/// Replay literal comfort targets through the same actuator kernel as search.
+/// Accepted native targets and fixed switches retain their exact authority.
+fn literal_schedule(
+    input: &Input,
+    quarter_thermostats: &[Option<Vec<Thermostat>>],
+) -> Option<Plan> {
+    let mut result = Plan::default();
+    let mut state = State {
+        temperature: input.start_c,
+        stored_heat: input.start_stored_heat_c,
+        mask: input
+            .thermostats
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.hvac_action == "heating")
+            .map(|(j, _)| 1 << j)
+            .sum(),
+    };
+    let mut projection = Projection::new(input.thermostats.len());
+    let mut committed = Projection::new(input.thermostats.len());
+    let mut committed_targets = vec![0.; input.thermostats.len()];
+    for (i, q) in input.quarters.iter().enumerate() {
+        let room = q.room_target.as_ref().expect("shared room");
+        let target = room.fixed_c.unwrap_or(room.preferred_c);
+        let thermostats = quarter_thermostats[i]
+            .as_deref()
+            .unwrap_or(&input.thermostats);
+        let targets: Vec<_> = thermostats
+            .iter()
+            .enumerate()
+            .map(|(j, t)| room_device_target(room, q, j, t, target))
+            .collect();
+        for (j, t) in thermostats.iter().enumerate() {
+            committed_targets[j] = q.fixed_targets_c[j].unwrap_or(t.minimum_c);
+        }
+        committed_projection(
+            q,
+            thermostats,
+            state,
+            &mut committed_targets,
+            &mut committed,
+        );
+        project(
+            &q.physics,
+            thermostats,
+            state,
+            &targets,
+            0.,
+            &mut projection,
+        );
+        let bounds = RoomBounds {
+            passive: temperature(q.transition, state, 0.),
+            committed_peak: committed.peak,
+            committed_next: committed.state.temperature,
+        };
+        score(
+            q,
+            bounds,
+            projection.state.temperature,
+            projection.peak,
+            projection.power.iter().sum(),
+            0.,
+        )?;
+        state = projection.state;
+        result.power_w.push(projection.power.iter().sum());
+        result.thermostat_w.push(projection.power.clone());
+        result.targets_c.push(targets);
+        result.relays_on.push(vec![]);
+        result.temperature_c.push(state.temperature);
+        result
+            .shortfall_c
+            .push((q.required_c - state.temperature).max(0.));
+        result.room_targets_c.push(target);
+    }
+    Some(result)
+}
+
+/// Optional changes must preserve comfort and pay for their electricity.
+/// Comparing these separately prevents a tiny response from buying unlimited
+/// energy through the search's large shortfall weight.
+fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool {
+    let cost = |plan: &Plan| {
+        input
+            .quarters
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let watts = plan.power_w[i];
+                let solar = watts.min(q.surplus_w.max(0.));
+                q.physics.hours / 1000.
+                    * (q.export_sek_per_kwh * solar + q.import_sek_per_kwh * (watts - solar))
+            })
+            .sum::<f64>()
+    };
+    let shortfall = |plan: &Plan| {
+        input
+            .quarters
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let target = q.room_target.as_ref().expect("shared room").preferred_c;
+                (target - plan.temperature_c[i]).max(0.) * q.physics.hours
+            })
+            .sum::<f64>()
+    };
+    // Tolerances cover floating point accumulation only, not model quality.
+    cost(proposal) <= cost(reference) + 1e-8 && shortfall(proposal) <= shortfall(reference) + 1e-8
+}
+
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Outcome {

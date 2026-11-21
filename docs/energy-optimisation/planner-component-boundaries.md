@@ -498,3 +498,24 @@ intersect that source period, and queues ordinary refitting for the affected
 owners. General responses with clean training spans remain available, and archived
 revision records are preserved. This is a source reliability decision supported by
 the customer's evidence, not a fitted-error threshold or numerical energy cap.
+
+## Shared-room proposal qualification
+
+The native room scheduler generates one proposal and replays literal scheduled
+targets with the existing minute actuator kernel. Fixed room targets, native
+targets and switch commands constrain both schedules identically. Both start
+with the measured room temperature, HVAC latches and stored heat. Weather-band
+transitions and supported running draw remain the captured physical basis.
+
+The solver compares total priced electricity, including solar opportunity cost,
+and degree-hours below literal scheduled targets as separate quantities.
+A proposal that increases either quantity yields to the literal schedule.
+The selected schedule supplies commands, member power and room temperature
+together. This requires one forward projection in addition to the existing
+search. Model fitting and statistical qualification stay in the room learner.
+
+This comparison currently uses the published response. It does not establish
+that its temperature or consumption forecasts are accurate. Sparse fitted
+responses continue through the existing measured-demand path. Chronological
+heater-off and pulse validation, uncertainty publication and commissioning
+demand evidence remain separate work in the model owner.

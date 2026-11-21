@@ -1,5 +1,15 @@
 # Requirements for planner and controller constraints
 
+User requirement, 21 November 2026: modeled changes to a shared room's literal
+temperature schedule must preserve scheduled comfort and cost no more than
+following that schedule through the same physical response. Replay the literal
+targets with the same initial state, actuator latches, weather, native limits,
+accepted commands and available electrical capacity. Compare degree-hours below
+the scheduled targets and priced electricity separately. The large shortfall
+weight used during search cannot justify extra spending in this comparison.
+Keep the existing sparse-evidence safeguard during qualification of learned
+response evidence.
+
 User requirement, 21 November 2026: a room fit with too little measured heating
 or too few observations must not drive modeled preheating. If a selected fit
 lacks that evidence, plan the room with its existing comfort commands and

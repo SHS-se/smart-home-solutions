@@ -345,3 +345,76 @@ Deno.test("a sparse fit cannot turn a brief comfort target into full-power prehe
   assertEquals(result.heating_model_use?.[zone.key].thermal[0].source.kind, "empirical");
   assert(result.warnings.some(warning => warning.message.includes("too few measured heating observations")));
 });
+
+/** Synthetic resistive room, independent of household observations. */
+function sharedRelayRoom(): OptimisationSnapshot {
+  const snapshot = bathroomWithRack(undefined, 2000);
+  snapshot.schema_version = 12;
+  const relay = { ...snapshot.device_models[1], relay_on: false };
+  snapshot.device_models = [relay];
+  const zone = snapshot.thermal_zones![0];
+  zone.device_keys = [relay.key];
+  zone.start_temperature_c = 20;
+  zone.target_c = zone.target_c.map((_, i) => i === COMFORT_FROM ? 21 : 17);
+  zone.comfort_min_c = zone.target_c;
+  zone.maximum_power_w_by_slot.fill(2000);
+  zone.rated_power_w = 2000;
+  return snapshot;
+}
+
+Deno.test("an unflagged weak response cannot purchase a horizon of speculative heat", () => {
+  const snapshot = sharedRelayRoom();
+  const zone = snapshot.thermal_zones![0];
+  assert(zone.model && "gain_c_per_wh" in zone.model);
+  zone.model = { ...zone.model, gain_c_per_wh: .000001, sample_count: 10000 };
+  const accepted = {type: "room_relay", room_key: zone.key, target_c: 19} as const;
+  const result = prepareRoomServices(snapshot, [{device_commands: {rack: accepted}}], undefined,
+    prices(snapshot.slots.map(() => 2)));
+  assertEquals(result.commands.rack[0], accepted);
+  result.commands.rack.slice(1).forEach((command, i) => {
+    assertEquals(command, {type: "room_relay", room_key: zone.key, target_c: zone.target_c[i + 1]});
+  });
+  assert(result.room_power.bathroom.reduce((sum, watts) => sum + watts / 4000, 0) < 1);
+});
+
+Deno.test("schedule comparison preserves genuine sustained heating demand", () => {
+  const snapshot = sharedRelayRoom();
+  snapshot.outdoor_temperature_c!.fill(-25);
+  const zone = snapshot.thermal_zones![0];
+  zone.target_c.fill(24);
+  zone.comfort_min_c.fill(24);
+  zone.start_temperature_c = 10;
+  const result = prepareRoomServices(snapshot, [], undefined, prices(snapshot.slots.map(() => 2)));
+  assert(result.room_power.bathroom.every(watts => Math.abs(watts - 2000) < 1e-6));
+});
+
+Deno.test("schedule comparison accepts cheaper heating that improves scheduled comfort", () => {
+  const snapshot = sharedRelayRoom();
+  const zone = snapshot.thermal_zones![0];
+  zone.target_c = zone.target_c.map((_, i) => i >= 4 ? 21 : 18);
+  zone.comfort_min_c = zone.target_c;
+  snapshot.outdoor_temperature_c!.fill(14);
+  assert(zone.model && "gain_c_per_wh" in zone.model);
+  zone.model = {...zone.model, gain_c_per_wh: .001, cooling_constant_per_h: .025,
+    house_coupling_per_h: .08, background_gain_c_per_h: .05};
+  snapshot.house_temperature_c = snapshot.slots.map(() => 20);
+  const result = prepareRoomServices(snapshot, [], undefined,
+    prices(snapshot.slots.map((_, i) => i < 4 ? .25 : 4)));
+  assert(result.room_power.bathroom.slice(0, 4).some(watts => watts > 0));
+  assert(result.commands.rack.slice(0, 4).some(command => command.type === "room_relay" && command.target_c > 18));
+  assert(result.temperature.bathroom.slice(4).every(c => c !== null && c >= 20.75));
+});
+
+Deno.test("literal schedule cannot start a native heater beyond available headroom", () => {
+  const snapshot = bathroom();
+  snapshot.schema_version = 12;
+  const zone = snapshot.thermal_zones![0];
+  zone.start_temperature_c = 20;
+  zone.target_c.fill(24);
+  zone.comfort_min_c.fill(24);
+  snapshot.device_models[0].thermostat = {...snapshot.device_models[0].thermostat!,
+    current_temperature_c: 20, target_temperature_c: 24};
+  const result = prepareRoomServices(snapshot, [], snapshot.slots.map(() => 1000),
+    prices(snapshot.slots.map(() => 2)));
+  assert(result.power.floor.every(watts => watts === 0));
+});
