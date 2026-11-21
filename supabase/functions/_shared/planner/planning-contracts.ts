@@ -275,6 +275,7 @@ export interface ThermalZonePlanningInput {
   name: string;
   device_keys: string[];
   model: ThermalZoneModel | null;
+  model_warnings?: string[];
   heating_bands?: import("./heating-bands.ts").RoomHeatingBasis;
   start_temperature_c: number | null;
   /** Unreleased heater heat at the start, in temperature-equivalent °C. */

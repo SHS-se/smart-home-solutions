@@ -14,7 +14,7 @@ import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { OptimisationSnapshot, ThermalZonePlanningInput } from "./planner/planning-contracts.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { storedHeat, usesHouse } from "./planner/models/room/thermal.ts";
-import { roomHeatingBandAt } from "./planner/heating-bands.ts";
+import { roomHeatingBandAt, roomHeatingEvidenceLimited } from "./planner/heating-bands.ts";
 import { heatingWatts } from "./planner/weather-heating.ts";
 
 /** Current preferences and measurements, by room key. */
@@ -60,13 +60,17 @@ export function roomPlanningZones(
       const point = roomHeatingBandAt(bands.active, c);
       return point ? bands.active.indexOf(point) : -1;
     }) : undefined;
+    const basis = bands ? { ...bands, by_quarter: byQuarter ?? starts.map(() => -1) } : undefined;
     const covered = !!byQuarter?.length && byQuarter.every(index => index >= 0);
     // The required base argument seeds the existing forecast API; when no
     // general response exists, every quarter is explicitly assigned a band.
     // It must never supply an unobserved temperature via extrapolation.
     let model = room.model ?? (covered ? bands!.active[byQuarter![0]].model : null);
     const selectedModels = byQuarter?.map(index => bands!.active[index]?.model ?? model) ?? [model];
-    if (selectedModels.some(selected => selected && usesHouse(selected)) && !house) {
+    if (model && roomHeatingEvidenceLimited(basis, room.model_warnings)) {
+      skipped.push({ key: room.key, message: `${room.name}: too few measured heating observations to plan preheating; comfort commands use measured demand` });
+      model = null;
+    } else if (selectedModels.some(selected => selected && usesHouse(selected)) && !house) {
       skipped.push({ key: room.key, message: `${room.name}: house temperature unavailable; comfort commands use measured demand` });
       model = null;
     }
@@ -104,7 +108,8 @@ export function roomPlanningZones(
       skipped.push({ key: room.key, message: `${room.name}: incomplete thermal evidence; comfort commands use measured demand` });
     }
     zones.push({ key: room.key, name: room.name, device_keys: room.device_keys, model: usable,
-      ...(bands ? { heating_bands: { ...bands, by_quarter: byQuarter ?? starts.map(() => -1) } } : {}),
+      ...(basis ? { heating_bands: basis } : {}),
+      ...(room.model_warnings ? { model_warnings: room.model_warnings } : {}),
       start_temperature_c: start, start_stored_heat_c: usable ? delivered : null, rated_power_w: room.rated_power_w,
       ...(usable && passive ? { passive_heat_c_per_h: passive } : {}),
       ...(usable && doorway ? { doorway_boundary_c: doorway } : {}),

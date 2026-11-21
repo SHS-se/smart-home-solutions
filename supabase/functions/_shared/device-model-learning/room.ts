@@ -10,7 +10,7 @@ import { readPagedRows } from "../read-paged-rows.ts";
 import { historicalIrradiancePoints, irradiancePoints, irradianceOnto } from "../solar-irradiance.ts";
 import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
 import { publishRoomHeatingBandFit } from "../device-learning/room/heating-bands.ts";
-import { heatingBand, readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
+import { generalRoomFitWarnings, heatingBand, readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
 import { readThermalModel } from "../planner/models/room/read-model.ts";
 import { isEquilibrium, type DynamicThermalZoneModel, type ThermalZoneModel } from "../planner/models/room/thermal.ts";
 import { readRoomDoorwayModel, type RoomDoorwayModel } from "../planner/models/room/doorway-boundary.ts";
@@ -381,7 +381,9 @@ export function finalizeStoredRoomBand(metadata: RoomBandMetadata, rows: RoomMea
 }
 
 function roomReference(model: ThermalZoneModel, row?: Record<string, unknown>): RoomHeatingReference {
+  const warnings = generalRoomFitWarnings(row?.last_fit_attempt);
   return { model, ...(typeof row?.training_to === "string" ? { training_to: row.training_to } : {}),
+    ...(warnings ? { warnings } : {}),
     scope: { kind: "general" }, ...(row?.passive_heat ? { passive_heat: row.passive_heat } : {}),
     ...(row?.doorway_exchange ? { doorway_exchange: row.doorway_exchange } : {}) };
 }

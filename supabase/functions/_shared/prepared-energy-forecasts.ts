@@ -19,6 +19,7 @@ export interface PreparedRoom {
   name: string;
   device_keys: string[];
   model: ThermalZoneModel | null;
+  model_warnings?: string[];
   heating_bands?: Pick<import("./planner/heating-bands.ts").RoomHeatingBasis, "reference_revision" | "active">;
   passive_heat?: PassiveRoomHeat;
   rated_power_w: number;

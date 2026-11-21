@@ -1,5 +1,5 @@
 import { heatingDraw } from "./planner/weather-heating.ts";
-import { heatingModelRuns, type HeatingModelSource, type RoomHeatingBand, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
+import { heatingModelRuns, roomHeatingEvidenceLimited, type HeatingModelSource, type RoomHeatingBand, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
 import { PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
@@ -98,7 +98,8 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
     const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
-    if (!executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
+    const limitedFit = roomHeatingEvidenceLimited(zone.heating_bands, zone.model_warnings);
+    if (!limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
       outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
@@ -152,17 +153,18 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
       result.room_power[zone.key].push(total);
       result.temperature[zone.key].push(null);
       result.unplanned_temperature[zone.key].push(null);
-      result.unplanned_power[zone.key].push(zone.unplanned_power_w[i]);
+      result.unplanned_power[zone.key].push(limitedFit ? members.reduce((sum, member) => sum + member.forecast_w_by_slot[i], 0) : zone.unplanned_power_w[i]);
       remaining[i] = Math.max(0, remaining[i] - total);
       surplus[i] = Math.max(0, surplus[i] - total);
     }
     result.warnings.push(planningWarning("room_estimate", zone.key,
-      `${zone.name}: the thermal or native thermostat forecast has incomplete evidence.`,
+      limitedFit ? `${zone.name}: too few measured heating observations to plan preheating.`
+        : `${zone.name}: the thermal or native thermostat forecast has incomplete evidence.`,
       "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
     if (zone.heating_bands) {
       const basis = zone.heating_bands;
       const empirical: RoomHeatingModelUse["thermal"] = [{ from: 0, through: n - 1, source: { kind: "empirical" } }];
-      const baseline = zone.model && outdoorKnown ? {
+      const baseline = !limitedFit && zone.model && outdoorKnown ? {
         thermal: heatingModelRuns(basis.by_quarter.map(index => thermalSource(basis.active[index], basis.reference_revision))),
         electrical: Object.fromEntries(members.map(member => [member.key, heatingModelRuns(
           snapshot.outdoor_temperature_c!.map(c => electricalSource(member,

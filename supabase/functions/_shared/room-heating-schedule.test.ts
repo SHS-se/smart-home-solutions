@@ -313,3 +313,35 @@ Deno.test("room relay targets forecast partial heating and fit a budget shared b
   assertEquals(estimated.commands.rack[0], {type: "room_relay", room_key: "bathroom", target_c: SETBACK});
   assert(estimated.warnings.some(warning => warning.code === "room_estimate"));
 });
+
+Deno.test("a sparse fit cannot turn a brief comfort target into full-power preheating", () => {
+  const snapshot = bathroomWithRack();
+  snapshot.schema_version = 12;
+  const relay = snapshot.device_models[1];
+  relay.relay_on = false;
+  relay.forecast_w_by_slot.fill(40);
+  snapshot.device_models = [relay];
+  const zone = snapshot.thermal_zones![0];
+  zone.device_keys = [relay.key];
+  zone.unplanned_power_w.fill(relay.active_power_w!);
+  assert(zone.model && "gain_c_per_wh" in zone.model);
+  zone.target_c = zone.target_c.map((_, i) => i === COMFORT_FROM ? COMFORT : SETBACK);
+  zone.comfort_min_c = zone.target_c;
+  zone.heating_bands = { reference_revision: null, by_quarter: zone.target_c.map(() => 0), active: [{
+    revision: "synthetic-weak-heater", band_c: 0, observed_min_c: 0, observed_max_c: 3,
+    training_from: "2025-01-01", training_to: "2025-02-01",
+    model: { ...zone.model, gain_c_per_wh: .00003 }, warnings: ["insufficient_heating"],
+  }] };
+  const accepted = { type: "room_relay", room_key: zone.key, target_c: SETBACK + 1 } as const;
+  const result = prepareRoomServices(snapshot, [{ device_commands: { [relay.key]: accepted } }], undefined, prices(nightTariff));
+
+  assertEquals(result.commands[relay.key][0], accepted);
+  result.commands[relay.key].slice(1).forEach((command, i) => {
+    assertEquals(command, { type: "room_relay", room_key: zone.key, target_c: zone.target_c[i + 1] });
+  });
+  assertEquals(result.power[relay.key], relay.forecast_w_by_slot);
+  assertEquals(result.unplanned_power[zone.key], relay.forecast_w_by_slot);
+  assert(result.temperature[zone.key].every(value => value === null));
+  assertEquals(result.heating_model_use?.[zone.key].thermal[0].source.kind, "empirical");
+  assert(result.warnings.some(warning => warning.message.includes("too few measured heating observations")));
+});

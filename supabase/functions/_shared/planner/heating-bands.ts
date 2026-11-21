@@ -47,6 +47,7 @@ export interface RoomHeatingBands {
 export interface RoomHeatingReference {
   model: ThermalZoneModel;
   training_to?: string;
+  warnings?: string[];
   scope?: { kind: "general" } | { kind: "band"; band_c: number };
   passive_heat?: unknown;
   doorway_exchange?: unknown;
@@ -56,6 +57,22 @@ export interface RoomHeatingBasis {
   reference_revision: string | number | null;
   active: RoomHeatingBand[];
   by_quarter: number[];
+}
+
+/** Band attempts have their own dated evidence and do not describe the general fit. */
+export function generalRoomFitWarnings(attempt: unknown): string[] | undefined {
+  const fit = attempt as { at?: string; status?: string; issues?: string[] } | null | undefined;
+  return fit?.at === undefined && fit?.status === "limited" && Array.isArray(fit.issues) ? fit.issues : undefined;
+}
+
+/** Qualify the fits actually used by the forecast. A temperature projection
+ * crosses quarters, so an unsupported response anywhere in that trajectory
+ * cannot justify ahead-of-time heating. The learner owns the evidence limits. */
+export function roomHeatingEvidenceLimited(basis: RoomHeatingBasis | undefined, referenceWarnings?: readonly string[]): boolean {
+  const limited = (warnings?: readonly string[]) => Array.isArray(warnings) &&
+    (warnings.includes("insufficient_heating") || warnings.includes("insufficient_samples"));
+  if (!basis?.by_quarter.length) return limited(referenceWarnings);
+  return basis.by_quarter.some(index => limited(index < 0 ? referenceWarnings : basis.active[index]?.warnings));
 }
 
 export type HeatingModelSource =

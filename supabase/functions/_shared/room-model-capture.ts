@@ -14,7 +14,7 @@ import { roomPlanningZones } from "./room-planning-zones.ts";
 import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
 import { classifyOutdoorSeries } from "./outdoor-forecast.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
-import { readRoomHeatingBands, roomHeatingBandAt } from "./planner/heating-bands.ts";
+import { generalRoomFitWarnings, readRoomHeatingBands, roomHeatingBandAt } from "./planner/heating-bands.ts";
 
 /** Mapping has already been parsed at the transport boundary. */
 export interface RoomDeviceMapping {
@@ -213,6 +213,7 @@ export function prepareRoomModels(
       "The latest usable thermal parameters remain available; comfort service continues.")]);
     const model = readThermalModel(boundary?.model) ??
       (fitted?.trained && !narrowReference ? readThermalModel(fitted) : null);
+    const modelWarnings = boundary?.warnings ?? generalRoomFitWarnings(attempt);
     if (heatingContext && model && library && !compatible) {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
         "room_heating_band_estimated", room.key, `${room.name}: heating sources changed.`,
@@ -221,6 +222,7 @@ export function prepareRoomModels(
     const doorway = readRoomDoorwayModel(boundary ? boundary.doorway_exchange : fitted?.doorway_exchange, model && !isEquilibrium(model) ? model.house_coupling_per_h ?? 0 : 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
+      ...(model && modelWarnings?.length ? { model_warnings: modelWarnings } : {}),
       ...(heatingContext ? { heating_bands: { reference_revision: model ? library?.reference_revision ?? library?.previous_reference_revision ?? fitted?.model_revision ?? null : null,
         active: compatible ? library!.active : [] } } : {}),
       ...(doorway ? { doorway } : {}),

@@ -1,5 +1,12 @@
 # Requirements for planner and controller constraints
 
+User requirement, 21 November 2026: a room fit with too little measured heating
+or too few observations must not drive modeled preheating. If a selected fit
+lacks that evidence, plan the room with its existing comfort commands and
+measured demand profile. Preserve accepted commands and continue planning the
+household. The learner's existing evidence diagnostics determine when thermal
+preheating is supported.
+
 User requirement, 13 November 2026: once EV readiness calls for the configured
 charge limit, the planner can finish a charge that needs less than one quarter
 at the minimum supported current. Schedule the finishing charge when it fits,

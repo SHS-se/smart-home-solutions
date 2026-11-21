@@ -103,3 +103,24 @@ Deno.test("house evidence is required by any selected band, not only the first q
   assertEquals(result.zones[0].model, null);
   assert(result.warnings.some(warning => warning.message.includes("house temperature unavailable")));
 });
+
+Deno.test("sparse evidence in a selected fit keeps the comfort schedule and estimates electrical demand from history", () => {
+  const s = snapshot();
+  s.device_models = [{ ...s.device_models[0], key: "floor", forecast_w_by_slot: Array(8).fill(234) }];
+  const room = bandOnlyRoom();
+  room.heating_bands!.active[1].warnings = ["insufficient_heating"];
+  s.outdoor_temperature_c = [-8, -8, 5, 5, 5, 5, 5, 5];
+
+  const result = roomPlanningZones(s, [room], evidence(22));
+  assertEquals(result.zones[0].model, null);
+  assertEquals(result.zones[0].unplanned_power_w, Array(8).fill(234));
+  assertEquals(result.zones[0].target_c, Array(8).fill(22));
+  assert(result.warnings.some(warning => warning.message.includes("too few measured heating observations")));
+
+  s.outdoor_temperature_c.fill(-8);
+  assert(roomPlanningZones(s, [room], evidence(22)).zones[0].model, "an unused sparse band has no effect");
+
+  const general = bathroom();
+  general.model_warnings = ["insufficient_samples"];
+  assertEquals(roomPlanningZones(s, [general], evidence(22)).zones[0].model, null);
+});
