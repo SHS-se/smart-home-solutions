@@ -1,3 +1,4 @@
+import { learnRoomResponse, type LearnedRoomResponse, ROOM_RUN_POLICY } from "../device-learning/room/response-learning.ts";
 import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.ts";
@@ -80,7 +81,7 @@ export interface HeatingFitWindow {
 
 // Revisit each completed band once to publish the selected response family
 // and evaluate equilibrium forcing in its own temperature coordinates.
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:regularized_additional_heat_v8`;
+export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:${ROOM_RUN_POLICY}`;
 
 function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
   const result = new Map<string, number>();
@@ -116,6 +117,8 @@ export interface RoomBandMetadata {
   ratedPowerW: number | null;
   lastAt: string;
   sourceFreshness: ProbeFreshnessReport | null;
+  scope?: "general";
+  roomName?: string;
 }
 
 export type RoomBandWork = { metadata: RoomBandMetadata; rows: RoomMeanQuarter[] };
@@ -130,7 +133,7 @@ export async function fitStoredRoomHeating(...args: Parameters<typeof prepareSto
   const prepared = await prepareStoredRoomHeating(...args);
   if (prepared.kind === "model") return prepared.model;
   const { metadata, rows } = prepared.work;
-  const fit = fitIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c, metadata.ratedPowerW);
+  const fit = learnRoomResponse(rows, roomLearningOutdoor(metadata), metadata.ratedPowerW);
   return finalizeStoredRoomBand(metadata, rows, fit);
 }
 
@@ -147,11 +150,12 @@ export async function prepareStoredRoomHeating(
   const floor = new Date(clock.historyTo - 400 * 86_400_000).toISOString();
   const library: RoomHeatingBands = current?.binding === context.binding ? { ...current, since: context.observed_since &&
     Date.parse(context.observed_since) < Date.parse(current.since) ? context.observed_since : current.since } : {
-    binding: context.binding, since: context.observed_since ?? floor,
+    binding: context.binding, calibration_policy: ROOM_RUN_POLICY, since: context.observed_since ?? floor,
     reference_revision: null, active: [], candidates: [], attempted: {},
     ...(current?.reference_revision || current?.previous_reference_revision
       ? { previous_reference_revision: (current.reference_revision ?? current.previous_reference_revision)! } : {}),
   };
+  library.calibration_policy = ROOM_RUN_POLICY;
   const narrowReference = library.reference?.scope?.kind === "band";
   const previousModel = previous?.trained && !narrowReference && (!current || current.binding === context.binding)
     ? readThermalModel(library.reference?.model ?? previous) : null;
@@ -199,9 +203,7 @@ export async function prepareStoredRoomHeating(
     // Keep the standard recent attempt and its explicit diagnostics when no
     // heating window exists; absence of recent heating never erases a model.
     const row = await fitStoredRoom(db, homeId, customerId, roomKey, location, clock, library.since, true, context.binding);
-    const model = row.trained ? readThermalModel(row) : null;
-    return { kind: "model", model: { ...row, heating_bands: { ...library, pending_windows: 0,
-      ...(model ? { reference_revision: crypto.randomUUID(), reference: roomReference(model, row) } : {}) } } };
+    return { kind: "model", model: { ...row, heating_bands: { ...library, pending_windows: 0 } } };
   }
   const latest = windows[0];
   const evidenceAt = windows.reduce((latest, window) => Date.parse(window.evidence_updated_at) > Date.parse(latest)
@@ -237,17 +239,20 @@ export async function prepareStoredRoomHeating(
       home_id: homeId, customer_id: customerId, room_key: roomKey, last_attempted_at: attemptedAt,
       heating_bands: { ...library, pending_windows: pending.length + 1 },
     } };
-    const row = await fitLoadedRoom(db, homeId, customerId, roomKey, from, to, captured);
-    const model = row.trained ? readThermalModel(row) : null;
-    const reference = model ? roomReference(model, row) : installed;
-    return { kind: "model", model: { ...(model || !installed ? row : {}), home_id: homeId, customer_id: customerId, room_key: roomKey,
-      last_attempted_at: attemptedAt, last_fit_attempt: row.last_fit_attempt,
-      heating_bands: { ...library,
-        ...(reference ? { reference, reference_revision: model ? crypto.randomUUID() : library.reference_revision } : {}),
-        general_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, evidence_updated_at: updatedAt, from_at: from, to_at: to, attempted_at: attemptedAt },
-        general_solar_pending: solar.pending, general_solar_retry_at: solar.retry_at,
-        pending_windows: pending.length + Number(solar.pending && solarReady(solar.retry_at)),
-      } } };
+    const fingerprint = before;
+    const progressLibrary = { ...library, pending_windows: pending.length + 1,
+      general_solar_pending: solar.pending, general_solar_retry_at: solar.retry_at };
+    return { kind: "band", work: { rows: captured.quarters.map(thermalQuarter), metadata: {
+      version: 1, implementation: ROOM_WINDOW_IMPLEMENTATION, scope: "general",
+      homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
+      attemptedAt, pinnedFloor: new Date(Math.max(Date.parse(library.since), Date.parse(floor))).toISOString(),
+      window: { window_key: "general", band_c: 0, from_at: from, to_at: to,
+        fingerprint, evidence_updated_at: updatedAt },
+      library, progressLibrary, reference: installed ?? null,
+      ratedPowerW: captured.quarters.at(-1)?.active_power_w ?? null,
+      roomName: captured.quarters.at(-1)?.room_name ?? roomKey,
+      lastAt: captured.quarters.at(-1)?.start_ts ?? to, sourceFreshness: captured.sourceFreshness ?? null,
+    } } };
   }
   if (!pending.length) return { kind: "model", model: { home_id: homeId, customer_id: customerId, room_key: roomKey,
     last_attempted_at: attemptedAt, heating_bands: { ...library, pending_windows: 0 } } };
@@ -301,6 +306,10 @@ export async function prepareStoredRoomHeating(
   } } };
 }
 
+export function roomLearningOutdoor(metadata: RoomBandMetadata): (outdoor: number) => boolean {
+  return metadata.scope === "general" ? () => true : outdoor => heatingBand(outdoor) === metadata.window.band_c;
+}
+
 /** Scratch metadata is disposable; incompatible state must be captured again. */
 export function parseRoomBandMetadata(value: unknown): RoomBandMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -311,6 +320,8 @@ export function parseRoomBandMetadata(value: unknown): RoomBandMetadata | null {
     !Number.isSafeInteger(row.baseRevision) || row.baseRevision < 0 ||
     !date(row.attemptedAt) || !date(row.pinnedFloor) || !date(row.lastAt) ||
     !(row.ratedPowerW === null || typeof row.ratedPowerW === "number" && Number.isFinite(row.ratedPowerW))) return null;
+  if (row.scope !== undefined && row.scope !== "general") return null;
+  if (row.scope === "general" && row.window?.window_key !== "general") return null;
   const window = row.window;
   if (!window || typeof window.window_key !== "string" || !window.window_key ||
     typeof window.fingerprint !== "string" || !window.fingerprint ||
@@ -344,9 +355,10 @@ export async function recaptureStoredRoomBand(
   const matches = async () => {
     const { data, error } = await db.rpc("get_energy_room_heating_fit_windows", {
       p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey,
-      p_from: metadata.pinnedFloor, p_to: window.to_at,
+      p_from: metadata.scope === "general" ? window.from_at : metadata.pinnedFloor, p_to: window.to_at,
     });
     if (error) throw new Error(`get_energy_room_heating_fit_windows: ${error.message}`);
+    if (metadata.scope === "general") return inputRevision(data as HeatingFitWindow[]) === window.fingerprint;
     const found = (data as HeatingFitWindow[]).find(candidate => candidate.window_key === window.window_key);
     return found !== undefined && inputRevision([found]) === inputRevision([window]) &&
       found.band_c === window.band_c && found.evidence_updated_at === window.evidence_updated_at;
@@ -364,14 +376,45 @@ export async function recaptureStoredRoomBand(
 function correctedBandRows(captured: Awaited<ReturnType<typeof loadRoomObservations>>, roomKey: string,
   reference: RoomHeatingReference | null, since: string): RoomMeanQuarter[] {
   const observations = captured.quarters.map(thermalQuarter);
-  const corrected = reference ? bandObservations(observations, reference, captured.passive.get(roomKey), captured.doorways) : observations;
-  return corrected.filter(row => row.start_ms >= Date.parse(since));
+  // Only measured room/heater/weather evidence enters the new response.
+  // Old appliance or doorway kernels cannot pre-correct a new band.
+  return observations.filter(row => row.start_ms >= Date.parse(since));
 }
 
 export function finalizeStoredRoomBand(metadata: RoomBandMetadata, rows: RoomMeanQuarter[],
-  fit: ReturnType<typeof fitIndependentRoomBand>): Record<string, unknown> {
+  fit: LearnedRoomResponse): Record<string, unknown> {
   const { homeId, customerId, roomKey, attemptedAt, window, library, progressLibrary, reference, lastAt, sourceFreshness } = metadata;
-  let bands = publishRoomHeatingBandFit(progressLibrary, rows, window.band_c, Date.parse(lastAt), fit);
+  if (metadata.scope === "general") {
+    const learning = fit.result.learning_evidence;
+    const attempt = { status: fit.result.ok ? "fitted" : "unidentified",
+      issues: fit.result.ok ? fit.result.warnings ?? [] : [fit.result.reason], learning,
+      ...(sourceFreshness ? { source_freshness: sourceFreshness } : {}) };
+    const nextReference = fit.result.ok ? { model: fit.result.model, training_to: fit.run_ledger?.newest_run_at ?? window.to_at,
+      warnings: fit.result.warnings ?? [], learning_evidence: learning, scope: { kind: "general" as const } } : reference;
+    const physical = fit.result.ok ? fit.result.model : null;
+    const dynamic = physical && !isEquilibrium(physical) ? physical : null;
+    const scalar = dynamic ? Object.fromEntries(Object.entries(dynamic).filter(([key]) => key !== "response_family")) : physical ? {
+      gain_c_per_wh: null, cooling_constant_per_h: null, background_gain_c_per_h: null,
+      thermal_capacity_wh_per_c: null, heat_loss_w_per_c: null, time_constant_h: null, heating_rate_c_per_h: null,
+      house_coupling_per_h: null, solar_gain_c_per_h_per_wm2: null, r2: physical.r2,
+      residual_std_c: physical.residual_std_c, heat_lag_h: physical.heat_lag_h ?? null,
+      prediction_error_c: physical.prediction_error_c ?? null, solar_mean_w_per_m2: physical.solar_mean_w_per_m2 ?? null,
+    } : {};
+    return { home_id: homeId, customer_id: customerId, room_key: roomKey, room_name: metadata.roomName ?? roomKey,
+      ...(!physical && !reference ? { trained: false, rejection_reason: fit.result.ok ? "insufficient_heating_runs" : fit.result.reason,
+        sample_count: rows.length, training_from: window.from_at, training_to: window.to_at } : {}),
+      ...(physical ? { ...scalar, trained: true, rejection_reason: null, sample_count: physical.sample_count,
+        fitted_at: attemptedAt, training_from: fit.run_ledger?.oldest_run_at ?? window.from_at, training_to: fit.run_ledger?.newest_run_at ?? window.to_at,
+        passive_heat: null, doorway_exchange: null } : {}),
+      last_attempted_at: attemptedAt, last_fit_attempt: attempt,
+      heating_bands: { ...progressLibrary, ...(nextReference ? { reference: nextReference,
+        reference_revision: physical ? crypto.randomUUID() : library.reference_revision } : {}),
+        general_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, evidence_updated_at: window.evidence_updated_at,
+          from_at: window.from_at, to_at: window.to_at, attempted_at: attemptedAt },
+        pending_windows: Math.max(0, (progressLibrary.pending_windows ?? 1) - 1),
+      } };
+  }
+  let bands = publishRoomHeatingBandFit(progressLibrary, rows, window.band_c, Date.parse(lastAt), fit, attemptedAt);
   const diagnostic = bands.diagnostics?.[window.band_c] as {
     status: string; issues: string[]; learning?: RoomLearningEvidence;
   } | undefined;
@@ -519,11 +562,7 @@ async function loadRoomObservations(
   const quarters = qualified ? qualified.rows.map(({ probe_evidence: _facts, ...row }) => row) : raw;
   const sourceFreshness = qualified?.report;
   if (!quarters.length) return { quarters, passive: new Map<string, never>(), doorways: [], sourceFreshness };
-  const [passive, doorways] = await Promise.all([
-    readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo),
-    readDoorwayProbes(db, homeId, [roomKey], trainingFrom, trainingTo),
-  ]);
-  return { quarters, passive, doorways, sourceFreshness };
+  return { quarters, passive: new Map<string, never>(), doorways: [] as DoorwayProbeRow[], sourceFreshness };
 }
 
 function fitOptionalRoomResponses(row: Record<string, unknown>, quarters: ThermalQuarterRow[],

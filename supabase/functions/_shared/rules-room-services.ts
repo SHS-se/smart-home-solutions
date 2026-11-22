@@ -165,7 +165,7 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
       const basis = zone.heating_bands;
       const empirical: RoomHeatingModelUse["thermal"] = [{ from: 0, through: n - 1, source: { kind: "empirical" } }];
       const baseline = !limitedFit && zone.model && outdoorKnown ? {
-        thermal: heatingModelRuns(basis.by_quarter.map(index => thermalSource(basis.active[index], basis.reference_revision))),
+        thermal: heatingModelRuns(basis.by_quarter.map((index, i) => thermalSource(basis.active[index], basis.reference_revision, basis.extrapolated_by_quarter?.[i]))),
         electrical: Object.fromEntries(members.map(member => [member.key, heatingModelRuns(
           snapshot.outdoor_temperature_c!.map(c => electricalSource(member,
             member.weather_heating ? heatingDraw(member.weather_heating, c) : null)))])),
@@ -184,8 +184,8 @@ type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];
 type Member = OptimisationSnapshot["device_models"][number];
 type Retained = Array<{ device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number> }>;
 
-function thermalSource(band: RoomHeatingBand | undefined, referenceRevision: string | number | null): HeatingModelSource {
-  return band ? { kind: "band", band_c: band.band_c, revision: band.revision }
+function thermalSource(band: RoomHeatingBand | undefined, referenceRevision: string | number | null, extrapolated = false): HeatingModelSource {
+  return band ? { kind: "band", band_c: band.band_c, revision: band.revision, ...(extrapolated ? { extrapolated: true as const } : {}) }
     : { kind: "general", revision: referenceRevision };
 }
 
@@ -245,7 +245,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
       return profile ? heatingDraw(profile, conditions.outdoor_c) : null;
     }) : undefined;
     if (zone.heating_bands && runningPower) {
-      thermalUse.push(thermalSource(band, zone.heating_bands.reference_revision));
+      thermalUse.push(thermalSource(band, zone.heating_bands.reference_revision, zone.heating_bands.extrapolated_by_quarter?.[i]));
       for (const [j, member] of controlled.entries()) {
         electricalUse[j].push(electricalSource(member, runningPower[j]));
       }

@@ -1,3 +1,4 @@
+import { hasRoomRunSupport } from "./models/room/run-evidence.ts";
 import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import { readThermalModel } from "./models/room/read-model.ts";
 
@@ -12,6 +13,8 @@ export interface HeatingBandRevision {
   observed_max_c: number;
   training_from: string;
   training_to: string;
+  fitted_at?: string;
+  learning_evidence?: unknown;
 }
 
 export interface RoomHeatingBand extends HeatingBandRevision {
@@ -22,6 +25,7 @@ export interface RoomHeatingBand extends HeatingBandRevision {
 
 export interface RoomHeatingBands {
   binding: string;
+  calibration_policy?: string;
   since: string;
   reference_revision: string | null;
   previous_reference_revision?: string;
@@ -49,6 +53,7 @@ export interface RoomHeatingReference {
   training_to?: string;
   warnings?: string[];
   scope?: { kind: "general" } | { kind: "band"; band_c: number };
+  learning_evidence?: unknown;
   passive_heat?: unknown;
   doorway_exchange?: unknown;
 }
@@ -57,6 +62,8 @@ export interface RoomHeatingBasis {
   reference_revision: string | number | null;
   active: RoomHeatingBand[];
   by_quarter: number[];
+  /** True only when that quarter uses a response beyond its observed range. */
+  extrapolated_by_quarter?: boolean[];
 }
 
 /** Band attempts have their own dated evidence and do not describe the general fit. */
@@ -76,7 +83,7 @@ export function roomHeatingEvidenceLimited(basis: RoomHeatingBasis | undefined, 
 }
 
 export type HeatingModelSource =
-  | { kind: "band"; band_c: number; revision: string }
+  | { kind: "band"; band_c: number; revision: string; extrapolated?: true }
   | { kind: "general"; revision: string | number | null }
   | { kind: "weather_curve"; revision: string | number | null; anchors_c: number[] }
   | { kind: "running_power"; watts: number; revision?: string; binding?: string }
@@ -106,11 +113,25 @@ export function roomHeatingBandAt(bands: readonly RoomHeatingBand[], outdoorC: n
     outdoorC >= band.observed_min_c && outdoorC <= band.observed_max_c);
 }
 
+/** Extrapolation is an explicit use of a qualified response, never a fabricated
+ * cold-band fit. Its transition receives the actual forecast temperature. */
+export function roomHeatingResponseAt(bands: readonly RoomHeatingBand[], outdoorC: number): RoomHeatingBand | undefined {
+  const measured = roomHeatingBandAt(bands, outdoorC);
+  if (measured) return measured;
+  if (!Number.isFinite(outdoorC)) return;
+  const qualified = bands.filter(band => hasRoomRunSupport(band.learning_evidence));
+  if (!qualified.length || outdoorC >= Math.min(...qualified.map(band => band.observed_min_c))) return;
+  const distance = (band: RoomHeatingBand) => band.observed_min_c - outdoorC;
+  return qualified.reduce<RoomHeatingBand | undefined>((best, band) => !best || distance(band) < distance(best) ||
+    distance(band) === distance(best) && Date.parse(band.training_to) > Date.parse(best.training_to) ? band : best, undefined);
+}
+
 /** New fits take precedence in their measured range. Keep older evidence
  * for temperatures the new revision did not observe. */
 export function publishHeatingBand<T extends HeatingBandRevision>(active: readonly T[], candidate: T): T[] {
   const ordered = [candidate, ...active.filter(point => point.revision !== candidate.revision)]
-    .sort((a, b) => a.band_c - b.band_c || Date.parse(b.training_to) - Date.parse(a.training_to) ||
+    .sort((a, b) => a.band_c - b.band_c || Number(hasRoomRunSupport(b.learning_evidence)) - Number(hasRoomRunSupport(a.learning_evidence)) ||
+      Date.parse(b.fitted_at ?? b.training_to) - Date.parse(a.fitted_at ?? a.training_to) ||
       Date.parse(b.training_from) - Date.parse(a.training_from));
   return ordered.filter((point, index) => !ordered.slice(0, index).some(newer =>
     newer.band_c === point.band_c && newer.observed_min_c <= point.observed_min_c &&

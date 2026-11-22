@@ -1,3 +1,4 @@
+import { roomRunEvidence } from '@/lib/energy-shift/room-run-evidence';
 import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -13,10 +14,11 @@ import { readThermalModel } from '../../../../supabase/functions/_shared/planner
 import { isEquilibrium, SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
-import { FittedRoomWarnings, LatestRoomSourceEvidence } from './RoomModelEvidence';
+import { FittedRoomWarnings, LatestRoomSourceEvidence, LatestRoomRunEvidence } from './RoomModelEvidence';
 import { formatHeatingRange, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
 
-const learningEvidence = z.object({ observation_hours: z.number().optional(), observation_intervals: z.number().optional() }).passthrough();
+const learningEvidence = z.object({ observation_hours: z.number().optional(), observation_intervals: z.number().optional(),
+  run_calibration: roomRunEvidence.optional() }).passthrough();
 const roomRow = z.object({
   trained: z.boolean(),
   rejection_reason: z.string().nullable(),
@@ -177,14 +179,14 @@ function RoomScenario({ model, connections, initialOutdoor = -5, band }: {
   </div>;
 }
 
-function RoomFits({ model, connections, bands }: {
-  model: ThermalZoneModel | null; connections: Connection[]; bands: RoomHeatingBand[];
+function RoomFits({ model, connections, bands, generalEvidence }: {
+  model: ThermalZoneModel | null; connections: Connection[]; bands: RoomHeatingBand[]; generalEvidence: unknown;
 }) {
   const { language, t } = useLanguage();
   const [selection, setSelection] = useState('');
   const selected = selection === 'general' && model ? undefined : bands.find(band => band.revision === selection) ?? bands[0];
   const fitted = selected?.model ?? model;
-  const evidence = learningEvidence.safeParse(selected?.learning_evidence);
+  const evidence = learningEvidence.safeParse(selected?.learning_evidence ?? generalEvidence);
   const format = (value: number) => value.toLocaleString(language, { maximumFractionDigits: 2 });
   const observed = (band: RoomHeatingBand) => formatHeatingRange(band.observed_min_c, band.observed_max_c, format);
   if (!fitted) return null;
@@ -205,12 +207,19 @@ function RoomFits({ model, connections, bands }: {
         ? t('Ingen dynamisk tidskonstant', 'No dynamic time constant') : fitted.response_family === 'integrator'
         ? t('Obegränsad i modellen', 'Unbounded in this model') : fitted.time_constant_h === null ? '—' : `${format(fitted.time_constant_h)} h`}</dd></div>
       <div><dt>{t('Värmefördröjning', 'Heater lag')}</dt><dd className="font-medium">{format(fitted.heat_lag_h ?? 0)} h</dd></div>
+      <div><dt>{t('Anpassade uppvärmningsförlopp', 'Fitted heating runs')}</dt><dd className="font-medium" data-testid="fitted-heating-runs">{evidence.success && evidence.data.run_calibration
+        ? `${evidence.data.run_calibration.fitted_runs} / 10` : t('Inte bedömt', 'Not assessed')}</dd></div>
       <div><dt>{t('Anpassade övergångar', 'Fitted transitions')}</dt><dd className="font-medium">{fitted.sample_count.toLocaleString(language)}</dd></div>
     </dl>
     {selected && <p className="text-xs text-muted-foreground">
         {t('Träningsdata', 'Training data')} {selected.training_from.slice(0, 10)} – {selected.training_to.slice(0, 10)}
         {evidence.success && evidence.data.observation_hours !== undefined &&
           ` · ${format(evidence.data.observation_hours)} ${t('observerade timmar', 'observed hours')}`}
+    </p>}
+    {evidence.success && evidence.data.run_calibration && <p className="text-xs text-muted-foreground" data-testid="heating-run-support">
+      {t('Minst 3 jämförbara förlopp; de senaste 10 behålls.', 'At least 3 comparable runs; the latest 10 are retained.')}
+      {' '}{evidence.data.run_calibration.suspect_runs} {t('misstänkta förlopp uteslutna', 'suspect runs excluded')}
+      {' · '}{evidence.data.run_calibration.provisional_runs} {t('preliminära förlopp', 'provisional runs')}
     </p>}
     {selected && <FittedRoomWarnings warnings={selected.warnings} />}
     <RoomScenario key={selected?.revision ?? 'general'} model={fitted} connections={connections} band={selected}
@@ -238,7 +247,7 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
   return <div className="min-w-0 space-y-3 rounded-md border p-4 text-sm">
     <h3 className="font-semibold">{t('Rummets värmemodell', 'Room heating model')}</h3>
     {(model || bands.length > 0) && query.data ? <>
-      <RoomFits key={roomId} model={model} connections={query.data.connections} bands={bands} />
+      <RoomFits key={roomId} model={model} connections={query.data.connections} bands={bands} generalEvidence={room?.general_learning_evidence} />
       {model && bands.length === 0 && <p className="text-xs text-muted-foreground">{t(
         `Modellen är anpassad till ${model.sample_count} uppmätta temperaturövergångar.`, `The model was fitted to ${model.sample_count} measured temperature transitions.`,
       )}</p>}
@@ -248,6 +257,7 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
         : rejection && THERMAL_REJECTION_EN[rejection] ? t(THERMAL_REJECTION_SV[rejection], THERMAL_REJECTION_EN[rejection])
           : t('Ingen tränad modell har publicerats för rummet ännu.', 'A trained model has yet to be published for this room.')}
     </p>}
+    {room && <LatestRoomRunEvidence attempt={room.last_fit_attempt} />}
     {room && <LatestRoomSourceEvidence attempt={room.last_fit_attempt} />}
     <Link className="inline-flex min-h-11 items-center font-medium text-primary" to="?tab=setup&section=thermal">
       {t('Visa temperaturhistorik', 'View temperature history')}

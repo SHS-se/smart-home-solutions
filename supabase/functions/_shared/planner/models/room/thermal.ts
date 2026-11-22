@@ -80,6 +80,12 @@ export interface EquilibriumThermalZoneModel {
 }
 export type ThermalZoneModel = DynamicThermalZoneModel | EquilibriumThermalZoneModel;
 export const isEquilibrium = (model: ThermalZoneModel): model is EquilibriumThermalZoneModel => model.response_family === "equilibrium";
+/** Forecast compilation does not change a stored calibration revision. Unknown
+ * positive background receives no future credit; measured losses remain. */
+export function excludeUncontrolledRoomHeat(model: ThermalZoneModel): ThermalZoneModel {
+  return isEquilibrium(model) ? model.offset_c > 0 ? { ...model, offset_c: 0 } : model
+    : model.background_gain_c_per_h > 0 ? { ...model, background_gain_c_per_h: 0 } : model;
+}
 export const heaterResponse = (model: ThermalZoneModel): number => isEquilibrium(model) ? model.heater_c_per_w : model.gain_c_per_wh;
 /** Scale from delivered heater watts to this response's delayed state. */
 export const roomMemoryPerWatt = (model: ThermalZoneModel): number => !(model.heat_lag_h! > 0) ? 0 :

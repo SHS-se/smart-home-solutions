@@ -43,6 +43,7 @@ export interface CurrentRow {
 // Learning outcomes describe what the observations identify, not sensor quality.
 
 export const THERMAL_REJECTION_EN: Record<string, string> = {
+  insufficient_heating_runs: 'Fewer than three informative, comparable heating runs. The previous fitted response is retained.',
   insufficient_samples: 'Not enough history yet. Observations are still accumulating.',
   insufficient_heating:
     'These observations do not identify the heating response yet. Any previously fitted model is retained.',
@@ -55,6 +56,7 @@ export const THERMAL_REJECTION_EN: Record<string, string> = {
 };
 
 export const THERMAL_REJECTION_SV: Record<string, string> = {
+  insufficient_heating_runs: 'Färre än tre informativa, jämförbara uppvärmningsförlopp. Den tidigare anpassade responsen behålls.',
   insufficient_samples: 'Ännu inte tillräckligt med historik. Observationer samlas fortfarande in.',
   insufficient_heating:
     'Dessa observationer identifierar ännu inte värmeresponsen. En tidigare anpassad modell behålls.',

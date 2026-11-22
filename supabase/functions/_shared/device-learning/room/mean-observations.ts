@@ -1,3 +1,6 @@
+import type { RoomRunEvidence } from "./run-calibration.ts";
+import { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
+export { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
 import { initializeExternalHeat, inferExternalHeat, scoreExternalHeatEpisodes, updateExternalHeat, type ExternalHeatParameters, type ExternalHeatResidual, type ExternalHeatValidationResidual } from "./external-heat.ts";
 import { MeanFeatureWorkspace } from "./mean-features.ts";
@@ -39,6 +42,9 @@ export const ROOM_MEAN_LEARNING_METHOD = "interval_mean_transition_holdout_v1" a
 export const ROOM_MEAN_IMPLEMENTATION = "native_interval_qr_v3" as const;
 export const ROOM_EXCHANGE_FAMILY = "house_outdoor_solar_v1" as const;
 export interface RoomLearningEvidence {
+  run_calibration?: Omit<RoomRunEvidence, "runs">;
+  forecast_nuisance?: { excluded: true; fitted_offset: number; projected_offset: number; unit: string };
+  conditional_residual_std_c?: number;
   method: typeof ROOM_MEAN_LEARNING_METHOD;
   family: typeof ROOM_EXCHANGE_FAMILY;
   implementation?: typeof ROOM_MEAN_IMPLEMENTATION;
@@ -123,27 +129,7 @@ interface BandFit {
   outdoor: (outdoorC: number) => boolean;
   house?: number;
   gain?: number | null;
-}
-
-/** Eliminate the starting temperature between two interval means. Each side
- * keeps its own measured duration, including a fine/coarse resolution join. */
-export function roomMeanPair(current: ReturnType<typeof roomMeanObservation>, next: ReturnType<typeof roomMeanObservation>) {
-  const alpha = next.E * current.a / current.E;
-  const L = next.E * current.effect - alpha * current.V;
-  return {
-    alpha, L, nextForcing: next.V,
-    memory: next.E * current.B - alpha * current.U + next.U * current.C,
-    currentHeat: next.E * (current.effect - current.B) - alpha * (current.V - current.U) + next.U * (1 - current.C),
-    nextHeat: next.V - next.U,
-  };
-}
-
-/** Exact fast-exchange limit in gain/k and forcing/k coordinates. */
-export function roomEquilibriumMeanPair(lag: number, currentHours: number, nextHours: number) {
-  const carry = lag ? Math.exp(-currentHours / lag) : 0;
-  const fraction = lag ? -lag * Math.expm1(-nextHours / lag) / nextHours : 0;
-  return { alpha: 0, L: 0, nextForcing: 1, memory: fraction * carry,
-    currentHeat: fraction * (1 - carry), nextHeat: 1 - fraction };
+  forecastOnly?: boolean;
 }
 
 /** Visit each eligible transition with the heat state carried from earlier observations. */
@@ -587,6 +573,16 @@ function forecastError(fit: FitEvaluation, initialStates: Map<number, number>, r
   return count ? sum / count : null;
 }
 
+/** The noise design must match the captured solar/band design throughout a
+ * resumed fit; missing sunlight never changes the number of fitted columns. */
+export function roomTransitionNoiseReference(input: RoomMeanQuarter[], solar: boolean, band?: { outdoor: (c: number) => boolean }) {
+  let sum = 0, count = 0;
+  visitTransitions(input, 0, 0, solar, band, index => {
+    sum += (input[index + 1].room_c! - input[index].room_c!) ** 2; count++;
+  });
+  return Math.max(Number.EPSILON, count ? sum / count : 0);
+}
+
 function prepareMeanFit(quarters: RoomMeanQuarter[], ratedPowerW: number | null, band?: BandFit) {
   const observed = [...quarters].sort((a, b) => a.start_ms - b.start_ms);
   // A retained band's cleaning scale depends only on its own contiguous
@@ -612,16 +608,9 @@ function prepareMeanFit(quarters: RoomMeanQuarter[], ratedPowerW: number | null,
     operation_evidence: { constrained_intervals: covered.filter(row => row.operation_fact !== undefined).length,
       fan_or_cooling_flag_intervals: covered.filter(row => row.operation_fact !== undefined && row.cooling === true).length,
       revisions: [...new Set(covered.flatMap(row => row.operation_fact ? [row.operation_fact] : []))].sort() } };
-  const referenceNoise = (input: RoomMeanQuarter[]) => {
-    let sum = 0, count = 0;
-    visitTransitions(input, 0, 0, solar, band, index => {
-      sum += (input[index + 1].room_c! - input[index].room_c!) ** 2; count++;
-    });
-    return Math.max(Number.EPSILON, count ? sum / count : 0);
-  };
   return { rows, trainingRows, validationRows, usable, solar, split, observation, evidence, hours, ratedPowerW,
-    noiseReference: { training: referenceNoise(trainingRows), full: referenceNoise(rows) },
-    workspace: new MeanFeatureWorkspace(rows.length, FEATURE_WIDTH) };
+    noiseReference: { training: roomTransitionNoiseReference(trainingRows, solar, band), full: roomTransitionNoiseReference(rows, solar, band) },
+    validationComparableRows: rows, workspace: new MeanFeatureWorkspace(rows.length, FEATURE_WIDTH) };
 }
 
 interface MeanFitCandidate {
@@ -637,7 +626,11 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
   if (!candidates.length) return { ok: false, reason: usable.length ? "singular" : "insufficient_samples", sample_count: usable.length,
     learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation, selection: "chronological_transition_mse",
       training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null, ...evidence } };
-  const allScored = scoreCandidates(candidates, rows, validationRows, split, solar, band);
+  const forecastFit = (fit: FitEvaluation): FitEvaluation => band?.forecastOnly
+    ? { ...fit, beta: fit.beta.map((value, i) => i === 1 ? Math.min(0, value) : value) } : fit;
+  const scoredCandidates = band?.forecastOnly ? candidates.map(candidate => ({ ...candidate,
+    training: candidate.training ? forecastFit(candidate.training) : null })) : candidates;
+  const allScored = scoreCandidates(scoredCandidates, prepared.validationComparableRows, validationRows, split, solar, band);
   const isAdditional = (fit: FitEvaluation | null) => fit?.observation_fit?.kind === "additional_heat";
   const scored = allScored.filter(c => !isAdditional(c.full));
   // Retain the finite family's held-out policy. The limiting family includes
@@ -797,7 +790,19 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
     initial[index] = z;
     changes.push(rows[index + 1].room_c! - rows[index].room_c!);
   });
-  const prediction = forecastError(fit, initialStates, rows, segments, delivered, initial);
+  const projected = forecastFit(fit);
+  const prediction = forecastError(projected, initialStates, rows, segments, delivered, initial);
+  let forecastResidual = 0;
+  visitTerms(rows, projected, 0, band, term => {
+    forecastResidual += (term.y - term.x.reduce((sum, x, j) => sum + x * projected.beta[j], 0) -
+      term.z * (initialStates.get(term.segment) ?? 0)) ** 2;
+  });
+  const forecastMse = band?.forecastOnly ? forecastResidual / fit.n : fit.mse;
+  if (band?.forecastOnly) {
+    learning.conditional_residual_std_c = Math.sqrt(fit.mse);
+    learning.forecast_nuisance = { excluded: true, fitted_offset: fit.beta[1], projected_offset: projected.beta[1],
+      unit: fit.family === "equilibrium" ? "C" : "C/h" };
+  }
   const warnings: ThermalFitRejection[] = [];
   if (evidence.observation_hours < MIN_TRAINING_SAMPLES / 4) warnings.push("insufficient_samples");
   if (evidence.heated_hours < MIN_HEATED_SAMPLES / 4) warnings.push("insufficient_heating");
@@ -808,17 +813,17 @@ function finishMeanFit(prepared: ReturnType<typeof prepareMeanFit>, candidates: 
   const common = {
     heat_lag_h: fit.lag,
     solar_mean_w_per_m2: fit.solar ? solarRows.reduce((sum, r) => sum + r.solar_w_per_m2! * roomIntervalHours(r), 0) / hours(solarRows) : null,
-    sample_count: fit.n, r2: variance > 0 ? 1 - fit.mse / variance : 0,
-    residual_std_c: Math.sqrt(fit.mse), prediction_error_c: prediction,
+    sample_count: fit.n, r2: variance > 0 ? 1 - forecastMse / variance : 0,
+    residual_std_c: Math.sqrt(forecastMse), prediction_error_c: prediction,
   };
   const model: ThermalZoneModel = fit.family === "equilibrium" ? {
     ...common, response_family: "equilibrium", heater_c_per_w: gain, outdoor_share: fit.beta[2],
-    offset_c: fit.beta[1], solar_c_per_wm2: fit.solar ? fit.beta[3] : null,
+    offset_c: projected.beta[1], solar_c_per_wm2: fit.solar ? fit.beta[3] : null,
   } : {
     ...common, response_family: fit.family,
     gain_c_per_wh: gain, cooling_constant_per_h: fit.beta[2],
     house_coupling_per_h: fit.k - fit.beta[2],
-    background_gain_c_per_h: fit.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[3] : null,
+    background_gain_c_per_h: projected.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[3] : null,
     thermal_capacity_wh_per_c: gain > 0 ? 1 / gain : null,
     heat_loss_w_per_c: gain > 0 ? fit.k / gain : null, time_constant_h: fit.k > 0 ? 1 / fit.k : null,
     heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
@@ -1100,7 +1105,7 @@ export function parseRoomBandFitCells(input: unknown): RoomBandFitCell[] {
   });
 }
 
-export function finalizeIndependentRoomBand(prepared: PreparedIndependentRoomBand, cells: RoomBandFitCell[]):
+export function finalizeIndependentRoomBand(prepared: PreparedIndependentRoomBand, cells: RoomBandFitCell[], options?: { forecastOnly: boolean }):
   { result: RoomMeanFitResult; minC: number | null; maxC: number | null } {
   if (cells.length !== ROOM_BAND_FIT_CELL_COUNT) throw new Error("Room band fit is incomplete");
   const candidates: MeanFitCandidate[] = [];
@@ -1120,7 +1125,7 @@ export function finalizeIndependentRoomBand(prepared: PreparedIndependentRoomBan
         training: trained ? { ...trained, family, lag, solar } : null });
     }
   }
-  const result = finishMeanFit(prepared, candidates, band);
+  const result = finishMeanFit(prepared, candidates, { ...band, ...(options?.forecastOnly ? { forecastOnly: true } : {}) });
   if (!result.ok) return { result, minC: null, maxC: null };
   let minC = Infinity, maxC = -Infinity;
   visitTransitions(rows, 0, result.model.heat_lag_h ?? 0, solar, band, i => {

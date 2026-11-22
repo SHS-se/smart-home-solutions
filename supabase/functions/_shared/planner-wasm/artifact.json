@@ -1,7 +1,7 @@
 {
   "abi": 18,
   "wasm_sha256": "be97dc5e8ff98f27999d9f6c299c54cd4ccc8cc77ef1396a3b1c3148cf64bc32",
-  "source_sha256": "20f40144adaa9b73bd3529ba4ac797c68641ff639d11cfe92917cc48c518b42b",
+  "source_sha256": "992b222def704ed5675dae98e05c16a1e9711f23308a5557f9b58ace56756e9a",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -84,6 +84,7 @@
     "supabase/functions/_shared/planner/models/room/control.ts",
     "supabase/functions/_shared/planner/models/room/observation.ts",
     "supabase/functions/_shared/planner/models/room/read-model.ts",
+    "supabase/functions/_shared/planner/models/room/run-evidence.ts",
     "supabase/functions/_shared/planner/models/room/thermal.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/planning-warnings.ts",

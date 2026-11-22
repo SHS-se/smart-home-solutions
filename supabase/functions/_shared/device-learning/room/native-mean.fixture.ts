@@ -11,7 +11,7 @@ const defaultProfile = {
 /** Independently generated synthetic room: RK4 integrates the differential
  * equations and their interval means. It never calls the production kernel. */
 export function syntheticRoomPlant(durations: (900 | 3600)[], count = 240, lag = 1, solarGain = 0,
-  profile = defaultProfile) {
+  profile: typeof defaultProfile & { dynamics?: (index: number) => { gain: number; houseGain: number; outdoorGain: number; background: number } } = defaultProfile) {
   const { gain, houseGain, outdoorGain, background, steps } = profile;
   let temperature = profile.roomStart, delivered = 0, time = profile.startMs;
   const memory: number[] = [], rows: RoomMeanQuarter[] = [];
@@ -19,7 +19,8 @@ export function syntheticRoomPlant(durations: (900 | 3600)[], count = 240, lag =
     const duration = durations[i % durations.length], hours = duration / 3600;
     const { outdoor, house, watts, solar } = profile.forcing(i, solarGain);
     memory.push(delivered);
-    const rate = (t: number, d: number) => [gain * (lag > 0 ? d : watts) + houseGain * (house - t) + outdoorGain * (outdoor - t) + background + solarGain * (solar ?? 0),
+    const dynamics = profile.dynamics?.(i) ?? { gain, houseGain, outdoorGain, background };
+    const rate = (t: number, d: number) => [dynamics.gain * (lag > 0 ? d : watts) + dynamics.houseGain * (house - t) + dynamics.outdoorGain * (outdoor - t) + dynamics.background + solarGain * (solar ?? 0),
       lag > 0 ? (watts - d) / lag : 0];
     const dt = hours / steps;
     let integral = 0;

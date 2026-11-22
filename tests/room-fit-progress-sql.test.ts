@@ -1,8 +1,9 @@
+import { learnRoomResponse, ROOM_RESPONSE_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/response-learning.ts";
 // Independently generated synthetic jobs/captures; no household observations.
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { HEAT_LAG_GRID_H } from "../supabase/functions/_shared/device-learning/room/fit.ts";
-import { fitIndependentRoomBand, parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
+import { parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
 
 import { finalizeStoredRoomBand, ROOM_WINDOW_IMPLEMENTATION, type RoomBandMetadata } from "../supabase/functions/_shared/device-model-learning/room.ts";
 import { syntheticRoomPlant } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
@@ -17,7 +18,7 @@ interface Claim {
   room_window_visits?: { binding: string; implementation: string; windows: Record<string, string> } | null;
   room_fit_progress: { metadata: object; cursor: number; cells: unknown[]; base_revision: number } | null;
 }
-async function database(admission = true, visits = true, horizon = true) {
+async function database(admission = true, visits = true, horizon = true, runPolicy = false) {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA private; CREATE SCHEMA net; CREATE SCHEMA cron; CREATE SCHEMA extensions;
@@ -63,6 +64,7 @@ async function database(admission = true, visits = true, horizon = true) {
   if (admission) await db.exec(await Deno.readTextFile("supabase/migrations/20261119011000_room_learning_admission.sql"));
   if (visits) await db.exec(await Deno.readTextFile("supabase/migrations/20261119022000_room_window_visits.sql"));
   if (horizon) await db.exec(await Deno.readTextFile("supabase/migrations/20261120004000_bound_room_learning_traversals.sql"));
+  if (runPolicy) await db.exec(await Deno.readTextFile("supabase/migrations/20261122110000_bounded_room_run_calibration.sql"));
   // The deployed lifecycle also admits device owners.
   await db.exec("ALTER TABLE private.energy_learning_jobs DROP CONSTRAINT energy_learning_jobs_owner_kind_check; ALTER TABLE private.energy_learning_jobs ADD CHECK(owner_kind IN ('room','pool','device'))");
   await db.exec(`SELECT configure_energy_device_learning('https://example.supabase.co');
@@ -86,7 +88,7 @@ async function release(db: PGlite, j: Claim) {
 async function checkpoint(db: PGlite, j: Claim, cursor: number, revision = 1, initialMetadata: object = metadata) {
   return (await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb) AS ok",
     [j.id, j.generation, j.fence, revision, cursor, cursor === -1 ? JSON.stringify(initialMetadata) : null,
-      cursor === -1 ? capture : null, cursor === -1 ? null : JSON.stringify({ lag_h: HEAT_LAG_GRID_H[Math.floor(cursor / 2)],
+      cursor === -1 ? capture : null, cursor === -1 ? null : JSON.stringify({ lag_h: HEAT_LAG_GRID_H[Math.floor(cursor % 18 / 2)],
         partition: cursor % 2 ? "full" : "training", additional_heat: { finite: null, equilibrium: null, integrator: null },
         fits: { finite: null, equilibrium: null, integrator: null } })])).rows[0].ok;
 }
@@ -106,6 +108,71 @@ async function complete(db: PGlite, j: Claim, cursor = 18, patch: object = {}, r
 async function scratchCount(db: PGlite) {
   return (await db.query<{ count: number }>("SELECT count(*)::int AS count FROM private.energy_room_fit_progress")).rows[0].count;
 }
+
+Deno.test("current run calibration persists a private bounded ledger with one fenced 36-cell publication", async () => {
+  assertEquals(ROOM_RESPONSE_CELL_COUNT,36,"SQL scratch bound matches the production response stages");
+  const db = await database(true, true, true, true);
+  try {
+    let j = await claim(db);
+    const captured = { ...metadata, capture: { window: { window_key: "-10" } } };
+    assertEquals(await checkpoint(db, j, -1, 1, captured), true);
+    await release(db, j); j = await claim(db);
+    for (let cursor = 0; cursor < 36; cursor++) {
+      assertEquals(await checkpoint(db, j, cursor), true);
+      await release(db, j); j = await claim(db);
+    }
+    const evidence = { policy: "recent_independent_runs_v1", retained_runs: 3, fitted_runs: 3,
+      runs: [0, 1, 2].map(id => ({ id: `synthetic-event-${id}`, disposition: "fitted" })) };
+    const patch = { home_id: home, customer_id: home, room_key: "room", trained: true, gain_c_per_wh: .003,
+      heating_bands: { binding: "synthetic-binding", active: [{ band_c: -10, revision: "synthetic-new",
+        learning_evidence: { run_calibration: { policy: evidence.policy, retained_runs: 3, fitted_runs: 3 } } }] } };
+    const publish = (ledger: unknown, fence = j.fence) => db.query<{ ok: boolean }>(
+      "SELECT complete_energy_room_fit($1,$2,$3,1,36,$4::jsonb,$5::jsonb) AS ok",
+      [j.id,j.generation,fence,JSON.stringify(patch),JSON.stringify(ledger)]);
+    await assertRejects(() => publish({ ...evidence, fitted_runs: 2, runs: evidence.runs.slice(0, 2), retained_runs: 2 }),
+      Error, "three to ten distinct events");
+    await assertRejects(() => publish({ ...evidence, runs: evidence.runs.map(() => evidence.runs[0]) }),
+      Error, "three to ten distinct events");
+    assertEquals(await scratchCount(db), 1, "invalid evidence cannot change accepted models or discard scratch");
+    await assertRejects(() => publish(null), Error, "must match its fitted run evidence");
+    await assertRejects(() => publish({ ...evidence, observed_runs: 8 }), Error, "must match its fitted run evidence");
+    assertEquals((await publish(evidence, j.fence - 1)).rows[0].ok, false);
+    assertEquals((await publish(evidence)).rows[0].ok, true);
+    assertEquals((await publish(evidence)).rows[0].ok, false, "a lost completion reply cannot duplicate the ledger");
+    assertEquals(await scratchCount(db), 0);
+    const ledger = (await db.query<{ evidence: unknown; model_revision: number; scope_key: string }>(
+      "SELECT evidence,model_revision,scope_key FROM private.energy_room_run_ledgers")).rows;
+    assertEquals(ledger, [{ evidence, model_revision: 2, scope_key: "-10" }]);
+    assertEquals((await db.query<{ allowed: boolean }>(
+      "SELECT has_table_privilege('service_role','private.energy_room_run_ledgers','SELECT') AS allowed")).rows[0].allowed, false);
+    const model = (await db.query<{ heating_bands: unknown }>(
+      "SELECT heating_bands FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows[0];
+    assertEquals(model.heating_bands, patch.heating_bands, "detailed run traces do not enlarge the planning model");
+  } finally { await db.close(); }
+});
+
+Deno.test("a newly deployed run policy requests one normal refit without repeatedly restarting its owner", async () => {
+  const db = await database(true,true,true,true);
+  try {
+    await db.query("UPDATE private.energy_learning_jobs SET pending=false WHERE home_id=$1",[home]);
+    await db.query("UPDATE energy_optimisation_zone_models SET last_attempted_at=now(),heating_bands=$2::jsonb WHERE home_id=$1",
+      [home,JSON.stringify({ binding: "synthetic-binding", reference_revision: "retained-reference" })]);
+    const owners = [{kind:"room",key:"room",input:{}}];
+    const request = () => db.query<{n:number}>("SELECT request_energy_device_learning($1,$1,$2::jsonb) AS n",[home,JSON.stringify(owners)]);
+    assertEquals((await request()).rows[0].n,1);
+    assertEquals((await request()).rows[0].n,0,"the pending owner keeps its generation and bounded traversal");
+  } finally { await db.close(); }
+});
+
+Deno.test("a general equilibrium response clears dynamic fields without admitting incomplete models", async () => {
+  const db = await database(true, true, true, true);
+  try {
+    await assertRejects(() => db.query("UPDATE energy_optimisation_zone_models SET gain_c_per_wh=NULL,cooling_constant_per_h=NULL WHERE home_id=$1", [home]), Error, "energy_optimisation_zone_model_complete");
+    const library = { reference: { model: { response_family: "equilibrium", heater_c_per_w: .003, outdoor_share: .1, offset_c: 0 } } };
+    await db.query("UPDATE energy_optimisation_zone_models SET gain_c_per_wh=NULL,cooling_constant_per_h=NULL,heating_bands=$2::jsonb WHERE home_id=$1", [home,JSON.stringify(library)]);
+    await assertRejects(() => db.query("UPDATE energy_optimisation_zone_models SET heating_bands=heating_bands#-'{reference,model,heater_c_per_w}' WHERE home_id=$1", [home]), Error, "energy_optimisation_zone_model_complete");
+  } finally { await db.close(); }
+});
 
 Deno.test("room fit checkpoints preserve immutable input and ordered prefix until one atomic normal publication", async () => {
   const db = await database();
@@ -423,7 +490,7 @@ Deno.test("independent band publication preserves the general model SQL domain a
       binding:library.binding, baseRevision:revision, attemptedAt:to, pinnedFloor:from,
       window:{window_key:"-10",band_c:-10,from_at:from,to_at:to,fingerprint:"synthetic-observations",evidence_updated_at:to},
       library, progressLibrary:library, reference:null, ratedPowerW:500,lastAt:new Date(rows.at(-1)!.start_ms).toISOString(), sourceFreshness:null };
-    const fit = fitIndependentRoomBand(rows, () => true, 500);
+    const fit = learnRoomResponse(rows, () => true, 500);
     assert(fit.result.ok, "independent synthetic plant produces an accepted finite band");
     const model = finalizeStoredRoomBand(work,rows,fit);
     assertEquals((await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,$4,18,$5::jsonb) AS ok",

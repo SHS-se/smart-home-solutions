@@ -1,14 +1,13 @@
+import { ROOM_RESPONSE_CELL_COUNT, prepareRoomResponse, advanceRoomResponseCell, finalizeRoomResponse, learnRoomResponse } from "../device-learning/room/response-learning.ts";
 import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
-import { heatingBand } from "../planner/heating-bands.ts";
 import type { ProbeFreshnessReport } from "../device-learning/room/source-freshness.ts";
 import {
-  ROOM_BAND_FIT_CELL_COUNT, advanceIndependentRoomBandCell, parseRoomHeatFitState, finalizeIndependentRoomBand,
-  fitIndependentRoomBand, parseRoomBandFitCells, prepareIndependentRoomBand,
+  ROOM_BAND_FIT_CELL_COUNT, parseRoomHeatFitState, parseRoomBandFitCells,
 } from "../device-learning/room/mean-observations.ts";
 import { decodeRoomBandFitCapture, encodeRoomBandFitCapture } from "./room-band-fit-capture.ts";
 import {
   ROOM_WINDOW_IMPLEMENTATION, finalizeStoredRoomBand, parseRoomBandMetadata,
-  prepareStoredRoomHeating, recaptureStoredRoomBand, type RoomLearningClock,
+  prepareStoredRoomHeating, recaptureStoredRoomBand, roomLearningOutdoor, type RoomLearningClock,
 } from "./room.ts";
 
 interface Database {
@@ -57,7 +56,7 @@ export async function runRoomHeatingLearning(
     if (prepared.kind === "model") return prepared;
     const { metadata, rows } = prepared.work;
     if (!rows.length) return { kind: "model", model: finalizeStoredRoomBand(metadata, rows,
-      fitIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c, metadata.ratedPowerW)) };
+      learnRoomResponse(rows, roomLearningOutdoor(metadata), metadata.ratedPowerW)) };
     const capture = await encodeRoomBandFitCapture(rows, metadata.window.from_at);
     const saved = await rpc("checkpoint_energy_room_fit", {
       p_expected_cursor: -1,
@@ -68,7 +67,7 @@ export async function runRoomHeatingLearning(
     return { kind: "handled", result: { checkpointed: saved === true, ...(saved === true ? {} : { superseded: true }) } };
   }
   if (!object(progress) || !Number.isInteger(progress.cursor) || Number(progress.cursor) < 0 ||
-    Number(progress.cursor) > ROOM_BAND_FIT_CELL_COUNT) throw new Error("Invalid room fit progress cursor");
+    Number(progress.cursor) > ROOM_RESPONSE_CELL_COUNT) throw new Error("Invalid room fit progress cursor");
   const cursor = Number(progress.cursor), envelope = progress.metadata;
   const metadata = object(envelope) ? parseRoomBandMetadata(envelope.capture) : null;
   if (!object(envelope) || envelope.version !== 1 || envelope.runtime !== Deno.version.v8 || !metadata ||
@@ -78,10 +77,14 @@ export async function runRoomHeatingLearning(
     Date.parse(metadata.window.to_at) > clock.historyTo ||
     typeof envelope.sha256 !== "string" || !Number.isInteger(envelope.row_count)) return await reset(cursor);
   let cells;
-  try { cells = parseRoomBandFitCells(progress.cells); }
+  try {
+    if (!Array.isArray(progress.cells) || progress.cells.length > ROOM_RESPONSE_CELL_COUNT) return await reset(cursor);
+    cells = [...parseRoomBandFitCells(progress.cells.slice(0, ROOM_BAND_FIT_CELL_COUNT)),
+      ...parseRoomBandFitCells(progress.cells.slice(ROOM_BAND_FIT_CELL_COUNT))];
+  }
   catch { return await reset(cursor); }
   if (cells.length !== cursor) return await reset(cursor);
-  if (cursor < ROOM_BAND_FIT_CELL_COUNT) {
+  if (cursor < ROOM_RESPONSE_CELL_COUNT) {
     const encoded = await rpc("load_energy_room_fit_capture", {});
     if (encoded === null) return await reset(cursor);
     if (typeof encoded !== "string") throw new Error("Invalid room fit capture response");
@@ -89,12 +92,11 @@ export async function runRoomHeatingLearning(
     try { rows = await decodeRoomBandFitCapture(encoded, metadata.window.from_at, envelope.sha256); }
     catch { return await reset(cursor); }
     if (rows.length !== envelope.row_count) return await reset(cursor);
-    const prepared = prepareIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c,
-      metadata.ratedPowerW);
+    const prepared = prepareRoomResponse(rows, roomLearningOutdoor(metadata), metadata.ratedPowerW);
     let heatState;
-    try { heatState = parseRoomHeatFitState(envelope.heat_state, cursor); }
+    try { heatState = parseRoomHeatFitState(envelope.heat_state, cursor % ROOM_BAND_FIT_CELL_COUNT); }
     catch { return await reset(cursor); }
-    const step = advanceIndependentRoomBandCell(prepared, cursor, heatState);
+    const step = advanceRoomResponseCell(prepared, cells, heatState);
     const saved = step.cell ? await rpc("checkpoint_energy_room_fit", {
       p_expected_cursor: cursor, p_metadata: null, p_capture_base64: null, p_cell: step.cell,
     }) : await rpc("checkpoint_energy_room_heat_iteration", {
@@ -110,10 +112,9 @@ export async function runRoomHeatingLearning(
   if (refreshed.sha256 !== envelope.sha256 ||
     !sameFreshness(current.work.metadata.sourceFreshness, metadata.sourceFreshness)) return await reset(cursor);
   const rows = current.work.rows;
-  const prepared = prepareIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c,
-    metadata.ratedPowerW);
-  const fit = finalizeIndependentRoomBand(prepared, cells);
+  const prepared = prepareRoomResponse(rows, roomLearningOutdoor(metadata), metadata.ratedPowerW);
+  const fit = finalizeRoomResponse(prepared, cells);
   const model = finalizeStoredRoomBand(metadata, rows, fit);
-  const published = await rpc("complete_energy_room_fit", { p_expected_cursor: cursor, p_model: model });
+  const published = await rpc("complete_energy_room_fit", { p_expected_cursor: cursor, p_model: model, p_run_ledger: fit.run_ledger });
   return { kind: "handled", result: { published: published === true, ...(published === true ? {} : { superseded: true }) } };
 }

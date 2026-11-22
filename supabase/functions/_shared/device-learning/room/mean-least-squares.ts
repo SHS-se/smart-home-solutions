@@ -10,7 +10,7 @@ export function columnNorm(values: readonly number[]): number {
 export function factorLeastSquares(
   matrix: readonly (readonly number[])[], target: readonly number[],
   originalScales?: readonly number[], observationCount?: number,
-): { matrix: number[][]; target: number[] } | null {
+): { matrix: number[][]; target: number[]; orthonormal: number[][] } | null {
   const n = matrix.length, p = matrix[0]?.length ?? 0;
   if (!p || n < p || target.length !== n) return null;
   const scales = originalScales ?? Array.from({ length: p }, (_, j) => columnNorm(matrix.map(row => row[j])));
@@ -18,7 +18,7 @@ export function factorLeastSquares(
   const columns = scales.map((scale, j) => matrix.map(row => row[j] / scale));
   const order = Array.from({ length: p }, (_, j) => j);
   const upper = Array.from({ length: p }, () => Array<number>(p).fill(0));
-  const projected = Array<number>(p).fill(0);
+  const projected = Array<number>(p).fill(0), orthonormal: number[][] = [];
   const tolerance = Number.EPSILON * Math.max(observationCount ?? n, p) * 16;
   const dot = (a: readonly number[], b: readonly number[]) => {
     let sum = 0;
@@ -37,6 +37,7 @@ export function factorLeastSquares(
     if (!Number.isFinite(norm) || norm <= tolerance) return null;
     upper[j][j] = norm;
     const unit = columns[j].map(value => value / norm);
+    orthonormal.push(unit);
     projected[j] = dot(unit, target);
     for (let z = j + 1; z < p; z++) {
       // Reorthogonalize: nearly dependent columns must stay dependent even
@@ -53,7 +54,7 @@ export function factorLeastSquares(
     for (let j = 0; j < p; j++) result[order[j]] = row[j] * scales[order[j]];
     return result;
   });
-  return { matrix: transformed, target: projected };
+  return { matrix: transformed, target: projected, orthonormal };
 }
 
 export function leastSquares(matrix: readonly (readonly number[])[], target: readonly number[],

@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { prepareStoredRoomHeating, finalizeStoredRoomBand, fitStoredRoomHeating, recaptureStoredRoomBand,
   parseRoomBandMetadata, ROOM_WINDOW_IMPLEMENTATION, type HeatingFitWindow } from "./room.ts";
-import { fitIndependentRoomBand } from "../device-learning/room/mean-observations.ts";
+import { learnRoomResponse } from "../device-learning/room/response-learning.ts";
 import { heatingBand, type RoomHeatingBands } from "../planner/heating-bands.ts";
 import type { ThermalQuarterRow } from "../thermal-training.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
@@ -83,14 +83,15 @@ Deno.test("band preparation captures corrected observations without publishing o
   assertEquals(metadata.progressLibrary.window_attempts, undefined);
   assertEquals(metadata.window.fingerprint, f.window.fingerprint);
   assertEquals(rows.length, 240);
-  assertEquals(rows[0].band_forcing_c_per_h, null); // Initial passive state is unknown.
-  assert((rows[10].band_forcing_c_per_h ?? 0) > 0);
+  assertEquals(rows[0].band_forcing_c_per_h, undefined);
+  assertEquals(rows[10].band_forcing_c_per_h, undefined);
+  assert(!f.calls.includes("get_energy_room_passive_heat"), "uncontrolled appliance heat is not an input to the room response");
   assertEquals(parseRoomBandMetadata(JSON.parse(JSON.stringify(metadata))), metadata);
 });
 
 Deno.test("direct adapter and explicit capture-fit-finalize composition publish identical numerical results", async () => {
   const f = fixture(), { metadata, rows } = await prepare(f);
-  const fit = fitIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c, metadata.ratedPowerW);
+  const fit = learnRoomResponse(rows, outdoor => heatingBand(outdoor) === metadata.window.band_c, metadata.ratedPowerW);
   const completed = finalizeStoredRoomBand(metadata, rows, fit);
   const direct = await fitStoredRoomHeating(f.db, "home", "customer", "room", context, f.previous, null, { historyTo: now, wallNow: now });
   assertEquals(withoutNewRevision(completed), withoutNewRevision(direct));
@@ -112,7 +113,7 @@ Deno.test("recapture checks the pinned native window before and after reading an
   assertEquals(await recaptureStoredRoomBand(f.db, "home", "customer", "room", metadata), { kind: "superseded" });
 });
 
-Deno.test("recapture exposes changed auxiliary inputs and running power for the worker's exact digest comparison", async () => {
+Deno.test("recapture ignores uncontrolled appliance models while retaining actual running-power evidence", async () => {
   const f = fixture(true), { metadata, rows } = await prepare(f);
   f.passiveWatts(200);
   f.rows.at(-1)!.active_power_w = 600;
@@ -120,7 +121,7 @@ Deno.test("recapture exposes changed auxiliary inputs and running power for the 
   assert(changed.kind === "band");
   assertEquals(changed.work.metadata.attemptedAt, metadata.attemptedAt);
   assertEquals(changed.work.metadata.ratedPowerW, 600);
-  assert(changed.work.rows[10].band_forcing_c_per_h !== rows[10].band_forcing_c_per_h);
+  assertEquals(changed.work.rows, rows, "changing an appliance heat model cannot alter the heater observations");
   assertEquals(metadata.ratedPowerW, 500);
 });
 

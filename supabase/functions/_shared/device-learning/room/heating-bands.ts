@@ -1,5 +1,6 @@
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
-import { fitIndependentRoomBand, type RoomMeanQuarter } from "./mean-observations.ts";
+import type { RoomMeanQuarter } from "./mean-observations.ts";
+import { learnRoomResponse, type LearnedRoomResponse } from "./response-learning.ts";
 import { roomIntervalSeconds } from "./mean-evidence.ts";
 import { heatingBand, publishHeatingBand, type RoomHeatingBand, type RoomHeatingBands } from "../../planner/heating-bands.ts";
 import type { ThermalZoneModel } from "../../planner/models/room/thermal.ts";
@@ -23,30 +24,33 @@ export function advanceRoomHeatingBands(
   const next = history ? [history.band, Date.parse(history.lastAt)] as const : eligible[0];
   if (!next || !rows.length) return library;
   const [band, at] = next;
-  const fit = fitIndependentRoomBand(rows, outdoor => heatingBand(outdoor) === band, ratedPowerW);
+  const fit = learnRoomResponse(rows, outdoor => heatingBand(outdoor) === band, ratedPowerW);
   return publishRoomHeatingBandFit(library, rows, band, at, fit);
 }
 
 /** Apply a completed numerical result; incomplete cells never enter this library. */
 export function publishRoomHeatingBandFit(
   library: RoomHeatingBands, rows: RoomMeanQuarter[], band: number, at: number,
-  fit: ReturnType<typeof fitIndependentRoomBand>,
+  fit: LearnedRoomResponse, fittedAt = new Date().toISOString(),
 ): RoomHeatingBands {
   if (!rows.length) return library;
-  const attempt = { at: new Date(at).toISOString(), status: fit.result.ok ? "fitted" : "unidentified",
-    issues: fit.result.ok ? fit.result.warnings ?? [] : [fit.result.reason], learning: fit.result.learning_evidence };
+  const publishable = fit.result.ok && fit.run_ledger && fit.run_ledger.fitted_runs >= 3 && fit.run_ledger.fitted_runs <= 10 &&
+    fit.minC !== null && fit.maxC !== null;
+  const attempt = { at: new Date(at).toISOString(), status: publishable ? "fitted" : "unidentified",
+    issues: fit.result.ok ? publishable ? fit.result.warnings ?? [] : ["response_unresolved"] : [fit.result.reason], learning: fit.result.learning_evidence };
   const updated = { ...library, attempted: { ...library.attempted, [band]: attempt.at },
     diagnostics: { ...library.diagnostics, [band]: attempt },
     candidates: library.candidates.filter(candidate => candidate.band_c !== band) };
-  if (!fit.result.ok || fit.minC === null || fit.maxC === null) return updated;
+  if (!fit.result.ok || !fit.run_ledger || fit.run_ledger.fitted_runs < 3 || fit.run_ledger.fitted_runs > 10 ||
+    fit.minC === null || fit.maxC === null) return updated;
   // Unknown meter history cannot have trained the response. Its temperatures
   // stay in discovery, but do not extend the fitted heater-evidence dates.
   const measured = rows.filter(row => Number.isFinite(row.heat_w) && row.heat_w !== null);
   const first = measured[0]!, last = measured.at(-1)!;
   const candidate: RoomHeatingBand = {
-    revision: crypto.randomUUID(), band_c: band, observed_min_c: fit.minC, observed_max_c: fit.maxC,
-    training_from: new Date(first.start_ms).toISOString(),
-    training_to: new Date(last.start_ms + roomIntervalSeconds(last) * 1000).toISOString(),
+    revision: crypto.randomUUID(), fitted_at: fittedAt, band_c: band, observed_min_c: fit.minC, observed_max_c: fit.maxC,
+    training_from: fit.run_ledger.oldest_run_at ?? new Date(first.start_ms).toISOString(),
+    training_to: fit.run_ledger.newest_run_at ?? new Date(last.start_ms + roomIntervalSeconds(last) * 1000).toISOString(),
     model: fit.result.model, learning_evidence: fit.result.learning_evidence,
     warnings: fit.result.warnings ?? [],
   };

@@ -14,7 +14,7 @@ import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { OptimisationSnapshot, ThermalZonePlanningInput } from "./planner/planning-contracts.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { storedHeat, usesHouse } from "./planner/models/room/thermal.ts";
-import { roomHeatingBandAt, roomHeatingEvidenceLimited } from "./planner/heating-bands.ts";
+import { roomHeatingResponseAt, roomHeatingEvidenceLimited } from "./planner/heating-bands.ts";
 import { heatingWatts } from "./planner/weather-heating.ts";
 
 /** Current preferences and measurements, by room key. */
@@ -57,14 +57,17 @@ export function roomPlanningZones(
     const start = evidence.temperature_c.get(room.key) ?? null;
     const bands = room.heating_bands;
     const byQuarter = bands && outdoor ? outdoor.map(c => {
-      const point = roomHeatingBandAt(bands.active, c);
+      const point = roomHeatingResponseAt(bands.active, c);
       return point ? bands.active.indexOf(point) : -1;
     }) : undefined;
-    const basis = bands ? { ...bands, by_quarter: byQuarter ?? starts.map(() => -1) } : undefined;
+    const extrapolated = byQuarter?.map((index, i) => index >= 0 && outdoor !== null &&
+      (outdoor[i] < bands!.active[index].observed_min_c || outdoor[i] > bands!.active[index].observed_max_c));
+    const basis = bands ? { ...bands, by_quarter: byQuarter ?? starts.map(() => -1),
+      ...(extrapolated?.some(Boolean) ? { extrapolated_by_quarter: extrapolated } : {}) } : undefined;
     const covered = !!byQuarter?.length && byQuarter.every(index => index >= 0);
     // The required base argument seeds the existing forecast API; when no
     // general response exists, every quarter is explicitly assigned a band.
-    // It must never supply an unobserved temperature via extrapolation.
+    // Each extrapolated quarter retains its actual outdoor temperature and source revision.
     let model = room.model ?? (covered ? bands!.active[byQuarter![0]].model : null);
     const selectedModels = byQuarter?.map(index => bands!.active[index]?.model ?? model) ?? [model];
     if (model && roomHeatingEvidenceLimited(basis, room.model_warnings)) {
@@ -115,10 +118,10 @@ export function roomPlanningZones(
       ...(usable && doorway ? { doorway_boundary_c: doorway } : {}),
       comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c, comfort_max_c: forecast.comfort_max_c,
       maximum_power_w_by_slot: room.maximum_power_w_by_slot, unplanned_power_w: forecast.power_w });
-    const estimated = byQuarter?.filter((index, i) => index < 0 && !lockout[i]).length;
+    const estimated = byQuarter?.filter((index, i) => (index < 0 || extrapolated?.[i]) && !lockout[i]).length;
     if (usable && bands?.active.length && estimated) notes.push(planningWarning(
       "room_heating_band_estimated", room.key, `${room.name}: some forecast temperatures are outside the fitted heating bands.`,
-      "The room's general model covers those quarters.", { quarters: estimated },
+      "Those quarters use the nearest supported response, or the general response where no supported band is available. Extrapolated heater efficiency is uncertain.", { quarters: estimated },
     ));
   }
   return { zones, warnings: [...notes, ...skipped.map(item => planningWarning("room_forecast_estimate", item.key, item.message,

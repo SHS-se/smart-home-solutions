@@ -246,7 +246,7 @@ Deno.test("absent heating windows retain the standard recent-fit diagnostic", as
   assertEquals((row.last_fit_attempt as { status: string }).status, "unidentified");
 });
 
-Deno.test("an identified band publishes independently without masquerading as a failed general reference", async () => {
+Deno.test("recent clean runs bootstrap a rolling general response and a band cannot rewrite it", async () => {
   // Independent synthetic weather ranges have conflicting heater responses;
   // only the cold range identifies a physically positive heating coefficient.
   const start = Date.UTC(2026, 0, 1);
@@ -254,22 +254,23 @@ Deno.test("an identified band publishes independently without masquerading as a 
   const rows = [...warm, ...cold], candidate = window(rows, "-10:2026-01");
   const db = database([candidate], rows);
   const general = await runRoomPhase(db, "home", "customer", "room", context, undefined, null, { historyTo: now, wallNow: now });
-  assertEquals(general.trained, false);
-  assertEquals(general.rejection_reason, "singular");
+  assertEquals(general.trained, true);
+  assertEquals(general.rejection_reason, null);
+  assert(bands(general).reference);
   assertEquals(bands(general).active, []);
 
   const fitted = await runRoomPhase(db, "home", "customer", "room", context, stored(general), null, { historyTo: now, wallNow: now });
   const generalFields = ["trained", "rejection_reason", "sample_count"];
   assertEquals(generalFields.filter(field => Object.hasOwn(fitted, field)), []);
   const published = { ...general, ...fitted };
-  assertEquals(published.trained, false);
+  assertEquals(published.trained, true);
   assertEquals(published.rejection_reason, general.rejection_reason);
   assertEquals(published.sample_count, general.sample_count);
-  assertEquals(bands(fitted).reference, undefined);
+  assertEquals(bands(fitted).reference_revision, bands(general).reference_revision);
   assertEquals(bands(fitted).active.map(band => band.band_c), [-10]);
   const diagnostic = fitted.last_fit_attempt as { status: string; issues: string[] };
-  assertEquals(diagnostic.status, "general_unidentified");
-  assert(diagnostic.issues.includes("general_unidentified"));
+  assertEquals(diagnostic.status, "fitted");
+  assert(!diagnostic.issues.includes("general_unidentified"));
 });
 
 Deno.test("algorithm revision changes rerun identical completed evidence windows", async () => {
@@ -582,11 +583,12 @@ Deno.test("general fairness uses private capture visits even when band publicati
   const prepared = await prepareStoredRoomHeating(db, "home", "customer", "room", context, stored(initial), null, { historyTo: at, wallNow: at },
     { binding: context.binding, implementation: ROOM_WINDOW_IMPLEMENTATION,
       windows: { "-10": new Date(now + 60_000).toISOString() } });
-  assertEquals(prepared.kind, "model");
-  assert(prepared.kind === "model");
-  assertEquals(bands(prepared.model).general_attempt?.attempted_at, new Date(at).toISOString());
-  assertEquals(bands(prepared.model).window_attempts, undefined, "a scheduling visit is not a completed band fit");
-  assertEquals(bands(prepared.model).pending_windows, 1);
+  assertEquals(prepared.kind, "band");
+  assert(prepared.kind === "band");
+  assertEquals(prepared.work.metadata.scope, "general");
+  assertEquals(prepared.work.metadata.attemptedAt, new Date(at).toISOString());
+  assertEquals(prepared.work.metadata.library.window_attempts, undefined, "a scheduling visit is not a completed band fit");
+  assertEquals(prepared.work.metadata.progressLibrary.pending_windows, 2);
 });
 
 Deno.test("general attempt parsing preserves old evidence but never accepts an invalid scheduling clock", async () => {
@@ -602,7 +604,9 @@ Deno.test("general attempt parsing preserves old evidence but never accepts an i
     const prepared = await prepareStoredRoomHeating(db, "home", "customer", "room", context,
       stored({ ...initial, heating_bands: { ...parsed, window_last_attempted_at: { "-10": new Date(now).toISOString() } } }),
       null, { historyTo: now + 120_000, wallNow: now + 120_000 });
-    assertEquals(prepared.kind, "model", "an earlier general attempt with an unknown visit time gets a turn after bands are visited");
+    assertEquals(prepared.kind, "band", "an earlier general attempt with an unknown visit time gets a bounded general turn after bands are visited");
+    assert(prepared.kind === "band");
+    assertEquals(prepared.work.metadata.scope, "general");
   }
   assertEquals(readRoomHeatingBands({ ...library, general_attempt: { ...attempt, evidence_updated_at: "invalid" } })?.general_attempt, undefined);
 });

@@ -1,3 +1,4 @@
+import { learnRoomResponse } from "./response-learning.ts";
 import { assert, assertEquals } from "@std/assert";
 import { advanceRoomHeatingBands, publishRoomHeatingBandFit } from "./heating-bands.ts";
 import type { RoomMeanQuarter } from "./mean-observations.ts";
@@ -74,14 +75,27 @@ Deno.test("historical backfill cannot replace newer evidence in the same weather
 });
 
 Deno.test("published heater evidence dates exclude unknown meter prefixes and suffixes", () => {
-  const measured = observations().slice(0, 8);
+  const measured = observations().slice(0, 96 * 4);
   const rows = [{ ...measured[0], start_ms: start - quarter, heat_w: null }, ...measured,
-    { ...measured.at(-1)!, start_ms: start + 8 * quarter, heat_w: null }];
+    { ...measured.at(-1)!, start_ms: start + measured.length * quarter, heat_w: null }];
   const library: RoomHeatingBands = { reference_revision: "general", binding: "synthetic-room",
     since: "2025-01-01", active: [], candidates: [], attempted: {} };
-  const fitted = publishRoomHeatingBandFit(library, rows, 0, rows.at(-1)!.start_ms, {
-    result: { ok: true, model: reference }, minC: 1, maxC: 3,
-  });
-  assertEquals(fitted.active[0].training_from, new Date(start).toISOString());
-  assertEquals(fitted.active[0].training_to, new Date(start + 8 * quarter).toISOString());
+  const fit = learnRoomResponse(rows, () => true, 500);
+  const fitted = publishRoomHeatingBandFit(library, rows, 0, rows.at(-1)!.start_ms, fit);
+  assertEquals(fitted.active[0].training_from, fit.run_ledger!.oldest_run_at!);
+  assertEquals(fitted.active[0].training_to, fit.run_ledger!.newest_run_at!);
+  assert(Date.parse(fitted.active[0].training_from) >= start);
+  assert(Date.parse(fitted.active[0].training_to) <= start + measured.length * quarter);
+});
+
+Deno.test("a run-qualified replay supersedes a wider legacy revision from the same evidence", () => {
+  const fit = learnRoomResponse(observations(), () => true, 500);
+  assert(fit.result.ok);
+  const legacy = { revision: "legacy-capture-dates", band_c: 0, observed_min_c: 0, observed_max_c: 5,
+    training_from: "2025-01-01", training_to: "2026-12-01", model: reference };
+  const library: RoomHeatingBands = { binding: "synthetic-room", reference_revision: "general", since: "2025-01-01",
+    active: [legacy], candidates: [], attempted: {} };
+  const published = publishRoomHeatingBandFit(library, observations(), 0, start, fit, "2026-11-22T12:00:00Z");
+  assert(roomHeatingBandAt(published.active, 2)!.revision !== legacy.revision);
+  assertEquals(roomHeatingBandAt(published.active, .1)!.revision, legacy.revision);
 });

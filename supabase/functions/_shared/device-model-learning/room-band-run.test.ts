@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant } from "../device-learning/room/native-mean.fixture.ts";
-import { ROOM_BAND_FIT_CELL_COUNT } from "../device-learning/room/mean-observations.ts";
+import { ROOM_RESPONSE_CELL_COUNT as ROOM_BAND_FIT_CELL_COUNT } from "../device-learning/room/response-learning.ts";
 import { fitStoredRoomHeating, parseRoomBandMetadata, ROOM_WINDOW_IMPLEMENTATION } from "./room.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import type { RoomHeatingBands } from "../planner/heating-bands.ts";
@@ -111,7 +111,15 @@ function fixture() {
     }
     throw new Error("Synthetic room cell did not finish bounded iterations");
   };
-  return { db, tick, finishCell, rows, window, windows, context, now, reads, writes, failures,
+  const bootstrap = async () => {
+    for (let step = 0; step < 10000; step++) {
+      const response = await tick();
+      assertEquals(response.status, 200);
+      if (writes.length) return response;
+    }
+    throw new Error("Synthetic general calibration did not finish");
+  };
+  return { db, tick, bootstrap, finishCell, rows, window, windows, context, now, reads, writes, failures,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
     corruptCapture: () => { capture = "corrupt"; },
@@ -172,8 +180,9 @@ Deno.test("pre-fix over-horizon scratch resets without changing accepted models 
     const f = fixture();
     // Simulate a legacy reader which used to expand discovery past the frozen
     // generation. An in-horizon capture is the unchanged control case.
+    await f.bootstrap();
     if (overrun) f.window.to_at = new Date(f.now + 900_000).toISOString();
-    await f.tick(); await f.tick();
+    await f.tick();
     assert(f.progress);
     const accepted = structuredClone(f.model), publications = f.writes.length;
     f.window.to_at = new Date(f.now).toISOString(); // The corrected SQL reader.
@@ -193,7 +202,7 @@ Deno.test("pre-fix over-horizon scratch resets without changing accepted models 
 
 Deno.test("the claimed private visit journal keeps a superseded window behind an unvisited candidate", async () => {
   const f = fixture();
-  await f.tick(); // Persist the separate general attempt.
+  await f.bootstrap(); // Complete the same resumable general-response pipeline.
   await f.tick(); // Capture the first candidate.
   f.replaceModel();
   assertEquals(await (await f.tick()).json(), { superseded: true });
@@ -206,9 +215,9 @@ Deno.test("the claimed private visit journal keeps a superseded window behind an
   assertEquals(f.writes.length, 1, "visit scheduling never publishes an unfinished fit");
 });
 
-Deno.test("the real room worker checkpoints eighteen cells without publishing partial bands and matches a direct fit", async () => {
+Deno.test("the real room worker checkpoints screening and final-fit cells without publishing partial bands and matches a direct fit", async () => {
   const f = fixture();
-  assertEquals((await f.tick()).status, 200); // Separate general fit.
+  assertEquals((await f.bootstrap()).status, 200); // Separate durable general fit.
   assertEquals(f.writes.length, 1);
   const expected = await fitStoredRoomHeating(f.db, "home", "customer", "room", f.context, f.model, null, { historyTo: f.now, wallNow: f.now });
   f.reads.length = 0;
@@ -233,7 +242,7 @@ Deno.test("the real room worker checkpoints eighteen cells without publishing pa
 
 Deno.test("interrupted cells resume, and a material source correction discards only the incomplete fit", async () => {
   const f = fixture();
-  await f.tick(); await f.tick(); await f.tick();
+  await f.bootstrap(); await f.bootstrap(); await f.tick();
   const accepted = structuredClone(f.model);
   f.fail("load_energy_room_fit_capture");
   assertEquals((await f.tick()).status, 500);
@@ -251,7 +260,7 @@ Deno.test("interrupted cells resume, and a material source correction discards o
 
 Deno.test("changed effective readings without a native fingerprint change cannot mix fitting cells", async () => {
   const f = fixture();
-  await f.tick(); await f.tick();
+  await f.bootstrap(); await f.tick();
   while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();
   f.rows[80].heat_w = null;
   assertEquals(await (await f.tick()).json(), { superseded: true });
@@ -261,7 +270,7 @@ Deno.test("changed effective readings without a native fingerprint change cannot
 
 Deno.test("a superseding model revision restarts scratch without rewriting accepted models", async () => {
   const f = fixture();
-  await f.tick(); await f.tick();
+  await f.bootstrap(); await f.tick();
   f.replaceModel();
   const accepted = structuredClone(f.model);
   assertEquals(await (await f.tick()).json(), { superseded: true });
@@ -272,7 +281,7 @@ Deno.test("a superseding model revision restarts scratch without rewriting accep
 
 Deno.test("malformed private capture is discarded while an empty observation capture completes normally", async () => {
   const f = fixture();
-  await f.tick(); await f.tick();
+  await f.bootstrap(); await f.tick();
   f.corruptCapture();
   assertEquals(await (await f.tick()).json(), { superseded: true });
   assertEquals(f.writes.length, 1);
@@ -285,7 +294,7 @@ Deno.test("malformed private capture is discarded while an empty observation cap
 
 Deno.test("live running-power diagnostics cannot keep restarting a coherent thermal fit", async () => {
   const f = fixture();
-  await f.tick(); await f.tick();
+  await f.bootstrap(); await f.tick();
   while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();
   for (const row of f.rows) row.active_power_w = 510;
   assertEquals(await (await f.tick()).json(), { published: true });
@@ -299,7 +308,7 @@ Deno.test("live running-power diagnostics cannot keep restarting a coherent ther
 Deno.test("lost admission release does not turn an accepted publication into a statistical failure", async () => {
   const f = fixture();
   f.fail("release_energy_room_learning_lane");
-  assertEquals(await (await f.tick()).json(), { published: true });
+  assertEquals(await (await f.bootstrap()).json(), { published: true });
   assertEquals(f.writes.length, 1);
   assertEquals(f.reads.includes("fail_energy_device_learning"), false);
 });

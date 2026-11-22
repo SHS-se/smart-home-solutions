@@ -1,3 +1,5 @@
+import { roomHeatingResponseAt } from "./planner/heating-bands.ts";
+import { isEquilibrium } from "./planner/models/room/thermal.ts";
 import { assert, assertEquals } from "@std/assert";
 import { input } from "./planner/energy-optimisation.fixture.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
@@ -60,6 +62,7 @@ Deno.test("a delayed floor starts with the heat its last day put on the way", ()
 function bandOnlyRoom(): PreparedRoom {
   const room = bathroom(2);
   const model = room.model!;
+  assert(!isEquilibrium(model));
   return { ...room, model: null, heating_bands: { reference_revision: null, active: [
     { revision: "synthetic-cold", band_c: -10, observed_min_c: -9, observed_max_c: -6,
       training_from: "2025-01-01", training_to: "2025-02-01", model },
@@ -80,6 +83,33 @@ Deno.test("accepted bands forecast every quarter without a general model", () =>
   assertEquals(result.warnings, []);
 });
 
+Deno.test("a supported cold response extrapolates at actual weather and records each quarter", () => {
+  const s = snapshot(), room = bandOnlyRoom();
+  const cold = room.heating_bands!.active[0];
+  cold.learning_evidence = { run_calibration: { policy: "recent_independent_runs_v1", fitted_runs: 3 } };
+  s.slots.forEach((slot, i) => { slot.start = new Date(Date.UTC(2026, 0, 5) + i * 900_000).toISOString(); });
+  s.outdoor_temperature_c = [-11, -11, -8, -7, -11, -8, -11, -11];
+  const result = roomPlanningZones(s, [room], evidence(22));
+  const zone = result.zones[0];
+  assert(zone.model);
+  assertEquals(zone.heating_bands?.by_quarter, Array(8).fill(0));
+  assertEquals(zone.heating_bands?.extrapolated_by_quarter, [true, true, false, false, true, false, true, true]);
+  assertEquals(s.outdoor_temperature_c[0], -11, "the selected transition uses actual weather, not the band's edge");
+  assert(result.warnings.some(warning => warning.code === "room_heating_band_estimated"));
+  assertEquals(zone.heating_bands?.active[0].revision, cold.revision);
+  assertEquals(cold.observed_min_c, -9, "extrapolation does not manufacture observed coverage");
+});
+
+Deno.test("an unqualified response cannot manufacture a fitted colder band", () => {
+  const s = snapshot(), room = bandOnlyRoom();
+  room.heating_bands!.active[0].learning_evidence = { run_calibration: { policy: "recent_independent_runs_v1", fitted_runs: 2 } };
+  s.outdoor_temperature_c = Array(8).fill(-11);
+  const result = roomPlanningZones(s, [room], evidence(22));
+  assertEquals(result.zones[0].model, null);
+  assertEquals(result.zones[0].heating_bands?.by_quarter, Array(8).fill(-1));
+  assertEquals(result.zones[0].target_c, Array(8).fill(22), "comfort service continues");
+});
+
 Deno.test("a band-only forecast never extrapolates across a support hole or missing weather", () => {
   for (const missingWeather of [false, true]) {
     const s = snapshot();
@@ -95,7 +125,9 @@ Deno.test("a band-only forecast never extrapolates across a support hole or miss
 
 Deno.test("house evidence is required by any selected band, not only the first quarter", () => {
   const room = bandOnlyRoom();
-  room.heating_bands!.active[1].model.house_coupling_per_h = .03;
+  const coupled = room.heating_bands!.active[1].model;
+  assert(!isEquilibrium(coupled));
+  coupled.house_coupling_per_h = .03;
   const s = snapshot();
   s.outdoor_temperature_c = [-8, -8, 5, 5, 5, 5, 5, 5];
   s.house_temperature_c = null;
@@ -123,4 +155,17 @@ Deno.test("sparse evidence in a selected fit keeps the comfort schedule and esti
   const general = bathroom();
   general.model_warnings = ["insufficient_samples"];
   assertEquals(roomPlanningZones(s, [general], evidence(22)).zones[0].model, null);
+});
+
+Deno.test("qualified cold responses do not extrapolate into a warm quarter or across an internal support hole", () => {
+  const evidence = { run_calibration: { policy: "recent_independent_runs_v1", fitted_runs: 3 } };
+  const band = (band_c: number, min: number, max: number) => ({ revision: String(band_c), band_c,
+    observed_min_c: min, observed_max_c: max, training_from: "2025-01-01", training_to: "2025-01-10",
+    learning_evidence: evidence, model: { gain_c_per_wh: .002, cooling_constant_per_h: .03, house_coupling_per_h: .02,
+      background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 25, time_constant_h: 20,
+      heating_rate_c_per_h: 1, sample_count: 100, r2: 1, residual_std_c: .1 } });
+  const cold = band(-10,-9,-6), mild = band(0,1,3);
+  assertEquals(roomHeatingResponseAt([cold,mild],8), undefined);
+  assertEquals(roomHeatingResponseAt([cold,mild],-3), undefined);
+  assertEquals(roomHeatingResponseAt([cold,mild],-11)?.revision,cold.revision);
 });
