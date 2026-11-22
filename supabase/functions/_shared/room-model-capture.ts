@@ -215,8 +215,8 @@ export function prepareRoomModels(
     const managedRuns = library?.calibration_policy === ROOM_RUN_POLICY;
     const fittedModel = readThermalModel(boundary?.model) ??
       (fitted?.trained && !narrowReference ? readThermalModel(fitted) : null);
-    const model = fittedModel ? excludeUncontrolledRoomHeat(fittedModel) : null;
-    if (managedRuns && model && !hasRoomRunSupport(boundary?.learning_evidence)) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+    const model = fittedModel && heatingContext ? excludeUncontrolledRoomHeat(fittedModel) : fittedModel;
+    if (heatingContext && managedRuns && model && !hasRoomRunSupport(boundary?.learning_evidence)) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_heating_band_estimated", room.key, `${room.name}: the retained response has not yet been assessed against independent heating runs.`,
       "The accepted response remains available while learning continues. Positive uncontrolled background heat is excluded from the forecast.")]);
     const unassessedBands = compatible && managedRuns ? library.active.filter(band => !hasRoomRunSupport(band.learning_evidence)) : [];

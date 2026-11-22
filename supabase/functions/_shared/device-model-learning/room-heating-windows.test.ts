@@ -766,3 +766,12 @@ Deno.test("an older isolated backfill cannot replace a newer installed general r
   assertEquals(bands(drained).reference, bands(current).reference);
   assertEquals(drained.gain_c_per_wh, undefined);
 });
+
+Deno.test("missing native heating windows cannot install an unchecked recent-fit scalar model", async () => {
+  const rows = history(now - 240 * hour);
+  const result = await runRoomPhase(database([],rows),"home","customer","room",context,undefined,null,{historyTo:now,wallNow:now});
+  assertEquals(result.trained,false);
+  assertEquals(result.rejection_reason,"insufficient_heating_runs");
+  assertEquals(result.gain_c_per_wh,null);
+  assertEquals(bands(result).reference,undefined);
+});

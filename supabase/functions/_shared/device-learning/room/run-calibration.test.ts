@@ -119,3 +119,14 @@ Deno.test("temperature and weather gaps skip transitions without splitting the m
   assertEquals(roomHeatingRuns(rows, () => true).length, 3);
   assertEquals(calibrateRoomRuns(rows, model, () => true).evidence.fitted_runs, 3);
 });
+
+Deno.test("the serialized working event view is idempotent across band slicing, native durations and gaps", () => {
+  const rows = plant(16,[900,3600]);
+  rows[29].heat_w = null;
+  rows[147].room_c = null;
+  rows[204].outdoor_c = null;
+  for (const inBand of [(_c:number)=>true,(c:number)=>c < -7,(c:number)=>c >= -7]) {
+    const once = recentRoomRunRows(rows,inBand);
+    assertEquals(recentRoomRunRows(once,inBand),once,"resumed and recaptured numerical designs use identical event anchors");
+  }
+});

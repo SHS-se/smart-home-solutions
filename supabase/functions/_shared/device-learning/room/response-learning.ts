@@ -2,7 +2,7 @@
  * final fitting use independent training partitions and bounded worker cells. */
 import {
   advanceIndependentRoomBandCell, finalizeIndependentRoomBand,
-  prepareIndependentRoomBand, roomTransitionNoiseReference, ROOM_BAND_FIT_CELL_COUNT,
+  prepareIndependentRoomBand, roomTransitionNoiseReference, ROOM_BAND_FIT_CELL_COUNT, ROOM_MEAN_LEARNING_METHOD, ROOM_EXCHANGE_FAMILY,
   type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState, type RoomMeanQuarter,
 } from "./mean-observations.ts";
 import { calibrateRoomRuns, recentRoomRunRows, roomHeatingRuns, ROOM_RUN_POLICY, type RoomRunEvidence } from "./run-calibration.ts";
@@ -10,14 +10,17 @@ import { calibrateRoomRuns, recentRoomRunRows, roomHeatingRuns, ROOM_RUN_POLICY,
 export const ROOM_RESPONSE_CELL_COUNT = ROOM_BAND_FIT_CELL_COUNT * 2;
 export interface PreparedRoomResponse {
   source: PreparedIndependentRoomBand;
+  workingRows: RoomMeanQuarter[];
   outdoor: (c: number) => boolean;
   ratedPowerW: number | null;
   observedRunCount: number;
 }
 
-export function prepareRoomResponse(rows: RoomMeanQuarter[], outdoor: (c: number) => boolean, ratedPowerW: number | null) {
-  return { source: prepareIndependentRoomBand(recentRoomRunRows(rows, outdoor), outdoor, ratedPowerW), outdoor, ratedPowerW,
-    observedRunCount: roomHeatingRuns(rows, outdoor).length };
+export function prepareRoomResponse(rows: RoomMeanQuarter[], outdoor: (c: number) => boolean, ratedPowerW: number | null,
+  observedRunCount = roomHeatingRuns(rows, outdoor).length) {
+  const workingRows = recentRoomRunRows(rows, outdoor);
+  return { workingRows, source: prepareIndependentRoomBand(workingRows, outdoor, ratedPowerW), outdoor, ratedPowerW,
+    observedRunCount };
 }
 
 function fullOnly(cells: readonly RoomBandFitCell[], partition: "training" | "full"): RoomBandFitCell[] {
@@ -72,13 +75,15 @@ function screened(prepared: PreparedRoomResponse, cells: readonly RoomBandFitCel
  * Phase two refits the common on/off
  * support after excluding suspect whole events and their tails. */
 export function advanceRoomResponseCell(prepared: PreparedRoomResponse, completed: readonly RoomBandFitCell[],
-  state: RoomHeatFitState | null): ReturnType<typeof advanceIndependentRoomBandCell> {
-  const cursor = completed.length;
-  if (cursor < ROOM_BAND_FIT_CELL_COUNT) {
-    return advanceIndependentRoomBandCell(screeningDesign(prepared), cursor, state);
-  }
-  const final = screened(prepared, completed);
-  return advanceIndependentRoomBandCell(final.prepared, cursor - ROOM_BAND_FIT_CELL_COUNT, state);
+  state: RoomHeatFitState | null, maxElapsedMs = 200): ReturnType<typeof advanceIndependentRoomBandCell> {
+  const started = performance.now(), cursor = completed.length;
+  // This derived design is immutable for a cell. Reuse it across micro-batches
+  // rather than repeating screening and evidence preparation in one request.
+  const design = cursor < ROOM_BAND_FIT_CELL_COUNT ? screeningDesign(prepared) : screened(prepared, completed).prepared;
+  const index = cursor % ROOM_BAND_FIT_CELL_COUNT;
+  let step = advanceIndependentRoomBandCell(design, index, state);
+  while (!step.cell && performance.now() - started < maxElapsedMs) step = advanceIndependentRoomBandCell(design, index, step.state);
+  return step;
 }
 
 export type LearnedRoomResponse = ReturnType<typeof finalizeIndependentRoomBand> & { run_ledger: RoomRunEvidence | null };
@@ -125,6 +130,16 @@ export function compactRunEvidence(evidence: RoomRunEvidence) {
 /** Offline replay uses the same cells, not a separate fitting algorithm. */
 export function learnRoomResponse(rows: RoomMeanQuarter[], outdoor: (c: number) => boolean, ratedPowerW: number | null): LearnedRoomResponse {
   const prepared = prepareRoomResponse(rows, outdoor, ratedPowerW), cells: RoomBandFitCell[] = [];
+  if (prepared.observedRunCount < 3) {
+    const ledger: RoomRunEvidence = { policy: ROOM_RUN_POLICY, minimum_runs: 3, maximum_runs: 10,
+      observed_runs: prepared.observedRunCount, retained_runs: 0, fitted_runs: 0, suspect_runs: 0, provisional_runs: 0,
+      oldest_run_at: null, newest_run_at: null, runs: [] };
+    return { minC: null, maxC: null, run_ledger: ledger, result: { ok: false, reason: "insufficient_heating_runs",
+      sample_count: prepared.source.usable.length, learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD,
+        family: ROOM_EXCHANGE_FAMILY, observation: prepared.source.observation, selection: "chronological_transition_mse",
+        training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null,
+        ...prepared.source.evidence, run_calibration: compactRunEvidence(ledger) } } };
+  }
   while (cells.length < ROOM_RESPONSE_CELL_COUNT) {
     let state: RoomHeatFitState | null = null;
     for (;;) {

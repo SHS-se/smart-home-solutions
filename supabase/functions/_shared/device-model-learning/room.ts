@@ -458,7 +458,7 @@ export async function fitStoredRoom(
     location, trainingFrom, trainingTo, clock.wallNow);
   else if (!native) await repairRoomSolar(db, homeId, location, trainingFrom, trainingTo);
   const captured = await loadRoomObservations(db, homeId, customerId, roomKey, trainingFrom, trainingTo, native);
-  return { ...await fitLoadedRoom(db, homeId, customerId, roomKey, trainingFrom, trainingTo, captured),
+  return { ...await fitLoadedRoom(db, homeId, customerId, roomKey, trainingFrom, trainingTo, captured, native),
     last_attempted_at: new Date(clock.wallNow).toISOString() };
 }
 
@@ -509,6 +509,7 @@ async function fitLoadedRoom(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string, trainingFrom: string, trainingTo: string,
   { quarters, passive, doorways, sourceFreshness }: Awaited<ReturnType<typeof loadRoomObservations>>,
+  native = false,
 ): Promise<Record<string, unknown>> {
   // A missing series is a statistical observation outcome, not a transport failure.
   if (!quarters.length) {
@@ -520,7 +521,11 @@ async function fitLoadedRoom(
     return zoneModelRows([{ room_key: roomKey, room_name: roomName, result: fitRoomMeans([], null) }],
       { homeId, customerId, trainingFrom, trainingTo })[0];
   }
-  const fits = fitRoomsFromQuarters(quarters, passive);
+  // Native heating captures without a discoverable heating window cannot
+  // bypass the run-qualified publisher through this legacy recent-fit path.
+  const fits = native ? [{ room_key: roomKey, room_name: quarters[0].room_name,
+    result: { ok: false as const, reason: "insufficient_heating_runs" as const, sample_count: quarters.length } }]
+    : fitRoomsFromQuarters(quarters, passive);
   if (fits.length !== 1 || fits[0].room_key !== roomKey) throw new Error("Room observations crossed owner boundary");
   const row = zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
   if (sourceFreshness) row.last_fit_attempt = { ...row.last_fit_attempt as Record<string, unknown>, source_freshness: sourceFreshness };
@@ -562,7 +567,12 @@ async function loadRoomObservations(
   const quarters = qualified ? qualified.rows.map(({ probe_evidence: _facts, ...row }) => row) : raw;
   const sourceFreshness = qualified?.report;
   if (!quarters.length) return { quarters, passive: new Map<string, never>(), doorways: [], sourceFreshness };
-  return { quarters, passive: new Map<string, never>(), doorways: [] as DoorwayProbeRow[], sourceFreshness };
+  if (native) return { quarters, passive: new Map<string, never>(), doorways: [] as DoorwayProbeRow[], sourceFreshness };
+  const [passive, doorways] = await Promise.all([
+    readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo),
+    readDoorwayProbes(db, homeId, [roomKey], trainingFrom, trainingTo),
+  ]);
+  return { quarters, passive, doorways, sourceFreshness };
 }
 
 function fitOptionalRoomResponses(row: Record<string, unknown>, quarters: ThermalQuarterRow[],

@@ -207,6 +207,8 @@ Deno.test("the claimed private visit journal keeps a superseded window behind an
   f.replaceModel();
   assertEquals(await (await f.tick()).json(), { superseded: true });
   f.windows.push({ ...f.window, window_key: "5", band_c: 5, fingerprint: "synthetic-other-window" });
+  // This scheduling-only candidate must actually contain in-band ON events.
+  for (const row of f.rows) row.outdoor_temperature_c = 7;
   f.setVisits({ binding: f.context.binding, implementation: ROOM_WINDOW_IMPLEMENTATION,
     windows: { [f.window.window_key]: new Date(f.now).toISOString() } });
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
@@ -222,6 +224,10 @@ Deno.test("the real room worker checkpoints screening and final-fit cells withou
   const expected = await fitStoredRoomHeating(f.db, "home", "customer", "room", f.context, f.model, null, { historyTo: f.now, wallNow: f.now });
   f.reads.length = 0;
   assertEquals(await (await f.tick()).json(), { checkpointed: true }); // Immutable capture only.
+  const envelope = f.progress!.metadata as { row_count: number; observed_runs: number };
+  assert(envelope.row_count < f.rows.length,"checkpoints must not reload the full raw history for every numerical step");
+  assert(envelope.observed_runs > 10,"compaction preserves the discovered event count");
+  assertEquals(f.rows.length,240,"working capture never prunes measured observations");
   const firstReads = f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length;
   assert(firstReads > 0);
   for (let i = 0; i < ROOM_BAND_FIT_CELL_COUNT; i++) {

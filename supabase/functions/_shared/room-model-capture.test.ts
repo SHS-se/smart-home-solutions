@@ -488,3 +488,22 @@ Deno.test("mixed response-family history carries measured heater memory into the
     assertEquals(incomplete.thermal_zones![0].model, room.model);
   }
 });
+
+Deno.test("uncontrolled positive heat is excluded only for the declared heating context", () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const key = mappings[0].room!.key;
+  const stored = bundle.rooms.find(room => room.room_key === key)!;
+  stored.background_gain_c_per_h = .3;
+  stored.heating_bands = { binding: "synthetic-binding", calibration_policy: "recent_independent_runs_v1",
+    since: "2025-01-01", reference_revision: null, active: [], candidates: [], attempted: {} };
+  const ordinaryResult = prepareRoomModels(snapshot,mappings,bundle);
+  const ordinary = ordinaryResult.rooms[0].model;
+  assert(!ordinaryResult.snapshot.planning_warnings?.some(warning => warning.code === "room_heating_band_estimated"));
+  assert(ordinary && ordinary.response_family !== "equilibrium");
+  assertEquals(ordinary.background_gain_c_per_h,.3,"other categories retain their existing model treatment");
+  bundle.roomHeating = { [key]: { binding: "synthetic-binding", observed_since: "2025-01-01T00:00:00Z" } };
+  const heating = prepareRoomModels(snapshot,mappings,bundle).rooms[0].model;
+  assert(heating && heating.response_family !== "equilibrium");
+  assertEquals(heating.background_gain_c_per_h,0);
+  assertEquals(stored.background_gain_c_per_h,.3,"forecast compilation never rewrites the stored revision");
+});
