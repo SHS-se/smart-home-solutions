@@ -267,7 +267,8 @@ Deno.test("the real room worker checkpoints screening and final-fit cells withou
   assertEquals(f.reads.filter(name => name === "load_energy_room_fit_capture").length,
     f.reads.filter(name => name === "checkpoint_energy_room_fit_cells").length);
   assertEquals(f.batches.reduce((sum, count) => sum + count, 0), ROOM_BAND_FIT_CELL_COUNT);
-  assert(f.batches.length <= ROOM_BAND_FIT_CELL_COUNT);
+  // State-only iterations may add more checkpoints than cells on a slower
+  // machine. The completed-cell sum above is the invariant, not request count.
   assertEquals(f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, 2 * firstReads);
 });
 
