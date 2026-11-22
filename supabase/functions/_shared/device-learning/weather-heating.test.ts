@@ -1,4 +1,4 @@
-import { heatingWatts, readWeatherHeating } from "../planner/weather-heating.ts";
+import { heatingDraw, heatingWatts, readWeatherHeating } from "../planner/weather-heating.ts";
 import { assertEquals, assertAlmostEquals } from "@std/assert";
 import { advanceWeatherHeatingBands, fitWeatherHeating, WEATHER_HEATING_BAND_IMPLEMENTATION } from "./weather-heating.ts";
 
@@ -46,6 +46,16 @@ Deno.test("an empirical electrical refit immediately replaces only its own indep
   assertEquals(profile.points[0], oldCold);
   assertEquals(heatingWatts(profile, 5.3), 450);
   assertEquals(heatingWatts(profile, 6), 450);
+  assertEquals(heatingWatts(profile, 5), 450);
+  assertEquals(heatingWatts(profile, 9.999), 450);
+  assertEquals(heatingWatts(profile, 10), null);
+});
+
+Deno.test("electrical quarter forecasts use the whole fixed band rather than observed edges", () => {
+  const profile = advanceWeatherHeatingBands("meter", null, measured(), "2026-01-05");
+  const revision = (profile.points[0] as { revision?: string }).revision;
+  assertEquals([-10,-9,-7,-5.001,-5].map(c => heatingDraw(profile,c)?.band?.revision ?? null),
+    [revision,revision,revision,revision,null]);
 });
 
 const measured = (watts = 900, updated = "2026-01-04T00:00:00Z") => [

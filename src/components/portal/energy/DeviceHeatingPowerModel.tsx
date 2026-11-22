@@ -91,8 +91,7 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
     maximumFractionDigits: digits,
   });
   const range = (min: number, max: number) => formatHeatingRange(min, max, value => format(value, 1));
-  const label = (band: WeatherBand) => band.band_c !== undefined &&
-    !bands.some(other => other !== band && other.band_c === band.band_c)
+  const label = (band: WeatherBand) => band.band_c !== undefined
     ? range(band.band_c, band.band_c + HEATING_BAND_WIDTH_C) : range(band.min_c, band.max_c);
   const power = (watts: number) => `${format(watts / 1000, 3)} kW`;
   const data: { temperature: number; typical: number | null; estimate: number }[] = bands.map(band => ({
@@ -108,7 +107,8 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
       <ComposedChart data={data} margin={{ top: 12, right: 20, bottom: 22, left: 0 }}>
         <CartesianGrid vertical={false} className="stroke-border" />
         <XAxis type="number" dataKey="temperature" domain={[
-          Math.floor(Math.min(...bands.map(band => band.min_c))) - 1, Math.ceil(Math.max(...bands.map(band => band.max_c))) + 1,
+          Math.floor(Math.min(...bands.map(band => band.band_c ?? band.min_c))) - 1,
+          Math.ceil(Math.max(...bands.map(band => band.band_c !== undefined ? band.band_c + HEATING_BAND_WIDTH_C : band.max_c))) + 1,
         ]}
           tickFormatter={value => format(value, 1)} minTickGap={18}
           label={{ value: t('Utomhustemperatur (°C)', 'Outdoor temperature (°C)'), position: 'bottom', fill: 'hsl(var(--muted-foreground))' }} />
@@ -122,7 +122,7 @@ function HeatingPowerChart({ bands, title }: { bands: WeatherBand[]; title: stri
         ))}
         <ReferenceLine x={selected.outdoor_c} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 4" />
         {discrete ? bands.map(band => <ReferenceLine key={keyOf(band)} stroke={color} strokeDasharray="4 4"
-          segment={[{ x: band.min_c, y: band.watts / 1000 }, { x: band.max_c, y: band.watts / 1000 }]} />)
+          segment={[{ x: band.band_c!, y: band.watts / 1000 }, { x: band.band_c! + HEATING_BAND_WIDTH_C, y: band.watts / 1000 }]} />)
           : bands.length > 1 && <Line dataKey="estimate" stroke={color} strokeDasharray="4 4" dot={false} isAnimationActive={false} />}
         <Line dataKey="typical" stroke="none" dot={{ r: 4, fill: color, stroke: 'none' }}
           activeDot={false} isAnimationActive={false} />

@@ -90,6 +90,14 @@ wakes and expired leases. Read failures remain retriable job failures, rather
 than fabricated statistical rejections. Failed statistical attempts retain the
 previous usable parameters. Publication validates the owner's fence and model
 revision in one transaction and cannot write pool hardware or electrical fields.
+Each fixed 5°C heating band has one active revision per room or device. A
+quarter's forecast selects that revision throughout its nominal interval;
+observed temperature bounds describe evidence and extrapolation diagnostics,
+not additional model-selection boundaries. Superseded accepted revisions stay
+in the independent calibration archive. Database constraints reject duplicate
+active bands rather than rewriting a publication after its fence and evidence
+were checked. General responses and qualified cold extrapolation remain
+separate from nominal band selection.
 Room learning admits one worker invocation per home, with a fair turn between
 ready rooms. A successful band publication continues the same fenced job when
 ready seasonal windows remain; a new planning request is not required. The

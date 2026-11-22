@@ -109,8 +109,7 @@ export function heatingModelRuns(sources: HeatingModelSource[]): HeatingModelRun
 }
 
 export function roomHeatingBandAt(bands: readonly RoomHeatingBand[], outdoorC: number): RoomHeatingBand | undefined {
-  return bands.find(band => band.band_c === heatingBand(outdoorC) &&
-    outdoorC >= band.observed_min_c && outdoorC <= band.observed_max_c);
+  return bands.find(band => band.band_c === heatingBand(outdoorC));
 }
 
 /** Extrapolation is an explicit use of a qualified response, never a fabricated
@@ -126,16 +125,24 @@ export function roomHeatingResponseAt(bands: readonly RoomHeatingBand[], outdoor
     distance(band) === distance(best) && Date.parse(band.training_to) > Date.parse(best.training_to) ? band : best, undefined);
 }
 
-/** New fits take precedence in their measured range. Keep older evidence
- * for temperatures the new revision did not observe. */
-export function publishHeatingBand<T extends HeatingBandRevision>(active: readonly T[], candidate: T): T[] {
-  const ordered = [candidate, ...active.filter(point => point.revision !== candidate.revision)]
+/** One accepted revision owns the whole nominal band. Observed coverage is
+ * evidence, not a second partition of that band. Stable ties preserve the
+ * received order; publication places its new candidate first. */
+export function canonicalHeatingBands<T extends HeatingBandRevision>(points: readonly T[]): T[] {
+  const ordered = [...points]
     .sort((a, b) => a.band_c - b.band_c || Number(hasRoomRunSupport(b.learning_evidence)) - Number(hasRoomRunSupport(a.learning_evidence)) ||
       Date.parse(b.fitted_at ?? b.training_to) - Date.parse(a.fitted_at ?? a.training_to) ||
       Date.parse(b.training_from) - Date.parse(a.training_from));
-  return ordered.filter((point, index) => !ordered.slice(0, index).some(newer =>
-    newer.band_c === point.band_c && newer.observed_min_c <= point.observed_min_c &&
-    newer.observed_max_c >= point.observed_max_c));
+  const seen = new Set<number>();
+  return ordered.filter(point => {
+    if (seen.has(point.band_c)) return false;
+    seen.add(point.band_c);
+    return true;
+  });
+}
+
+export function publishHeatingBand<T extends HeatingBandRevision>(active: readonly T[], candidate: T): T[] {
+  return canonicalHeatingBands([candidate, ...active.filter(point => point.revision !== candidate.revision)]);
 }
 
 export function formatHeatingRange(min: number, max: number, format: (value: number) => string) {
@@ -160,7 +167,7 @@ export function readRoomHeatingBands(value: unknown): RoomHeatingBands | undefin
       ? { ...evidence, attempted_at } : evidence;
   }
   return { ...library, reference, ...(attempt !== undefined ? { general_attempt } : {}),
-    active: readFits(library.active), candidates: readFits(library.candidates) };
+    active: canonicalHeatingBands(readFits(library.active)), candidates: readFits(library.candidates) };
 }
 
 function readFits(points: RoomHeatingBand[]): RoomHeatingBand[] {

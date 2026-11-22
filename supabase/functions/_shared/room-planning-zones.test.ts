@@ -113,7 +113,7 @@ Deno.test("an unqualified response cannot manufacture a fitted colder band", () 
 Deno.test("a band-only forecast never extrapolates across a support hole or missing weather", () => {
   for (const missingWeather of [false, true]) {
     const s = snapshot();
-    s.outdoor_temperature_c = missingWeather ? undefined : [5, 5, 5, 9, 5, 5, 5, 5];
+    s.outdoor_temperature_c = missingWeather ? undefined : [5, 5, 5, 10, 5, 5, 5, 5];
     s.device_models = [{ ...s.device_models[0], key: "floor", forecast_w_by_slot: Array(8).fill(234) }];
     const result = roomPlanningZones(s, [bandOnlyRoom()], evidence(22));
     assertEquals(result.zones[0].model, null);
@@ -121,6 +121,17 @@ Deno.test("a band-only forecast never extrapolates across a support hole or miss
     assertEquals(result.zones[0].target_c, Array(8).fill(22));
     assert(result.warnings.some(warning => warning.code === "room_forecast_estimate"));
   }
+});
+
+Deno.test("quarter forecasts select nominal band revisions beyond observed edges and record the coverage", () => {
+  const s = snapshot();
+  s.outdoor_temperature_c = [-10,-9.999,-5.001,5,9.999,6,8,5.5];
+  const result = roomPlanningZones(s,[bandOnlyRoom()],evidence(22));
+  const zone = result.zones[0];
+  assert(zone.model);
+  assertEquals(zone.heating_bands?.by_quarter,[0,0,0,1,1,1,1,1]);
+  assertEquals(zone.heating_bands?.extrapolated_by_quarter,[true,true,true,false,true,false,false,false]);
+  assertEquals(zone.heating_bands?.active.map(b => b.revision),["synthetic-cold","synthetic-mild"]);
 });
 
 Deno.test("house evidence is required by any selected band, not only the first quarter", () => {

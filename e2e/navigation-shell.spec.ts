@@ -454,6 +454,53 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading')).toHaveCount(0);
   });
 
+  for (const kind of ['room', 'device'] as const) {
+    test(`${kind} heating Model labels use fixed five-degree bands with separate observed coverage`, async ({ page, context }) => {
+      // Independently generated model metadata; no household measurements.
+      await mockComfortLink(context);
+      const bands = [-15, -10].map((band_c, i) => ({ band_c,
+        revision: `60000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+        observed_min_c: band_c + 1.2, observed_max_c: band_c + 2.4,
+        training_from: '2026-01-01T00:00:00Z', training_to: '2026-01-05T00:00:00Z',
+      }));
+      const physics = { gain_c_per_wh: .002, cooling_constant_per_h: .03, background_gain_c_per_h: 0,
+        thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 15, time_constant_h: 1 / .03,
+        r2: .9, sample_count: 50, residual_std_c: .1, heat_lag_h: 0 };
+      await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => route.fulfill({ json: {
+        room: { trained: false, rejection_reason: null, temperature_bands: bands.map(b => ({ ...b, model: physics })) }, connections: [],
+      } }));
+      const devices = [{ id: 'synthetic-heater', device_key: 'synthetic-heater', statistic_id: 'synthetic-heater',
+        name: 'Synthetic heater', colour: TEST_DEVICE_COLOURS[0], retired_at: null, category: 'heating',
+        load_type_override: 'duty_cycle', planning_role_override: 'controllable', control_type_override: 'setpoint',
+        planning_choice_at: null, mapping_status: 'ready', mapped_control_type: 'setpoint', mapping_error: null,
+        mapping_summary: { room_key: 'studio', room_name: 'Studio' }, active_power_w: 500, profile_sample_count: 50 }];
+      await context.route('**/rest/v1/rpc/get_energy_portal_delta', route => route.fulfill({
+        json: portalDelta(route.request().postDataJSON().p_known, { devices }),
+      }));
+      await context.route('**/rest/v1/energy_optimisation_device_operating_points?**', route => route.fulfill({ json: {
+        points: bands.map(b => ({ ...b, min_c: b.observed_min_c, max_c: b.observed_max_c,
+          outdoor_c: b.band_c + 2, watts: 500, spread_w: 20, days: 3, hours: 6 })),
+      } }));
+      await login(page);
+      if (kind === 'room') {
+        await page.goto(COMFORT_LINK);
+        await page.getByRole('region', { name: 'Valt rum' }).getByRole('button', { name: 'Modell', exact: true }).click();
+      } else {
+        await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices&home=${LINKED_HOME_ID}`);
+        await page.getByRole('navigation', { name: 'Enheter', exact: true }).getByRole('button', { name: /^Synthetic heater/ }).click();
+        await page.getByRole('region', { name: 'Synthetic heater', exact: true }).getByRole('tab', { name: 'Modell' }).click();
+      }
+      const select = page.getByLabel('Utomhustemperaturintervall', { exact: true });
+      const normalize = (s: string) => s.replaceAll('−', '-');
+      await expect(select).toBeVisible();
+      expect((await select.locator('option').allTextContents()).map(normalize)).toEqual(['-15 – -10 °C', '-10 – -5 °C']);
+      await select.selectOption(bands[1].revision);
+      await expect(page.getByText('Observerat intervall', { exact: kind === 'room' })).toBeVisible();
+      const panel = page.getByRole('region', { name: kind === 'room' ? 'Valt rum' : 'Synthetic heater', exact: true });
+      expect(normalize(await panel.innerText())).toContain('-8,8 – -7,6 °C');
+    });
+  }
+
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
     const devices = methods.map((method, index) => ({

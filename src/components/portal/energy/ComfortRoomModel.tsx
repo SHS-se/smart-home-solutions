@@ -15,7 +15,7 @@ import { isEquilibrium, SLOT_HOURS, type ThermalZoneModel } from '../../../../su
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
 import { FittedRoomWarnings, LatestRoomSourceEvidence, LatestRoomRunEvidence } from './RoomModelEvidence';
-import { formatHeatingRange, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
+import { formatHeatingRange, heatingBand, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
 
 const learningEvidence = z.object({ observation_hours: z.number().optional(), observation_intervals: z.number().optional(),
   run_calibration: roomRunEvidence.optional() }).passthrough();
@@ -121,7 +121,7 @@ function RoomScenario({ model, connections, initialOutdoor = -5, band }: {
   });
   const peerSeries = receivingRooms.flatMap(room => room.values ? [{ name: room.name, values: room.values }] : []);
   const showComparison = scenario.outdoorC !== referenceOutdoorC &&
-    (!band || (referenceOutdoorC >= band.observed_min_c && referenceOutdoorC <= band.observed_max_c));
+    (!band || heatingBand(referenceOutdoorC) === band.band_c);
   const cycleTitle = t('Uppskattad uppvärmning och avsvalning', 'Warm-up and cool-down estimate');
   const doorwayTitle = t('Uppskattad påverkan på anslutna rum', 'Estimated effect on connected rooms');
   return <div className="space-y-4">
@@ -192,8 +192,7 @@ function RoomFits({ model, connections, bands, generalEvidence }: {
   if (!fitted) return null;
   return <>
     {bands.length > 0 && <HeatingBandSelect options={[...bands.map(band => ({ key: band.revision,
-      label: bands.some(other => other !== band && other.band_c === band.band_c) ? observed(band)
-        : formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format) })),
+      label: formatHeatingRange(band.band_c, band.band_c + HEATING_BAND_WIDTH_C, format) })),
     ...(model ? [{ key: 'general', label: t('Allmän respons', 'General response') }] : [])]}
       selected={selected?.revision ?? 'general'} onSelect={setSelection} />}
     <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" aria-live="polite">

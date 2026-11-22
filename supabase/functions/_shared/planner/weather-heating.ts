@@ -1,5 +1,5 @@
 /** Electrical draw while heating, with the observed outdoor range kept as evidence. */
-import { heatingBand, type HeatingBandRevision } from "./heating-bands.ts";
+import { canonicalHeatingBands, heatingBand, type HeatingBandRevision } from "./heating-bands.ts";
 
 export const WEATHER_HEATING_METHOD = "weather_heating_draw_v1";
 export const MAX_POINTS = 10;
@@ -49,7 +49,7 @@ export function readWeatherHeating(value: unknown, binding: string, allowEmpty =
     Array.isArray(profile.reference.points) && profile.reference.points.length >= 2 &&
     profile.reference.points.every(valid) ? profile.reference : undefined;
   if (profile.versioned || profile.banded) {
-    const points = (profile.points as HeatingDrawBand[]).filter(readBand);
+    const points = canonicalHeatingBands((profile.points as HeatingDrawBand[]).filter(readBand));
     if (!points.length && !reference && !allowEmpty) return null;
     const versioned = profile.versioned && { ...profile.versioned, candidates: profile.versioned.candidates.filter(readBand) };
     return { ...profile, points, reference, ...(versioned ? { versioned } : {}) };
@@ -90,5 +90,5 @@ export function heatingCurveAt(points: readonly HeatingPoint[], outdoor: number 
 export function heatingDrawBandAt(profile: WeatherHeatingProfile, outdoor: number | null): HeatingDrawBand | undefined {
   if (!(profile.versioned || profile.banded) || outdoor === null || !Number.isFinite(outdoor)) return;
   return (profile.points as HeatingDrawBand[]).find(band =>
-    band.band_c === heatingBand(outdoor) && outdoor >= band.min_c && outdoor <= band.max_c);
+    band.band_c === heatingBand(outdoor));
 }
