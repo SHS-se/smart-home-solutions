@@ -61,12 +61,15 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119080000_reduce_heating_learning_spills.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119103000_seek_missing_heating_irradiance.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261122000500_complete_legacy_training_intervals.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122001000_disable_jit_for_heating_reads.sql"));
     const memorySettings = (await db.query<{ settings: string[] }>(`SELECT proconfig AS settings
       FROM pg_proc WHERE oid IN (
         'get_energy_room_heating_fit_windows(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure,
         'get_energy_room_thermal_interval_capture(uuid,uuid,text,timestamptz,timestamptz)'::regprocedure)`)).rows;
     assertEquals(memorySettings.length, 2);
     assertEquals(memorySettings.every(row => row.settings.includes("work_mem=32MB")), true);
+    assertEquals(memorySettings.every(row => row.settings.includes("jit=off")), true,
+      "bounded learning readers avoid compilation latency within the existing RPC timeout");
     const start = (await db.query<{ at: string }>("SELECT to_char(date_trunc('hour',now()-interval '1 day'),'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at")).rows[0].at;
     const end = new Date(Date.parse(start) + 3_600_000).toISOString();
     const row = { room_key: "room", source_key: source, device_statistics: { heater: "sensor.synthetic_energy" },
@@ -80,7 +83,13 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     const cutoff = new Date(Date.parse(start) + 45 * 60_000).toISOString();
     const boundedWindows = async () => (await db.query("SELECT * FROM get_energy_room_heating_fit_windows($1,$2,'room',$3,$4)",
       [home, customer, start, cutoff])).rows;
+    const callerJit = (await db.query<{ jit: string }>("SELECT current_setting('jit') AS jit")).rows[0].jit;
+    await db.exec("SET jit=on");
     assertEquals(await boundedWindows(), []);
+    await db.query("SELECT get_energy_room_thermal_interval_capture($1,$2,'room',$3,$4)", [customer, home, start, end]);
+    assertEquals((await db.query<{ jit: string }>("SELECT current_setting('jit') AS jit")).rows[0].jit, "on",
+      "both function-local settings restore the caller's compilation policy");
+    await db.query("SELECT set_config('jit',$1,false)", [callerJit]);
     assertEquals(await write(row), { accepted: 1, accepted_by_source: [{ room_key: "room", source_key: source, accepted: 1 }] });
     assertEquals(await intervals(), [{ duration_s: 3600, heat_w: 800, heat_attributed: true }]);
     assertEquals(await boundedWindows(), [], "a late native hour crossing the generation ceiling cannot expand discovery");
