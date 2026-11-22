@@ -1038,12 +1038,13 @@ function roomHeatFitMicrostep(prepared: PreparedIndependentRoomBand, index: numb
 
 /** The elapsed budget bounds batches of pure numerical work; the capture
  * and fence stay with the caller. A single physical profile is the atomic
- * work unit, independently CPU-qualified on a full 400-day capture. */
+ * work unit, independently CPU-qualified on a full 400-day capture. At least
+ * one microstep always runs, so a zero budget still makes progress. */
 export function advanceIndependentRoomBandCell(prepared: PreparedIndependentRoomBand, index: number,
-  state: RoomHeatFitState | null = null): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
+  state: RoomHeatFitState | null = null, maxElapsedMs = 200): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
   const started = performance.now();
   let step = roomHeatFitMicrostep(prepared, index, state);
-  while (!step.cell && performance.now() - started < 200) step = roomHeatFitMicrostep(prepared, index, step.state);
+  while (!step.cell && performance.now() - started < maxElapsedMs) step = roomHeatFitMicrostep(prepared, index, step.state);
   return step;
 }
 

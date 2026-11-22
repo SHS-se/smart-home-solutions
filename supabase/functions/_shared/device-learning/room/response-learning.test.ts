@@ -1,7 +1,12 @@
-import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import { syntheticRoomPlant } from "./native-mean.fixture.ts";
-import { learnRoomResponse, prepareRoomResponse, advanceRoomResponseCell, ROOM_RESPONSE_CELL_COUNT } from "./response-learning.ts";
-import type { RoomBandFitCell, RoomHeatFitState } from "./mean-observations.ts";
+import {
+  learnRoomResponse, prepareRoomResponse, advanceRoomResponseCell, advanceRoomResponseCells, finalizeRoomResponse,
+  ROOM_RESPONSE_CELL_COUNT,
+} from "./response-learning.ts";
+import {
+  parseRoomBandFitCells, parseRoomHeatFitState, ROOM_BAND_FIT_CELL_COUNT, type RoomBandFitCell, type RoomHeatFitState,
+} from "./mean-observations.ts";
 
 function plant(events = 8) {
   return syntheticRoomPlant([900], events * 32, .5, .0001, {
@@ -88,6 +93,64 @@ Deno.test("resumable calibration returns the same result through serialized boun
     }
   }
   assertEquals(cells.length, 36);
+});
+
+/** JSONB transport: sorted keys and a JSON roundtrip, as each worker request reads. */
+function jsonb<T>(value: T): T {
+  const normalize = (input: unknown): unknown => Array.isArray(input) ? input.map(normalize)
+    : input && typeof input === "object" ? Object.fromEntries(Object.entries(input).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, normalize(item)])) : input;
+  return JSON.parse(JSON.stringify(normalize(value)));
+}
+const readCells = (stored: unknown[]) => [...parseRoomBandFitCells(stored.slice(0, ROOM_BAND_FIT_CELL_COUNT)),
+  ...parseRoomBandFitCells(stored.slice(ROOM_BAND_FIT_CELL_COUNT))];
+
+/** The previous production policy: one cell or iteration per fenced request. */
+function oneCellPerRequest(prepared: ReturnType<typeof prepareRoomResponse>) {
+  let stored: unknown[] = [], heat: unknown = null, requests = 0;
+  while (stored.length < ROOM_RESPONSE_CELL_COUNT) {
+    const cells = readCells(jsonb(stored));
+    const step = advanceRoomResponseCell(prepared, cells, parseRoomHeatFitState(jsonb(heat), cells.length % ROOM_BAND_FIT_CELL_COUNT), 500);
+    requests++;
+    if (step.cell) { stored = [...stored, jsonb(step.cell)]; heat = null; } else heat = jsonb(step.state);
+  }
+  return { stored, requests };
+}
+
+function batched(prepared: ReturnType<typeof prepareRoomResponse>, budgetMs: number, start: unknown[] = []) {
+  let stored = start, heat: unknown = null;
+  const batches: number[] = [];
+  while (stored.length < ROOM_RESPONSE_CELL_COUNT) {
+    const cells = readCells(jsonb(stored));
+    const batch = advanceRoomResponseCells(prepared, cells, parseRoomHeatFitState(jsonb(heat), cells.length % ROOM_BAND_FIT_CELL_COUNT), budgetMs);
+    assert(batch.cells.length > 0 || batch.state !== null, "every request records progress");
+    assertEquals(batch.state === null || batch.state.index === (cells.length + batch.cells.length) % ROOM_BAND_FIT_CELL_COUNT, true);
+    stored = [...stored, ...jsonb(batch.cells)]; heat = jsonb(batch.state);
+    batches.push(batch.cells.length);
+  }
+  return { stored, batches };
+}
+
+Deno.test("batched response cells equal one cell per request through serialized interruptions and the stage crossing", () => {
+  const rows = plant(4), reference = oneCellPerRequest(prepareRoomResponse(rows, () => true, 500));
+  const expected = finalizeRoomResponse(prepareRoomResponse(rows, () => true, 500), readCells(reference.stored));
+  // A zero budget interrupts after every single microstep; an unbounded one
+  // runs both stages in one request and therefore crosses cell eighteen.
+  for (const budget of [0, 1e9]) {
+    const actual = batched(prepareRoomResponse(rows, () => true, 500), budget);
+    assertEquals(actual.stored, reference.stored, `budget ${budget} changes a fitted cell`);
+    assertEquals(finalizeRoomResponse(prepareRoomResponse(rows, () => true, 500), readCells(actual.stored)), expected);
+    if (budget === 0) {
+      assert(actual.batches.every(count => count <= 1), "a zero budget runs exactly one microstep");
+      assert(actual.batches.length > ROOM_RESPONSE_CELL_COUNT, "the fixture exercises partial additional-heat state");
+    } else assertEquals(actual.batches, [ROOM_RESPONSE_CELL_COUNT], "cheap cells share one commit");
+  }
+  // Resume inside stage one from a persisted prefix and cross into stage two.
+  const resumed = batched(prepareRoomResponse(rows, () => true, 500), 1e9, reference.stored.slice(0, 17));
+  assertEquals(resumed.batches, [ROOM_RESPONSE_CELL_COUNT - 17]);
+  assertEquals(resumed.stored, reference.stored);
+  assertThrows(() => advanceRoomResponseCells(prepareRoomResponse(rows, () => true, 500), readCells(reference.stored), null, 1e9),
+    Error, "already complete");
 });
 
 Deno.test("partial solar coverage keeps one observation design across both calibration stages", () => {

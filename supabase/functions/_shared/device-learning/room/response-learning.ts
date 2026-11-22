@@ -1,7 +1,7 @@
 /** One policy owner for general and weather-band responses. Screening and
  * final fitting use independent training partitions and bounded worker cells. */
 import {
-  advanceIndependentRoomBandCell, finalizeIndependentRoomBand,
+  advanceIndependentRoomBandCell, finalizeIndependentRoomBand, parseRoomBandFitCells,
   prepareIndependentRoomBand, roomTransitionNoiseReference, ROOM_BAND_FIT_CELL_COUNT, ROOM_MEAN_LEARNING_METHOD, ROOM_EXCHANGE_FAMILY,
   type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState, type RoomMeanQuarter,
 } from "./mean-observations.ts";
@@ -84,6 +84,44 @@ export function advanceRoomResponseCell(prepared: PreparedRoomResponse, complete
   let step = advanceIndependentRoomBandCell(design, index, state);
   while (!step.cell && performance.now() - started < maxElapsedMs) step = advanceIndependentRoomBandCell(design, index, step.state);
   return step;
+}
+
+export interface RoomResponseBatch {
+  /** Newly completed cells, contiguous from `completed.length`. */
+  cells: RoomBandFitCell[];
+  /** Partial state of the next cell, or null at a cell boundary. */
+  state: RoomHeatFitState | null;
+}
+
+/** Advance consecutive cells under one total numerical budget. The result is
+ * the same deterministic microstep sequence as one cell per request; only
+ * the number of fenced commits changes. At least one microstep runs, and the
+ * overrun is bounded by one indivisible unit because each microbatch receives
+ * only the remaining budget. Stage designs are built once per call. */
+export function advanceRoomResponseCells(prepared: PreparedRoomResponse, completed: readonly RoomBandFitCell[],
+  state: RoomHeatFitState | null, budgetMs: number): RoomResponseBatch {
+  const started = performance.now(), cells: RoomBandFitCell[] = [];
+  let cursor = completed.length;
+  if (cursor >= ROOM_RESPONSE_CELL_COUNT) throw new Error("Room response cells are already complete");
+  let design = cursor < ROOM_BAND_FIT_CELL_COUNT ? screeningDesign(prepared) : screened(prepared, completed).prepared;
+  let current = state;
+  for (;;) {
+    const remaining = Math.max(0, budgetMs - (performance.now() - started));
+    const step = advanceIndependentRoomBandCell(design, cursor % ROOM_BAND_FIT_CELL_COUNT, current, remaining);
+    current = step.state;
+    if (step.cell) {
+      cells.push(step.cell); cursor++; current = null;
+      if (cursor === ROOM_RESPONSE_CELL_COUNT) break;
+    }
+    if (performance.now() - started >= budgetMs) break;
+    // Screening design for stage two is derived from the persisted stage-one
+    // cells. Rebuild it from the same transport encoding and parser a later
+    // request would read, never from in-memory working objects.
+    if (step.cell && cursor === ROOM_BAND_FIT_CELL_COUNT) {
+      design = screened(prepared, parseRoomBandFitCells(JSON.parse(JSON.stringify([...completed, ...cells])))).prepared;
+    }
+  }
+  return { cells, state: current };
 }
 
 export type LearnedRoomResponse = ReturnType<typeof finalizeIndependentRoomBand> & { run_ledger: RoomRunEvidence | null };

@@ -1,4 +1,4 @@
-import { ROOM_RESPONSE_CELL_COUNT, prepareRoomResponse, advanceRoomResponseCell, finalizeRoomResponse, learnRoomResponse } from "../device-learning/room/response-learning.ts";
+import { ROOM_RESPONSE_CELL_COUNT, prepareRoomResponse, advanceRoomResponseCells, finalizeRoomResponse, learnRoomResponse } from "../device-learning/room/response-learning.ts";
 import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
 import type { ProbeFreshnessReport } from "../device-learning/room/source-freshness.ts";
 import {
@@ -14,6 +14,8 @@ interface Database {
   rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
 export const ROOM_FIT_CAPTURE_VERSION = 2;
+/** Total numerical work per request, shared by all cells it completes. */
+export const ROOM_FIT_NUMERIC_BUDGET_MS = 500;
 export interface RoomLearningClaim {
   id: string; home_id: string; customer_id: string; owner_key: string;
   generation: number; fence: number; room_fit_progress?: unknown; room_window_visits?: unknown;
@@ -101,14 +103,14 @@ export async function runRoomHeatingLearning(
     let heatState;
     try { heatState = parseRoomHeatFitState(envelope.heat_state, cursor % ROOM_BAND_FIT_CELL_COUNT); }
     catch { return await reset(cursor); }
-    // Keep one fenced cell per commit, but spend a useful bounded batch on
-    // its numeric iterations before the next capture read. This leaves ample
-    // headroom below the hosted two-second CPU limit.
-    const step = advanceRoomResponseCell(prepared, cells, heatState, 500);
-    const saved = step.cell ? await rpc("checkpoint_energy_room_fit", {
-      p_expected_cursor: cursor, p_metadata: null, p_capture_base64: null, p_cell: step.cell,
-    }) : await rpc("checkpoint_energy_room_heat_iteration", {
-      p_expected_cursor: cursor, p_expected_state: envelope.heat_state ?? null, p_heat_state: step.state,
+    // Spend one bounded numerical budget per request across as many cells as
+    // it completes, then commit them and the next cell's partial state in one
+    // fenced write. The budget is the previous per-request ceiling, so cheap
+    // cells no longer each cost a claim, context reads, capture load and wake.
+    const batch = advanceRoomResponseCells(prepared, cells, heatState, ROOM_FIT_NUMERIC_BUDGET_MS);
+    const saved = await rpc("checkpoint_energy_room_fit_cells", {
+      p_expected_cursor: cursor, p_expected_state: envelope.heat_state ?? null,
+      p_cells: batch.cells, p_heat_state: batch.state,
     });
     return { kind: "handled", result: { checkpointed: saved === true, ...(saved === true ? {} : { superseded: true }) } };
   }

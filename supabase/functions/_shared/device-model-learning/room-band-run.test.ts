@@ -14,11 +14,14 @@ function jsonb<T>(value: T): T {
   return JSON.parse(JSON.stringify(normalize(value)));
 }
 
-function fixture() {
+function fixture(options: { unidentified?: boolean } = {}) {
   const source = syntheticRoomPlant([3600], 240).rows;
-  const rows = source.map(row => ({ room_key: "room", room_name: "Synthetic room", active_power_w: 500,
+  const rows = source.map((row, i) => ({ room_key: "room", room_name: "Synthetic room", active_power_w: 500,
     start_ts: new Date(row.start_ms).toISOString(), duration_s: row.duration_s,
-    room_temperature_c: row.room_c, outdoor_temperature_c: row.outdoor_c, house_temperature_c: row.house_c,
+    // An unidentified synthetic room still has metered on/off events, but its
+    // temperature is generated independently of the heater.
+    room_temperature_c: options.unidentified ? 20 + .3 * Math.sin(i / 7) : row.room_c,
+    outdoor_temperature_c: row.outdoor_c, house_temperature_c: row.house_c,
     solar_w_per_m2: row.solar_w_per_m2, heat_w: row.heat_w, cooling: row.cooling, probe_values: null }));
   const now = source.at(-1)!.start_ms + 3_600_000;
   let wallNow = now;
@@ -31,13 +34,15 @@ function fixture() {
   let model: StoredDeviceModel | undefined;
   let progress: { metadata: unknown; cells: unknown[]; cursor: number; base_revision: number } | null = null;
   let capture: string | null = null, fence = 0;
-  let failRpc: string | null = null;
+  let failRpc: string | null = null, loseReply: string | null = null, supersede: string | null = null;
   const reads: string[] = [], writes: Record<string, unknown>[] = [], failures: Record<string, unknown>[] = [];
+  const batches: number[] = [];
   let resets = 0;
   const db = {
     async rpc(name: string, args: Record<string, unknown>) {
       reads.push(name);
       if (name === failRpc) return { data: null, error: { message: "Synthetic interrupted request" } };
+      if (name === supersede) { supersede = null; return { data: false, error: null }; }
       let data: unknown = null;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
@@ -54,25 +59,37 @@ function fixture() {
         case "get_energy_room_operation_facts": data = []; break;
         case "get_energy_room_passive_heat": case "get_energy_doorway_probes": data = []; break;
         case "checkpoint_energy_room_fit": {
+          // Only the immutable capture uses the single-step API now.
           assertEquals(args.p_fence, fence);
           assertEquals(args.p_revision, model?.model_revision ?? 0);
-          assertEquals(args.p_expected_cursor, progress?.cursor ?? -1);
-          if (!progress) {
-            capture = String(args.p_capture_base64);
-            progress = { metadata: jsonb(args.p_metadata), cells: [], cursor: 0, base_revision: Number(args.p_revision) };
-          } else {
-            assertEquals(args.p_capture_base64, null); // No re-upload of history for every cell.
-            progress.cells.push(jsonb(args.p_cell)); progress.cursor++;
-            const metadata = progress.metadata as Record<string, unknown>; delete metadata.heat_state;
-          }
+          assertEquals(progress, null);
+          assertEquals(args.p_expected_cursor, -1);
+          capture = String(args.p_capture_base64);
+          progress = { metadata: jsonb(args.p_metadata), cells: [], cursor: 0, base_revision: Number(args.p_revision) };
           data = true; break;
         }
-        case "checkpoint_energy_room_heat_iteration": {
+        case "checkpoint_energy_room_fit_cells": {
+          // Mirrors the SQL compare-and-append: one fence, one prefix, one state.
           assert(progress);
+          assertEquals(args.p_fence, fence);
+          assertEquals(args.p_revision, model?.model_revision ?? 0);
           assertEquals(args.p_expected_cursor, progress.cursor);
           const metadata = progress.metadata as Record<string, unknown>;
-          assertEquals(args.p_expected_state, metadata.heat_state ?? null);
-          metadata.heat_state = jsonb(args.p_heat_state); data = true; break;
+          assertEquals(jsonb(args.p_expected_state), metadata.heat_state ?? null);
+          const cells = args.p_cells as unknown[];
+          assert(Array.isArray(cells) && progress.cursor + cells.length <= ROOM_BAND_FIT_CELL_COUNT);
+          assert(cells.length > 0 || args.p_heat_state !== null, "a commit records progress");
+          for (const cell of cells) progress.cells.push(jsonb(cell));
+          progress.cursor += cells.length;
+          if (args.p_heat_state === null) delete metadata.heat_state;
+          else {
+            assert(progress.cursor < ROOM_BAND_FIT_CELL_COUNT);
+            assertEquals((args.p_heat_state as { index: number }).index, progress.cursor % 18);
+            metadata.heat_state = jsonb(args.p_heat_state);
+          }
+          batches.push(cells.length);
+          if (loseReply === name) { loseReply = null; return { data: null, error: { message: "Synthetic lost reply" } }; }
+          data = true; break;
         }
         case "load_energy_room_fit_capture": data = capture; break;
         case "reset_energy_room_fit": resets++; progress = null; capture = null; data = true; break;
@@ -119,9 +136,11 @@ function fixture() {
     }
     throw new Error("Synthetic general calibration did not finish");
   };
-  return { db, tick, bootstrap, finishCell, rows, window, windows, context, now, reads, writes, failures,
+  return { db, tick, bootstrap, finishCell, rows, window, windows, context, now, reads, writes, failures, batches,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null) => { failRpc = name; },
+    loseReply: (name: string) => { loseReply = name; },
+    supersede: (name: string) => { supersede = name; },
     corruptCapture: () => { capture = "corrupt"; },
     replaceModel: () => { assert(model); model.model_revision++; },
     setVisits: (value: unknown) => { visits = value; },
@@ -230,30 +249,105 @@ Deno.test("the real room worker checkpoints screening and final-fit cells withou
   assertEquals(f.rows.length,240,"working capture never prunes measured observations");
   const firstReads = f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length;
   assert(firstReads > 0);
-  for (let i = 0; i < ROOM_BAND_FIT_CELL_COUNT; i++) {
+  f.batches.length = 0;
+  while ((f.progress?.cursor ?? 0) < ROOM_BAND_FIT_CELL_COUNT) {
+    const cursor = f.progress!.cursor;
     assertEquals(await (await f.finishCell()).json(), { checkpointed: true });
-    assertEquals(f.progress?.cursor, i + 1);
-    assertEquals(f.writes.length, 1);
+    assert(f.progress!.cursor > cursor, "every commit carries at least one complete cell or partial state");
+    assertEquals(f.writes.length, 1, "no partial band is ever published");
   }
+  assertEquals(f.progress?.cursor, ROOM_BAND_FIT_CELL_COUNT);
   assertEquals(f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, firstReads);
   assertEquals(await (await f.tick()).json(), { published: true });
   assertEquals(f.progress, null);
   assertEquals(f.writes.length, 2);
   const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === "revision" ? "generated" : item));
   assertEquals(normalize(f.writes[1]), normalize(expected));
+  // One capture load per fenced numerical commit, never one per cell.
   assertEquals(f.reads.filter(name => name === "load_energy_room_fit_capture").length,
-    f.reads.filter(name => name === "checkpoint_energy_room_heat_iteration").length + ROOM_BAND_FIT_CELL_COUNT);
+    f.reads.filter(name => name === "checkpoint_energy_room_fit_cells").length);
+  assertEquals(f.batches.reduce((sum, count) => sum + count, 0), ROOM_BAND_FIT_CELL_COUNT);
+  assert(f.batches.length <= ROOM_BAND_FIT_CELL_COUNT);
   assertEquals(f.reads.filter(name => name === "get_energy_room_thermal_interval_capture").length, 2 * firstReads);
+});
+
+/** Run one band to publication, counting requests while it holds staged cells. */
+async function publishBand(f: ReturnType<typeof fixture>) {
+  let requests = 0;
+  for (let step = 0; step < 1000; step++) {
+    const staged = f.progress !== null;
+    const response = await f.tick();
+    if (staged && response.status === 200) requests++;
+    if (response.status === 200 && (await response.json()).published) return requests;
+  }
+  throw new Error("Synthetic band did not publish");
+}
+
+Deno.test("an unidentified band drains its cells in a few fenced requests instead of one per cell", async () => {
+  const f = fixture({ unidentified: true });
+  await f.bootstrap();
+  const expected = await fitStoredRoomHeating(f.db, "home", "customer", "room", f.context, f.model, null, { historyTo: f.now, wallNow: f.now });
+  assertEquals(await (await f.tick()).json(), { checkpointed: true }); // Immutable capture.
+  const accepted = f.writes.length;
+  f.batches.length = 0; f.reads.length = 0;
+  const requests = await publishBand(f);
+  const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === "revision" ? "generated" : item));
+  assertEquals(normalize(f.writes.at(-1)), normalize(expected), "batching does not change what is fitted");
+  assertEquals(f.writes.length, accepted + 1);
+  const band = (f.model?.heating_bands as RoomHeatingBands);
+  assertEquals(band.active, [], "the synthetic heater does not explain this room");
+  // Previously 36 cell requests plus finalization; cheap cells now share commits.
+  assert(f.batches.length <= 6, `unidentified band used ${f.batches.length} numerical commits`);
+  assertEquals(requests, f.batches.length + 1);
+  assertEquals(f.reads.filter(name => name === "claim_energy_device_learning").length, requests);
+  assertEquals(f.reads.filter(name => name === "capture_energy_device_models").length, requests);
+  assertEquals(f.reads.includes("checkpoint_energy_room_heat_iteration"), false);
+});
+
+Deno.test("an interrupted or lost batch commit resumes from the authoritative prefix with an unchanged fit", async () => {
+  const reference = fixture();
+  await reference.bootstrap(); await reference.tick();
+  await publishBand(reference);
+  for (const mode of ["interrupted", "lost", "superseded"] as const) {
+    const f = fixture();
+    await f.bootstrap(); await f.tick(); // Accepted general response, then the band capture.
+    assertEquals(await (await f.tick()).json(), { checkpointed: true }); // One successful batch first.
+    assert(f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT, "the failure happens inside the prefix");
+    const accepted = structuredClone(f.model);
+    const before = structuredClone(f.progress);
+    if (mode === "interrupted") f.fail("checkpoint_energy_room_fit_cells");
+    else if (mode === "lost") f.loseReply("checkpoint_energy_room_fit_cells");
+    else f.supersede("checkpoint_energy_room_fit_cells");
+    const response = await f.tick();
+    f.fail(null);
+    if (mode === "superseded") {
+      assertEquals(await response.json(), { checkpointed: false, superseded: true }, "a stale fence or generation commits nothing");
+      assertEquals(f.progress, before);
+    } else {
+      assertEquals(response.status, 500);
+      assertEquals(f.failures.length, 1, "a transient commit failure is an ordinary retriable owner failure");
+      if (mode === "interrupted") assertEquals(f.progress, before, "an uncommitted batch leaves the prefix untouched");
+      else assert(f.progress!.cursor > before!.cursor || f.progress!.metadata !== before!.metadata,
+        "a lost reply keeps the committed batch");
+    }
+    assertEquals(f.model, accepted, "no failure mode changes accepted models");
+    await publishBand(f);
+    assertEquals(f.resets, 0, "no failure mode discards valid staged cells");
+    // Revision identifiers are generated per fixture; every fitted value must match.
+    const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) =>
+      key === "revision" || key === "reference_revision" ? "generated" : item));
+    assertEquals(normalize(f.writes.at(-1)), normalize(reference.writes.at(-1)), `${mode} commit changes the fit`);
+  }
 });
 
 Deno.test("interrupted cells resume, and a material source correction discards only the incomplete fit", async () => {
   const f = fixture();
   await f.bootstrap(); await f.bootstrap(); await f.tick();
-  const accepted = structuredClone(f.model);
+  assert(f.progress !== null && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT, "the interruption happens inside the prefix");
+  const accepted = structuredClone(f.model), staged = structuredClone(f.progress);
   f.fail("load_energy_room_fit_capture");
   assertEquals((await f.tick()).status, 500);
-  assert(f.progress !== null);
-  assert(f.progress.cursor <= 1);
+  assertEquals(f.progress, staged, "an interrupted request keeps the authoritative prefix and partial state");
   assertEquals(f.model, accepted);
   f.fail(null);
   while (f.progress && f.progress.cursor < ROOM_BAND_FIT_CELL_COUNT) await f.finishCell();

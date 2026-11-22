@@ -151,6 +151,138 @@ Deno.test("current run calibration persists a private bounded ledger with one fe
   } finally { await db.close(); }
 });
 
+const syntheticCell = (cursor: number) => ({ lag_h: HEAT_LAG_GRID_H[Math.floor(cursor % 18 / 2)],
+  partition: cursor % 2 ? "full" : "training",
+  additional_heat: { finite: null, equilibrium: null, integrator: null }, fits: { finite: null, equilibrium: null, integrator: null } });
+async function batch(db: PGlite, j: Claim, cursor: number, count: number, expected: unknown = null, state: unknown = null,
+  cells: unknown = Array.from({ length: count }, (_, i) => syntheticCell(cursor + i)), revision = 1) {
+  return (await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit_cells($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb) AS ok",
+    [j.id, j.generation, j.fence, revision, cursor, expected === null ? null : JSON.stringify(expected),
+      JSON.stringify(cells), state === null ? null : JSON.stringify(state)])).rows[0].ok;
+}
+async function stored(db: PGlite, j: Claim) {
+  return (await db.query<{ cursor: number; state: unknown; capture: string }>(`SELECT jsonb_array_length(cells) AS cursor,
+    metadata->'heat_state' AS state,replace(encode(capture,'base64'),E'\\n','') AS capture
+    FROM private.energy_room_fit_progress WHERE job_id=$1`, [j.id])).rows[0];
+}
+
+Deno.test("batched room fit commits are fenced compare-and-append writes ending in the normal 36-cell publication", async () => {
+  const db = await database(true, true, true, true);
+  try {
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122160000_batch_room_fit_cells.sql"));
+    const before = (await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows;
+    let j = await claim(db);
+    const captured = { ...metadata, version: 2, capture: { version: 1, window: { window_key: "-10" } } };
+    assertEquals(await checkpoint(db, j, -1, 1, captured), true);
+    assertEquals(await batch(db, j, 0, 2), false, "the capture commit released the lease");
+    await release(db, j); j = await claim(db);
+    await db.exec("TRUNCATE net.wakes");
+
+    // Invalid inputs are rejected without touching scratch.
+    for (const [cursor, count, cells, state, message] of [
+      [0, 0, "{}", null, "Invalid room fit cells"],
+      [0, 0, [], null, "Invalid room fit cells"],
+      [0, 1, [1], null, "Invalid room fit cells"],
+      [30, 7, undefined, null, "Invalid room fit cells"],
+      [0, 2, undefined, { version: 2, index: 3 }, "Invalid room response iteration"],
+      [0, 2, undefined, { version: 1, index: 2 }, "Invalid room response iteration"],
+      [0, 36, undefined, { version: 2, index: 0 }, "Invalid room response iteration"],
+    ] as const) {
+      await assertRejects(() => batch(db, j, cursor, count, null, state, cells), Error, message);
+    }
+    assertEquals((await stored(db, j)).cursor, 0);
+
+    // Stale generation, fence or revision commits nothing and keeps the lease.
+    assertEquals(await batch(db, { ...j, generation: j.generation + 1 }, 0, 3), false);
+    assertEquals(await batch(db, { ...j, fence: j.fence - 1 }, 0, 3), false);
+    assertEquals(await batch(db, j, 1, 3), false, "a skipped prefix cannot append");
+    assertEquals(await batch(db, j, 0, 3, { version: 2, index: 0, stale: true }), false, "a mismatched partial state cannot append");
+    assertEquals((await stored(db, j)).cursor, 0);
+
+    // Three cells plus partial state of the fourth, in one write.
+    const partial = { version: 2, index: 3, iteration: 1 };
+    assertEquals(await batch(db, j, 0, 3, null, partial), true);
+    assertEquals(await stored(db, j), { cursor: 3, state: partial, capture }, "capture is immutable across batches");
+    assertEquals(await batch(db, j, 0, 3, null, partial), false, "a lost reply cannot append the same batch twice");
+    assertEquals(await load(db, j), null, "each commit relinquishes the publication lease");
+    assertEquals(await release(db, j), true);
+    j = await claim(db);
+    assertEquals(j.room_fit_progress?.cursor, 3);
+    assertEquals((j.room_fit_progress?.metadata as { heat_state: unknown }).heat_state, partial);
+
+    // A state-only iteration compares the stored state; a stale state is refused.
+    const next = { ...partial, iteration: 2 };
+    assertEquals(await batch(db, j, 3, 0, null, next), false);
+    assertEquals(await batch(db, j, 3, 0, partial, next), true);
+    await release(db, j); j = await claim(db);
+
+    // Finish the partial cell and cross into stage two in one fenced write.
+    assertEquals(await batch(db, j, 3, 17, next), true);
+    assertEquals(await stored(db, j), { cursor: 20, state: null, capture }, "a completed cell clears only its partial state");
+    await release(db, j); j = await claim(db);
+    assertEquals(parseRoomBandFitCells(j.room_fit_progress!.cells.slice(0, 18)), j.room_fit_progress!.cells.slice(0, 18));
+    assertEquals((await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,1,20,'{}'::jsonb,NULL) AS ok",
+      [j.id, j.generation, j.fence])).rows[0].ok, false, "an incomplete prefix cannot publish");
+    assertEquals(await batch(db, j, 20, 16), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(j.room_fit_progress?.cursor, 36);
+    await assertRejects(() => batch(db, j, 36, 0, null, { version: 2, index: 0 }), Error, "Invalid room response iteration");
+    await assertRejects(() => batch(db, j, 36, 1), Error, "Invalid room fit cells");
+    assertEquals((await db.query("SELECT * FROM energy_optimisation_zone_models ORDER BY home_id")).rows, before,
+      "batched numerical work never changes accepted models or revisions");
+
+    // The normal publisher still requires all 36 cells and run evidence.
+    const evidence = { policy: "recent_independent_runs_v1", retained_runs: 3, fitted_runs: 3,
+      runs: [0, 1, 2].map(id => ({ id: `synthetic-event-${id}`, disposition: "fitted" })) };
+    const patch = { home_id: home, customer_id: home, room_key: "room", trained: true, gain_c_per_wh: .003,
+      heating_bands: { binding: "synthetic-binding", active: [{ band_c: -10, revision: "synthetic-batched",
+        learning_evidence: { run_calibration: { policy: evidence.policy, retained_runs: 3, fitted_runs: 3 } } }] } };
+    assertEquals((await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,1,36,$4::jsonb,$5::jsonb) AS ok",
+      [j.id, j.generation, j.fence, JSON.stringify(patch), JSON.stringify(evidence)])).rows[0].ok, true);
+    assertEquals(await scratchCount(db), 0);
+    assertEquals(await batch(db, j, 0, 1), false, "a finished job cannot accept late cells");
+    await release(db, j);
+
+    // A changed accepted revision invalidates in-flight scratch for a batch too.
+    let peer = await claim(db, other);
+    assertEquals(await checkpoint(db, peer, -1, 1, captured), true);
+    await release(db, peer); peer = await claim(db, other);
+    assertEquals(peer.room_fit_progress?.cursor, 0);
+    await db.query("UPDATE energy_optimisation_zone_models SET gain_c_per_wh=.0041 WHERE home_id=$1", [other]);
+    assertEquals(await batch(db, peer, 0, 2), false);
+    assertEquals(await scratchCount(db), 0, "the obsolete revision's scratch is discarded, not extended");
+    await release(db, peer);
+    for (const role of ["anon", "authenticated"]) {
+      assertEquals((await db.query<{ allowed: boolean }>(
+        `SELECT has_function_privilege('${role}','public.checkpoint_energy_room_fit_cells(uuid,bigint,bigint,bigint,integer,jsonb,jsonb,jsonb)','EXECUTE') AS allowed`)).rows[0].allowed, false);
+    }
+    assertEquals((await db.query<{ allowed: boolean }>(
+      "SELECT has_function_privilege('service_role','public.checkpoint_energy_room_fit_cells(uuid,bigint,bigint,bigint,integer,jsonb,jsonb,jsonb)','EXECUTE') AS allowed")).rows[0].allowed, true);
+  } finally { await db.close(); }
+});
+
+Deno.test("batched and previous single-step commits interoperate on the same staged row during a deploy", async () => {
+  const db = await database(true, true, true, true);
+  try {
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122160000_batch_room_fit_cells.sql"));
+    let j = await claim(db);
+    assertEquals(await checkpoint(db, j, -1), true);
+    await release(db, j); j = await claim(db);
+    // A previous worker records one cell and a partial iteration...
+    assertEquals(await checkpoint(db, j, 0), true);
+    await release(db, j); j = await claim(db);
+    const partial = { version: 2, index: 1, iteration: 1 };
+    assertEquals((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_heat_iteration($1,$2,$3,1,1,NULL,$4::jsonb) AS ok",
+      [j.id, j.generation, j.fence, JSON.stringify(partial)])).rows[0].ok, true);
+    await release(db, j); j = await claim(db);
+    // ...and the batched worker resumes from exactly that prefix and state.
+    assertEquals(await batch(db, j, 1, 4, partial), true);
+    await release(db, j); j = await claim(db);
+    assertEquals(await checkpoint(db, j, 5), true, "a previous worker can continue a batched prefix");
+    assertEquals((await stored(db, j)).cursor, 6);
+  } finally { await db.close(); }
+});
+
 Deno.test("a newly deployed run policy requests one normal refit without repeatedly restarting its owner", async () => {
   const db = await database(true,true,true,true);
   try {

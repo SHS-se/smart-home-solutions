@@ -88,6 +88,7 @@ Deno.test("staged room fits hold only live, owner-qualified evidence during age 
     await db.exec(await Deno.readTextFile("supabase/migrations/20261118220500_room_fit_progress.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119042000_hold_room_fit_inputs_during_retention.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261122150000_hold_bounded_room_fit_history.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122160000_batch_room_fit_cells.sql"));
     await db.exec(`
       INSERT INTO energy_heating_observations(home_id,customer_id,room_key,source_revision,start_ts,duration_s) VALUES
         ('${home}','${customer}','alpha','a','2020-02-01 00:00Z',3600),
@@ -139,6 +140,13 @@ Deno.test("staged room fits hold only live, owner-qualified evidence during age 
     assertEquals((await db.query(checkpointSql, [beta, bMetadata])).rows, [{ saved: true }]);
     assertEquals((await db.query("SELECT count(*)::int AS n FROM private.room_fit_retention_holds($1)", [home])).rows,
       [{ n: 2 }], "the deployed worker's capture version owns its discovery inputs during retention");
+    // Batched numerical commits keep the same envelope, so the hold survives
+    // appended cells and a stored partial additional-heat state.
+    await db.query("UPDATE private.energy_learning_jobs SET lease_until=now()+interval '1 minute' WHERE id=$1", [beta]);
+    assertEquals((await db.query("SELECT checkpoint_energy_room_fit_cells($1,1,1,1,0,NULL,'[{},{}]','{\"version\":2,\"index\":2}') AS saved",
+      [beta])).rows, [{ saved: true }]);
+    assertEquals((await db.query("SELECT count(*)::int AS n FROM private.room_fit_retention_holds($1)", [home])).rows,
+      [{ n: 2 }], "batched checkpoints keep captured inputs held until completion or reset");
     for (const incompatibleVersion of [1, ROOM_FIT_CAPTURE_VERSION + 1]) {
       await db.query("UPDATE private.energy_room_fit_progress SET metadata=jsonb_set(metadata,'{version}',to_jsonb($1::int)) WHERE job_id=$2",
         [incompatibleVersion, alpha]);
