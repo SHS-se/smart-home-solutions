@@ -501,6 +501,55 @@ test.describe('staff navigation shell', () => {
     });
   }
 
+  test('room Model plots every heating run by outdoor temperature with a trend and run details', async ({ page, context }, testInfo) => {
+    // Independently generated runs; no household measurements.
+    await mockComfortLink(context);
+    await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => route.fulfill({ json: { room: null, connections: [] } }));
+    const noise = (i: number) => { const v = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v) - .5; };
+    const dispositions = ['fitted', 'fitted', 'provisional', 'uninformative', 'fitted', 'suspect_change'] as const;
+    const runs = Array.from({ length: 24 }, (_, i) => {
+      const outdoor = -16 + i * 1.3 + noise(i), start = Date.UTC(2026, 0, 3 + i * 4, 1);
+      const disposition = dispositions[i % dispositions.length];
+      const se = disposition === 'uninformative' ? .0012 : .0003;
+      return { id: String(start), from_ms: start, to_ms: start + 7 * 3_600_000, measured_wh: 1600 + 40 * i, transitions: 7,
+        gain: (2 + noise(i + 40) * .6) / 1000, gain_se: se, change_at_ms: disposition === 'suspect_change' ? start + 3 * 3_600_000 : null,
+        change_size: disposition === 'suspect_change' ? .4 : null, change_phase: disposition === 'suspect_change' ? 'heating' : null,
+        disposition, on_from_ms: start + 3_600_000, off_from_ms: start + 3 * 3_600_000, outdoor_c: outdoor, house_c: 20.2,
+        room_start_c: 19.4, room_peak_c: 21.1, room_end_c: 19.8, cooldown: i % 7 === 6 ? null
+          : { hours: 2.5, c_per_h: .045 * (13 - outdoor) + noise(i + 80) * .08, room_c: 20.4, outdoor_c: outdoor, house_c: 20.2 } };
+    });
+    await context.route('**/rest/v1/rpc/get_energy_room_run_evidence', route => {
+      expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio' });
+      return route.fulfill({ json: [
+        { scope_key: 'general', model_revision: 3, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(-10) } },
+        { scope_key: '-15', model_revision: 2, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(0, 12) } },
+        { scope_key: '-5', model_revision: 2, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(12) } },
+      ] });
+    });
+    await login(page);
+    await page.goto(COMFORT_LINK);
+    const panel = page.getByRole('region', { name: 'Valt rum' });
+    await panel.getByRole('button', { name: 'Modell', exact: true }).click();
+    const heating = panel.getByRole('img', { name: 'Värmerespons per förlopp' });
+    const cooling = panel.getByRole('img', { name: 'Avsvalning per förlopp' });
+    await expect(heating.locator('[data-run]')).toHaveCount(24);
+    await expect(cooling.locator('[data-run]')).toHaveCount(runs.filter(run => run.cooldown).length);
+    await expect(panel.getByText(/Trend: platt/)).toBeVisible();
+    await expect(panel.getByText(/svalnar inte utan värme över/)).toBeVisible();
+    await expect(panel.getByText('Effekt som håller rummets temperatur (uppskattning)')).toBeVisible();
+    await heating.locator(`[data-run="${runs[5].id}"]`).click();
+    const detail = panel.getByTestId('room-run-detail');
+    await expect(detail).toContainText('2026');
+    await expect(detail).toContainText(/annan källa/);
+    await expect(cooling.locator(`[data-run="${runs[5].id}"][aria-pressed="true"]`)).toHaveCount(1);
+    await page.screenshot({ path: testInfo.outputPath('room-run-charts.png'), fullPage: true });
+    await detail.getByRole('button', { name: 'Stäng' }).click();
+    await expect(detail).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await heating.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  });
+
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
     const devices = methods.map((method, index) => ({

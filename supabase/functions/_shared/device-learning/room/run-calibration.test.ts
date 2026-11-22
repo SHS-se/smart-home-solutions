@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { syntheticRoomPlant } from "./native-mean.fixture.ts";
-import { calibrateRoomRuns, recentRoomRunRows, roomHeatingRuns } from "./run-calibration.ts";
+import { calibrateRoomRuns, describeHeatingRun, recentRoomRunRows, roomHeatingRuns, RUN_COOLDOWN_WINDOW_H } from "./run-calibration.ts";
 import type { DynamicThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 const model: DynamicThermalZoneModel = { response_family: "finite", gain_c_per_wh: .002,
@@ -129,4 +129,42 @@ Deno.test("the serialized working event view is idempotent across band slicing, 
     const once = recentRoomRunRows(rows,inBand);
     assertEquals(recentRoomRunRows(once,inBand),once,"resumed and recaptured numerical designs use identical event anchors");
   }
+});
+
+Deno.test("each run records its observed outdoor temperature and cooldown", () => {
+  const rows = plant(4);
+  const runs = roomHeatingRuns(rows, () => true);
+  const { evidence } = calibrateRoomRuns(rows, model, () => true);
+  for (const [index, run] of evidence.runs.entries()) {
+    const window = rows.slice(runs[index].from, runs[index].end + 1);
+    const outdoor = window.reduce((sum, row) => sum + row.outdoor_c!, 0) / window.length;
+    assertAlmostEquals(run.outdoor_c!, outdoor, 1e-9);
+    assert(run.room_peak_c! > run.room_start_c!);
+    // House at ~20 °C, room heated above it and outdoor near −7 °C: it cools.
+    assert(run.cooldown && run.cooldown.c_per_h > 0 && run.cooldown.hours >= 1);
+    assert(run.cooldown.hours <= RUN_COOLDOWN_WINDOW_H);
+    assertEquals(run.on_from_ms, runs[index].on_from_ms);
+  }
+});
+
+Deno.test("missing readings shorten a run description and never fill it", () => {
+  const rows = plant(3);
+  const [run] = roomHeatingRuns(rows, () => true);
+  const complete = describeHeatingRun(rows, run, .5);
+  // A hole in the middle of the cooldown leaves an estimate from what was seen.
+  const holed = structuredClone(rows);
+  holed[run.off + 4].room_c = null;
+  holed[run.off + 5].outdoor_c = null;
+  const middle = describeHeatingRun(holed, run, .5);
+  assert(middle.cooldown && Math.abs(middle.cooldown.c_per_h - complete.cooldown!.c_per_h) < .05);
+  // An unavailable outdoor sensor leaves the run unplaced, not at zero.
+  const dark = structuredClone(rows);
+  for (let i = run.from; i <= run.end; i++) dark[i].outdoor_c = null;
+  const unplaced = describeHeatingRun(dark, run, .5);
+  assertEquals(unplaced.outdoor_c, null);
+  assertEquals(unplaced.cooldown, null);
+  // The newest quarters are late: a cooldown shorter than an hour is not reported.
+  const late = describeHeatingRun(rows, { ...run, end: run.off + 2 }, 0);
+  assertEquals(late.cooldown, null);
+  assert(late.room_end_c !== null);
 });

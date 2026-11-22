@@ -5397,6 +5397,10 @@ export type Database = {
         Args: { p_home_id: string; p_room_key: string }
         Returns: Json
       }
+      get_energy_room_run_evidence: {
+        Args: { p_home_id: string; p_room_key: string }
+        Returns: Json
+      }
       set_energy_room_connections: {
         Args: { p_home_id: string; p_expected_revision: number; p_connections: Json }
         Returns: number

@@ -46,6 +46,26 @@ export interface HeatingRunAssessment {
   change_to_h: number | null;
   repeated_shape: boolean;
   disposition: "fitted" | "provisional" | "older_response" | "suspect_change" | "uninformative";
+  /** Descriptive run conditions for display. They are never fitting inputs,
+   * and older ledgers lack them. Each is null where nothing was observed. */
+  on_from_ms?: number;
+  off_from_ms?: number;
+  outdoor_c?: number | null;
+  house_c?: number | null;
+  room_start_c?: number | null;
+  room_peak_c?: number | null;
+  room_end_c?: number | null;
+  cooldown?: RunCooldown | null;
+}
+/** Observed fall after the heater stops and its lag has passed. */
+export interface RunCooldown {
+  /** Hours between the first and last interval midpoints used. */
+  hours: number;
+  /** Least-squares fall of the room, °C/h; positive while cooling. */
+  c_per_h: number;
+  room_c: number;
+  outdoor_c: number;
+  house_c: number | null;
 }
 export interface RoomRunEvidence {
   policy: typeof ROOM_RUN_POLICY;
@@ -110,6 +130,52 @@ function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun
   return [...indices].sort((a, b) => a - b).map(i => rows[i]);
 }
 
+/** The window after the heater stops in which cooling is compared across runs.
+ * A fixed span keeps runs comparable; a long tail approaches equilibrium. */
+export const RUN_COOLDOWN_WINDOW_H = 3;
+const RUN_COOLDOWN_MIN_H = 1;
+
+function timeMean(rows: readonly RoomMeanQuarter[], value: (row: RoomMeanQuarter) => number | null): number | null {
+  let sum = 0, hours = 0;
+  for (const row of rows) {
+    const v = value(row);
+    if (!finite(v)) continue;
+    sum += v * roomIntervalHours(row); hours += roomIntervalHours(row);
+  }
+  return hours > 0 ? sum / hours : null;
+}
+
+/** Describe only what was observed. Missing readings shorten the evidence;
+ * they are never filled. A cooldown needs one hour of observed fall. */
+export function describeHeatingRun(rows: readonly RoomMeanQuarter[], run: HeatingRun, lagH: number) {
+  const window = rows.slice(run.from, run.end + 1);
+  const room = window.map(row => row.room_c).filter(finite);
+  const midpointH = (row: RoomMeanQuarter) => (row.start_ms - run.off_from_ms) / 3_600_000 + roomIntervalHours(row) / 2;
+  const settled = Math.max(0, lagH);
+  const tail = rows.slice(run.off, run.end + 1).filter(row => known(row) && row.heat_w! <= HEATED_SAMPLE_MIN_W &&
+    midpointH(row) >= settled && midpointH(row) <= settled + RUN_COOLDOWN_WINDOW_H &&
+    finite(row.room_c) && finite(row.outdoor_c));
+  let cooldown: RunCooldown | null = null;
+  if (tail.length >= 3) {
+    const x = tail.map(midpointH), y = tail.map(row => row.room_c!);
+    const meanX = x.reduce((a, b) => a + b, 0) / x.length, meanY = y.reduce((a, b) => a + b, 0) / y.length;
+    const sxx = x.reduce((sum, v) => sum + (v - meanX) ** 2, 0);
+    const hours = x.at(-1)! - x[0];
+    if (hours >= RUN_COOLDOWN_MIN_H && sxx > 0) cooldown = {
+      hours, c_per_h: -x.reduce((sum, v, i) => sum + (v - meanX) * (y[i] - meanY), 0) / sxx, room_c: meanY,
+      outdoor_c: timeMean(tail, row => row.outdoor_c)!, house_c: timeMean(tail, row => row.house_c),
+    };
+  }
+  return {
+    on_from_ms: run.on_from_ms, off_from_ms: run.off_from_ms,
+    outdoor_c: timeMean(window, row => row.outdoor_c), house_c: timeMean(window, row => row.house_c),
+    room_start_c: [rows[run.from], rows[run.on]].find(row => finite(row.room_c))?.room_c ?? null,
+    room_peak_c: room.length ? Math.max(...room) : null,
+    room_end_c: [...window].reverse().find(row => finite(row.room_c))?.room_c ?? null,
+    cooldown,
+  };
+}
+
 interface RunEquation { index: number; x: number[]; y: number; exposure: number }
 
 /** A run's heater contrast is conditional on boundary/solar response. Its
@@ -150,7 +216,8 @@ function runResponse(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: T
   const result: HeatingRunAssessment = { id: run.id, from_ms: run.from_ms, to_ms: run.to_ms,
     measured_wh: run.measured_wh, transitions: 0, gain: null, gain_se: null, nuisance: null, nuisance_se: null, balance_per_degree: null, balance_se_per_degree: null,
     change_at_ms: null, change_size: null, change_se: null, change_phase: null,
-    change_from_h: null, change_to_h: null, repeated_shape: false, disposition: "uninformative" };
+    change_from_h: null, change_to_h: null, repeated_shape: false, disposition: "uninformative",
+    ...describeHeatingRun(rows, run, model.heat_lag_h ?? 0) };
   const terms = runEquations(rows, run, model, inBand), matrix = terms.map(term => term.x);
   result.transitions = terms.length;
   const beta = leastSquares(matrix, terms.map(term => term.y));

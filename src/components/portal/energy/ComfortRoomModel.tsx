@@ -14,6 +14,7 @@ import { readThermalModel } from '../../../../supabase/functions/_shared/planner
 import { isEquilibrium, SLOT_HOURS, type ThermalZoneModel } from '../../../../supabase/functions/_shared/planner/models/room/thermal';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
 import { HeatingBandSelect } from './HeatingBandSelect';
+import RoomRunCharts from './RoomRunCharts';
 import { FittedRoomWarnings, LatestRoomSourceEvidence, LatestRoomRunEvidence } from './RoomModelEvidence';
 import { formatHeatingRange, heatingBand, HEATING_BAND_WIDTH_C, type RoomHeatingBand } from '../../../../supabase/functions/_shared/planner/heating-bands';
 
@@ -245,6 +246,14 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
   const rejection = room?.rejection_reason;
   return <div className="min-w-0 space-y-3 rounded-md border p-4 text-sm">
     <h3 className="font-semibold">{t('Rummets värmemodell', 'Room heating model')}</h3>
+    <RoomRunCharts homeId={homeId} roomId={roomId} />
+    <div className="space-y-1 border-t pt-3">
+      <h4 className="font-semibold">{t('Responser som planeraren använder i dag', 'Responses the planner uses today')}</h4>
+      <p className="text-xs text-muted-foreground">{t(
+        'Planeraren använder än så länge en anpassad respons per utetemperaturintervall om 5 °C.',
+        'For now the planner uses one fitted response per 5 °C outdoor temperature band.',
+      )}</p>
+    </div>
     {(model || bands.length > 0) && query.data ? <>
       <RoomFits key={roomId} model={model} connections={query.data.connections} bands={bands} generalEvidence={room?.general_learning_evidence} />
       {model && bands.length === 0 && <p className="text-xs text-muted-foreground">{t(
