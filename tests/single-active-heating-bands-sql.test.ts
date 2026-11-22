@@ -64,7 +64,17 @@ Deno.test("one active heating band migration preserves history, matches runtime 
     const publisher = original.indexOf("CREATE OR REPLACE FUNCTION public.publish_energy_device_learning(");
     await db.exec(original.slice(triggers,publisher));
     await db.exec(original.slice(publisher,original.indexOf("END; $$;",publisher)+"END; $$;".length));
-    await db.exec("BEGIN;\n"+await Deno.readTextFile(migration)+"\nCOMMIT;");
+    // The deployment CLI sends separate statements and supplies no transaction.
+    // Do not let PGlite's multi-statement implicit transaction hide that contract.
+    await assertRejects(() => db.exec("LOCK TABLE energy_optimisation_zone_models IN SHARE ROW EXCLUSIVE MODE"),
+      Error,"transaction blocks");
+    const sql = await Deno.readTextFile(migration);
+    let start = 0;
+    for (const token of sql.matchAll(/\$\$[\s\S]*?\$\$|'(?:''|[^'])*'|--[^\n]*|;/g)) {
+      if (token[0] !== ";") continue;
+      await db.exec(sql.slice(start,token.index+1));
+      start = token.index+1;
+    }
 
     for (const [i,group] of groups.entries()) {
       const expected = canonicalHeatingBands([...group,point(100+i,{band_c:-10,observed_min_c:-9,observed_max_c:-8})]);

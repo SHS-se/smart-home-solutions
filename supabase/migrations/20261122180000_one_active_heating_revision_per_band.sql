@@ -1,5 +1,6 @@
 -- A nominal five-degree band has one active revision. Its observed coverage
 -- remains evidence; superseded accepted revisions belong to the archive.
+BEGIN;
 SET LOCAL lock_timeout = '5s';
 LOCK TABLE public.energy_optimisation_zone_models,
   public.energy_optimisation_device_operating_points IN SHARE ROW EXCLUSIVE MODE;
@@ -106,3 +107,4 @@ ALTER TABLE public.energy_optimisation_device_operating_points ADD CONSTRAINT de
    OR private.heating_bands_unique(operating_points->'points')) NOT VALID;
 ALTER TABLE public.energy_optimisation_zone_models VALIDATE CONSTRAINT room_heating_active_band_unique;
 ALTER TABLE public.energy_optimisation_device_operating_points VALIDATE CONSTRAINT device_heating_active_band_unique;
+COMMIT;
