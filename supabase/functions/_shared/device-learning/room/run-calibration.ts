@@ -130,6 +130,10 @@ function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun
   return [...indices].sort((a, b) => a - b).map(i => rows[i]);
 }
 
+/** Version of the descriptive run conditions stored in each ledger. Changing
+ * it revisits every band once, so stored ledgers describe their runs. */
+export const ROOM_RUN_CONDITIONS = "run_conditions_v1";
+
 /** The window after the heater stops in which cooling is compared across runs.
  * A fixed span keeps runs comparable; a long tail approaches equilibrium. */
 export const RUN_COOLDOWN_WINDOW_H = 3;

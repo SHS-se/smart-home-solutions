@@ -1,4 +1,5 @@
 import { learnRoomResponse, type LearnedRoomResponse, ROOM_RUN_POLICY } from "../device-learning/room/response-learning.ts";
+import { ROOM_RUN_CONDITIONS } from "../device-learning/room/run-calibration.ts";
 import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.ts";
@@ -81,7 +82,7 @@ export interface HeatingFitWindow {
 
 // Revisit each completed band once to publish the selected response family
 // and evaluate equilibrium forcing in its own temperature coordinates.
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:${ROOM_RUN_POLICY}`;
+export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:${ROOM_RUN_POLICY}:${ROOM_RUN_CONDITIONS}`;
 
 function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
   const result = new Map<string, number>();
