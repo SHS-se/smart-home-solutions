@@ -1,4 +1,4 @@
-// The planner and bench referee use the car's charge limit and plug-in time
+// The planner and bench referee use the car's charge limit and readiness clock
 // to define one readiness target per quarter. The target reaches the limit
 // 60 hours after plug-in. The savings replay still uses the floor and grace
 // formula defined below.
@@ -32,7 +32,12 @@ export type CarConnection =
   /** Planned as if it were plugged in at the start of the plan. */
   | { kind: "unplugged" };
 
-export interface CarPlan { battery: CarBatteryModel; limitSoc: number; floorSetting: number; connection: CarConnection }
+export interface LocationReadinessClock {
+  elapsed_seconds: number;
+  running: boolean;
+  observed_at: string;
+}
+export interface CarPlan { battery: CarBatteryModel; limitSoc: number; floorSetting: number; connection: CarConnection; readinessClock?: LocationReadinessClock }
 
 const READINESS_HOURS = 60;
 const HOUR_MS = 3_600_000;
@@ -47,9 +52,14 @@ export function carReadinessPolicy(
   const cap = Math.round(limit * 1000);
   const anchor = plan.connection.kind === "plugged" ? Math.min(originMs, plan.connection.sinceMs)
     : plan.connection.kind === "plugged_unknown_since" ? originMs - READINESS_HOURS * HOUR_MS : originMs;
+  const clock = plan.readinessClock;
+  const observedMs = clock ? Date.parse(clock.observed_at) : 0;
   const breach_permille = slots.map(slot => {
     if (!slot.ev_available) return null;
-    const elapsed = Math.max(0, (originMs - anchor) / HOUR_MS + slot.start_seconds / 3600 + slot.hours);
+    const elapsed = clock
+      ? Math.max(0, clock.elapsed_seconds / 3600 + (clock.running
+        ? (originMs + slot.start_seconds * 1000 + slot.hours * HOUR_MS - observedMs) / HOUR_MS : 0))
+      : Math.max(0, (originMs - anchor) / HOUR_MS + slot.start_seconds / 3600 + slot.hours);
     const target = Math.min(cap, cap - READINESS_HOURS * 10 + Math.floor(elapsed * 10));
     return target > 0 ? target - 1 : null;
   });

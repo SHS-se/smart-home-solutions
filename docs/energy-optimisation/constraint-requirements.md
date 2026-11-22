@@ -1,5 +1,15 @@
 # Requirements for planner and controller constraints
 
+User requirement, 22 November 2026: an optional vehicle location entity in the
+app selects readiness timing instead of cable connection. Arriving home starts
+a new 60-hour clock; known away states freeze elapsed time. The app durably
+captures location transitions and sends elapsed time, running state and the
+observation time. Planning advances a running clock and holds a paused one,
+independently of cable telemetry. Location never gates future EV charging.
+Missing location evidence uses an explicit conservative estimate and warning,
+never a switch to cable timing. With no location configured, cable timing is
+unchanged. No departure concept or hard charging deadline is introduced.
+
 User requirement, 21 November 2026: modeled changes to a shared room's literal
 temperature schedule must preserve scheduled comfort and cost no more than
 following that schedule through the same physical response. Replay the literal

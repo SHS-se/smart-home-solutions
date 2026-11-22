@@ -191,6 +191,17 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
       {battery_degradation_sek_per_kwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh})]);
   }
   let ev = snapshot.capabilities.ev ? snapshot.ev_battery : null;
+  if (ev && (ev.source_entity_ids.location || ev.readiness_clock !== undefined)) {
+    const clock = ev.readiness_clock;
+    if (!clock || !finite(clock.elapsed_seconds) || clock.elapsed_seconds < 0 ||
+        typeof clock.running !== "boolean" || !Number.isFinite(Date.parse(clock.observed_at))) {
+      ev = { ...ev, readiness_clock: { elapsed_seconds: 60 * 3600, running: false, observed_at: snapshot.captured_at } };
+      snapshot.ev_battery = ev;
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        "ev_readiness_estimated", "ev", "The car's location readiness clock is unavailable.",
+        "Readiness uses the full charge-limit target. EV planning continues without substituting cable state.")]);
+    }
+  }
   const evService = snapshot.services.find(s => s.device === "ev" && s.control.type === "discrete_current");
   let charger = ev ? snapshot.device_physics?.car?.charger ?? (evService?.control.type === "discrete_current" ? evService.control : null) : null;
   let car = ev ? snapshot.device_physics?.car?.battery ?? (finite(ev.kwh_per_km) ? {
@@ -403,7 +414,7 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
     };
     if (car && ev) {
       problem.car_policy = carReadinessPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
-        connection: connectionFromSnapshot(ev) }, problem.slots, effective);
+        connection: connectionFromSnapshot(ev), readinessClock: ev.readiness_clock }, problem.slots, effective);
       if (outlook.ev_replacement_sek_per_kwh == null) {
         snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
           "ev_replacement_price_history", "ev", "Historical import prices do not yet provide a charging price reference.",

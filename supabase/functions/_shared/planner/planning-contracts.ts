@@ -135,6 +135,12 @@ export interface EvBatteryInput {
   available_from: string | null;
   /** When the cable last went in, recorded by the integration. Absent from older senders. */
   plugged_in_at?: string | null;
+  /** Location-selected clock observed by the app; omitted when cable controls readiness. */
+  readiness_clock?: {
+    elapsed_seconds: number;
+    running: boolean;
+    observed_at: string;
+  };
   priority: number;
   source_entity_ids: {
     connected: string;
@@ -142,6 +148,7 @@ export interface EvBatteryInput {
     target_soc: string;
     energy_remaining: string | null;
     charge_current: string | null;
+    location?: string;
   };
 }
 

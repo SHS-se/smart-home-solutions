@@ -71,6 +71,22 @@ for (const amps of [12, 15]) Deno.test(`CONTRACT EV-2: ${amps} A fits beside ful
   }
 });
 
+Deno.test("CONTRACT EV-5: optional location owns readiness without gating future charging", () => {
+  const home = syntheticHome();
+  home.ev_battery!.soc = .3;
+  home.ev_battery!.source_entity_ids.location = "device_tracker.synthetic_vehicle";
+  home.ev_battery!.readiness_clock = {elapsed_seconds: 12 * 3600, running: false, observed_at: home.captured_at};
+  const away = prepare(home);
+  assert(away.problem.car_policy!.breach_permille.every(value => value === 319), "away must freeze the 32% target throughout the horizon");
+  home.ev_battery!.connected = false;
+  assertEquals(prepare(home).problem, away.problem, "cable changes cannot change a location-selected clock");
+  assert(prepare(home).problem.slots.every(slot => slot.ev_available), "location cannot remove future charging");
+  const scheduled = plan(home);
+  assert(scheduled.plans.priority.slots.some(slot => slot.ev_w > 0), "an away unplugged car still needs planned charging below its frozen target");
+  home.ev_battery!.readiness_clock = {elapsed_seconds: 0, running: true, observed_at: home.captured_at};
+  assertEquals(prepare(home).problem.car_policy!.breach_permille[0], 201, "arrival restarts the readiness clock");
+});
+
 Deno.test("CONTRACT POOL-1: equal electricity cannot gain heat from a pause in a constant-COP pool", () => {
   const s = withPool(syntheticHome(16)); s.capabilities.ev = false; s.ev_battery = null; s.services = [];
   const input = prepare(s), core = nativePlanner();
