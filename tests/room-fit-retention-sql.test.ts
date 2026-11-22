@@ -1,5 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { assert, assertEquals } from "@std/assert";
+import { ROOM_FIT_CAPTURE_VERSION } from "../supabase/functions/_shared/device-model-learning/room-band-run.ts";
+import { ROOM_FIT_METADATA_VERSION } from "../supabase/functions/_shared/device-model-learning/room.ts";
 
 const home = "10000000-0000-4000-8000-000000000001", otherHome = "10000000-0000-4000-8000-000000000002";
 const customer = "20000000-0000-4000-8000-000000000001", otherCustomer = "20000000-0000-4000-8000-000000000002";
@@ -85,6 +87,7 @@ Deno.test("staged room fits hold only live, owner-qualified evidence during age 
     `);
     await db.exec(await Deno.readTextFile("supabase/migrations/20261118220500_room_fit_progress.sql"));
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119042000_hold_room_fit_inputs_during_retention.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261122150000_hold_bounded_room_fit_history.sql"));
     await db.exec(`
       INSERT INTO energy_heating_observations(home_id,customer_id,room_key,source_revision,start_ts,duration_s) VALUES
         ('${home}','${customer}','alpha','a','2020-02-01 00:00Z',3600),
@@ -119,8 +122,8 @@ Deno.test("staged room fits hold only live, owner-qualified evidence during age 
         ('${home}','peer','neighbor','2020-02-01 01:00Z');
     `);
     const snapshot = (roomKey: string, from_at: string, to_at: string, reference: unknown = null, pinnedFloor = from_at) => JSON.stringify({
-      version: 1,
-      capture: { version: 1, homeId: home, customerId: customer, roomKey, pinnedFloor, window: { from_at, to_at }, reference },
+      version: ROOM_FIT_CAPTURE_VERSION,
+      capture: { version: ROOM_FIT_METADATA_VERSION, homeId: home, customerId: customer, roomKey, pinnedFloor, window: { from_at, to_at }, reference },
     });
     const aMetadata = snapshot("alpha", "2020-02-01T00:00Z", "2020-02-01T01:00Z", {
       passive_heat: { device_key: "passive" },
@@ -134,6 +137,16 @@ Deno.test("staged room fits hold only live, owner-qualified evidence during age 
         [{ n: 1 }], "the real fenced first checkpoint serializes with age pruning until it commits");
     });
     assertEquals((await db.query(checkpointSql, [beta, bMetadata])).rows, [{ saved: true }]);
+    assertEquals((await db.query("SELECT count(*)::int AS n FROM private.room_fit_retention_holds($1)", [home])).rows,
+      [{ n: 2 }], "the deployed worker's capture version owns its discovery inputs during retention");
+    for (const incompatibleVersion of [1, ROOM_FIT_CAPTURE_VERSION + 1]) {
+      await db.query("UPDATE private.energy_room_fit_progress SET metadata=jsonb_set(metadata,'{version}',to_jsonb($1::int)) WHERE job_id=$2",
+        [incompatibleVersion, alpha]);
+      assertEquals((await db.query("SELECT count(*)::int AS n FROM private.room_fit_retention_holds($1) WHERE room_key='alpha'", [home])).rows,
+        [{ n: 0 }], "incompatible scratch cannot retain observations indefinitely");
+    }
+    await db.query("UPDATE private.energy_room_fit_progress SET metadata=jsonb_set(metadata,'{version}',to_jsonb($1::int)) WHERE job_id=$2",
+      [ROOM_FIT_CAPTURE_VERSION, alpha]);
     // Checkpoint releases its lease, but both fixed held intervals still apply.
     assertEquals((await db.query("SELECT lease_until FROM private.energy_learning_jobs")).rows,
       [{ lease_until: null }, { lease_until: null }]);

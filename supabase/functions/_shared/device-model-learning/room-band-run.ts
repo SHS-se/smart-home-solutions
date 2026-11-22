@@ -13,6 +13,7 @@ import {
 interface Database {
   rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
+export const ROOM_FIT_CAPTURE_VERSION = 2;
 export interface RoomLearningClaim {
   id: string; home_id: string; customer_id: string; owner_key: string;
   generation: number; fence: number; room_fit_progress?: unknown; room_window_visits?: unknown;
@@ -63,7 +64,7 @@ export async function runRoomHeatingLearning(
     const capture = await encodeRoomBandFitCapture(working.workingRows, metadata.window.from_at);
     const saved = await rpc("checkpoint_energy_room_fit", {
       p_expected_cursor: -1,
-      p_metadata: { version: 2, runtime: Deno.version.v8, capture: metadata,
+      p_metadata: { version: ROOM_FIT_CAPTURE_VERSION, runtime: Deno.version.v8, capture: metadata,
         sha256: capture.sha256, row_count: capture.row_count, observed_runs: working.observedRunCount },
       p_capture_base64: capture.base64, p_cell: null,
     });
@@ -73,7 +74,7 @@ export async function runRoomHeatingLearning(
     Number(progress.cursor) > ROOM_RESPONSE_CELL_COUNT) throw new Error("Invalid room fit progress cursor");
   const cursor = Number(progress.cursor), envelope = progress.metadata;
   const metadata = object(envelope) ? parseRoomBandMetadata(envelope.capture) : null;
-  if (!object(envelope) || envelope.version !== 2 || envelope.runtime !== Deno.version.v8 || !metadata ||
+  if (!object(envelope) || envelope.version !== ROOM_FIT_CAPTURE_VERSION || envelope.runtime !== Deno.version.v8 || !metadata ||
     metadata.implementation !== ROOM_WINDOW_IMPLEMENTATION || metadata.binding !== context.binding ||
     metadata.homeId !== claim.home_id || metadata.customerId !== claim.customer_id || metadata.roomKey !== claim.owner_key ||
     metadata.baseRevision !== revision || progress.base_revision !== revision ||

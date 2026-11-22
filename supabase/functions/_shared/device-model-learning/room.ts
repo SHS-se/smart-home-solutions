@@ -100,8 +100,9 @@ function inputRevision(windows: HeatingFitWindow[]): string {
     .sort((a, b) => a[0].localeCompare(b[0])));
 }
 
+export const ROOM_FIT_METADATA_VERSION = 1;
 export interface RoomBandMetadata {
-  version: 1;
+  version: typeof ROOM_FIT_METADATA_VERSION;
   implementation: string;
   homeId: string;
   customerId: string;
@@ -243,7 +244,7 @@ export async function prepareStoredRoomHeating(
     const progressLibrary = { ...library, pending_windows: pending.length + 1,
       general_solar_pending: solar.pending, general_solar_retry_at: solar.retry_at };
     return { kind: "band", work: { rows: captured.quarters.map(thermalQuarter), metadata: {
-      version: 1, implementation: ROOM_WINDOW_IMPLEMENTATION, scope: "general",
+      version: ROOM_FIT_METADATA_VERSION, implementation: ROOM_WINDOW_IMPLEMENTATION, scope: "general",
       homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
       attemptedAt, pinnedFloor: new Date(Math.max(Date.parse(library.since), Date.parse(floor))).toISOString(),
       window: { window_key: "general", band_c: 0, from_at: from, to_at: to,
@@ -296,7 +297,7 @@ export async function prepareStoredRoomHeating(
   const reference = installed ?? null;
   const rows = correctedBandRows(captured, roomKey, reference, library.since);
   return { kind: "band", work: { rows, metadata: {
-    version: 1, implementation: ROOM_WINDOW_IMPLEMENTATION,
+    version: ROOM_FIT_METADATA_VERSION, implementation: ROOM_WINDOW_IMPLEMENTATION,
     homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
     attemptedAt, pinnedFloor: new Date(Math.max(Date.parse(library.since), Date.parse(floor))).toISOString(),
     window, library, progressLibrary, reference,
@@ -315,7 +316,7 @@ export function parseRoomBandMetadata(value: unknown): RoomBandMetadata | null {
   if (!value || typeof value !== "object") return null;
   const row = value as RoomBandMetadata;
   const date = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
-  if (row.version !== 1 || row.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
+  if (row.version !== ROOM_FIT_METADATA_VERSION || row.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
     ![row.homeId, row.customerId, row.roomKey, row.binding].every(value => typeof value === "string" && value.length > 0) ||
     !Number.isSafeInteger(row.baseRevision) || row.baseRevision < 0 ||
     !date(row.attemptedAt) || !date(row.pinnedFloor) || !date(row.lastAt) ||
