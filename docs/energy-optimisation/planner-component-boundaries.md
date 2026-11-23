@@ -492,12 +492,41 @@ agreement with peers cannot reject a valid aggregate response. Assessments are
 stored and paged by published revision, separately from the compact planning
 model. A shared response with no complete heating event can still be identified.
 
-Completion fences owner, binding, model revision and material changes to the
-captured source range. Appends beyond its pinned horizon belong to the next fit;
-corrections inside it discard disposable numerical scratch and retry without
-advancing that horizon. Successful publication replaces `heating_bands.reference`
-with scope `shared` and empties the old bands. Old accepted model records remain
-readable during rollout, but the retired band/run sampler does not run.
+Completion fences owner, binding, model revision and authoritative source policy.
+The final evidence manifest supplies the observation revision and a deterministic
+policy fingerprint from the same database snapshot. Initial checkpoint and final
+publication compare policy after acquiring the job, model and evidence-clock
+locks. Reviewed source assignments, relevant meter exclusions and dated customer
+assertions remain authoritative. Automatic source-capability facts, weather and
+meter or sensor backfill are observations: they cannot cancel an immutable fit.
+Its coefficients describe the dataset actually captured, with that evidence basis
+retained on the accepted reference as well as the latest attempt. A subsequent
+unidentified attempt retains the prior reference's original provenance.
+
+Observation corrections stay in the durable journal and refresh their affected
+blocks on the next ordinary learning admission (24 hours for a trained room,
+one hour otherwise, when planning next requests learning). Publication does not
+immediately enqueue another whole-history replay. This coalesces continuously late
+quarters and historical backfill without an endless series of fits. Explicit
+customer/source reviews still wake learning; ordinary source-capability telemetry
+does not bypass its cadence. Successful publication replaces
+`heating_bands.reference` with scope `shared` and empties the old bands. Old
+accepted model records remain readable during rollout, but the retired band/run
+sampler does not run.
+
+A numerical callback uses the claim's SQL-validated binding and base revision,
+then repeats the publication CAS. It does not download the household calibration
+bundle or rediscover room context. HMM posterior reuse is local to one request;
+fixed two-state loops preserve arithmetic order and public numerical results.
+Cold initial and resumed full-history requests share the unchanged CPU gate.
+
+Existing version-four capsules acquire their policy certificate inside the
+Supabase worker during rollout. The worker checks surviving source-policy
+history, immutable customer assertions, whole-interval operation-fact identities
+and current exclusions against the decoded capsule. An uncertain capsule resets
+once. A valid certificate is written under the same ownership and policy CAS,
+without changing captured measurements or earned cells. No household capture
+needs to be exported and no manual completion step remains.
 
 During rollout a room without a shared response keeps its previously accepted
 response for the whole forecast (the recent general response, else the band

@@ -254,8 +254,9 @@ Deno.test("a failed read or concurrent correction cannot replace the canonical s
 
 Deno.test("an unidentifiable chronological capture retains its accepted reference", async () => {
   const db = evidenceStore([], ranges);
+  const prior = { sourceRevision: 0, fromAt: at(0), toAt: at(12), implementation: "chronological_native_evidence_v1" };
   const accepted = { model_revision: 1, trained: true, heating_bands: { binding: context.binding, since: at(0),
-    reference_revision: "accepted", reference: { scope: { kind: "general" }, model: acceptedModel },
+    reference_revision: "accepted", reference: { scope: { kind: "shared" }, model: acceptedModel, learning_evidence: { source_evidence: prior } },
     active: [], candidates: [], attempted: {} } };
   const step = () => prepareStoredRoomHeating(db, owner, context, accepted, null, clock);
   await step(); await step();
@@ -267,7 +268,10 @@ Deno.test("an unidentifiable chronological capture retains its accepted referenc
   const { model, ledger } = finalizeStoredRoomResponse(metadata, rows, fit);
   assertEquals(ledger, null);
   assertEquals(model.trained, undefined);
-  assertEquals((model.heating_bands as RoomHeatingBands).reference_revision, "accepted");
+  const library = model.heating_bands as RoomHeatingBands;
+  assertEquals(library.reference_revision, "accepted");
+  assertEquals(library.reference?.learning_evidence, { source_evidence: prior });
+  assertEquals(library.shared_attempt?.evidence, metadata.evidence);
 });
 
 

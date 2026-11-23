@@ -322,8 +322,9 @@ export function inferExternalHeat(rows: readonly ExternalHeatResidual[], paramet
     sum + 1.5 * Math.log(variance) + .5 * reference / variance + .5 * Math.log(Math.PI) - .5 * Math.log(.5 * reference), 0);
   const emission = rows.map((row, i) => externalHeatEmission(row.residual_c, sigmas[i], parameters.external_mean_c * (row.forcing_scale ?? 1)));
   const clean = rows.map((row, i) => -.5 * row.residual_c ** 2 * precision[i] - Math.log(sigmas[i]) - LOG_SQRT_TWO_PI);
-  const alpha: [number, number][] = [];
-  const predictive: number[] = [];
+  const alphaClean = new Float64Array(n), alphaExternal = new Float64Array(n);
+  const predictive = Array<number>(n);
+  const initialClean = log(parameters.initial[0]), initialExternal = log(parameters.initial[1]);
   const clocks = new Map<number, number[][]>();
   const transitions = rows.map(row => {
     const duration = row.duration_h ?? 1;
@@ -333,24 +334,26 @@ export function inferExternalHeat(rows: readonly ExternalHeatResidual[], paramet
   });
   for (let i = 0; i < n; i++) {
     const reset = i === 0 || rows[i].segment !== rows[i - 1].segment;
-    const prior = reset ? parameters.initial.map(log) : [0, 1].map(state =>
-      logAdd(alpha[i - 1][0] + transitions[i][0][state], alpha[i - 1][1] + transitions[i][1][state]));
-    const a = prior[0] + clean[i], b = prior[1] + emission[i].log_density;
+    const [fromClean, fromExternal] = transitions[i];
+    const priorClean = reset ? initialClean : logAdd(alphaClean[i - 1] + fromClean[0], alphaExternal[i - 1] + fromExternal[0]);
+    const priorExternal = reset ? initialExternal : logAdd(alphaClean[i - 1] + fromClean[1], alphaExternal[i - 1] + fromExternal[1]);
+    const a = priorClean + clean[i], b = priorExternal + emission[i].log_density;
     const density = logAdd(a, b);
     if (!Number.isFinite(density)) throw new Error("External-heat likelihood is not finite");
-    predictive.push(density);
-    alpha.push([a - density, b - density]);
+    predictive[i] = density;
+    alphaClean[i] = a - density;
+    alphaExternal[i] = b - density;
   }
   const probability = Array<number>(n), expected = Array<number>(n), second = Array<number>(n);
   const transitionCounts: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   const initialCounts: [number, number] = [0, 0];
   const durationCounts = new Map<number, TransitionCounts[number]>();
-  let beta: [number, number] = [0, 0];
+  let betaClean = 0, betaExternal = 0;
   for (let i = n - 1; i >= 0; i--) {
     const end = i === n - 1 || rows[i].segment !== rows[i + 1].segment;
-    if (end || options.causal) beta = [0, 0];
-    const normalizer = logAdd(alpha[i][0] + beta[0], alpha[i][1] + beta[1]);
-    const p = Math.exp(alpha[i][1] + beta[1] - normalizer);
+    if (end || options.causal) { betaClean = 0; betaExternal = 0; }
+    const normalizer = logAdd(alphaClean[i] + betaClean, alphaExternal[i] + betaExternal);
+    const p = Math.exp(alphaExternal[i] + betaExternal - normalizer);
     probability[i] = p;
     expected[i] = p * emission[i].mean_c;
     second[i] = p * emission[i].second_moment_c2;
@@ -358,20 +361,26 @@ export function inferExternalHeat(rows: readonly ExternalHeatResidual[], paramet
       initialCounts[0] += 1 - p; initialCounts[1] += p;
     }
     if (i > 0 && rows[i].segment === rows[i - 1].segment && !options.causal) {
-      const likelihood = [clean[i], emission[i].log_density];
-      const joint = [0, 1].map(from => [0, 1].map(to =>
-        alpha[i - 1][from] + transitions[i][from][to] + likelihood[to] + beta[to]));
-      const total = logAdd(logAdd(joint[0][0], joint[0][1]), logAdd(joint[1][0], joint[1][1]));
+      const [fromClean, fromExternal] = transitions[i];
+      const cleanDensity = clean[i], externalDensity = emission[i].log_density;
+      const logCleanToClean = alphaClean[i - 1] + fromClean[0] + cleanDensity + betaClean;
+      const logCleanToExternal = alphaClean[i - 1] + fromClean[1] + externalDensity + betaExternal;
+      const logExternalToClean = alphaExternal[i - 1] + fromExternal[0] + cleanDensity + betaClean;
+      const logExternalToExternal = alphaExternal[i - 1] + fromExternal[1] + externalDensity + betaExternal;
+      const total = logAdd(logAdd(logCleanToClean, logCleanToExternal), logAdd(logExternalToClean, logExternalToExternal));
       const duration_h = rows[i].duration_h ?? 1;
       let group = durationCounts.get(duration_h);
       if (!group) { group = { duration_h, counts: [[0, 0], [0, 0]] }; durationCounts.set(duration_h, group); }
-      for (let from = 0; from < 2; from++) for (let to = 0; to < 2; to++) {
-        const count = Math.exp(joint[from][to] - total);
-        transitionCounts[from][to] += count;
-        group.counts[from][to] += count;
-      }
-      beta = [0, 1].map(from => logAdd(transitions[i][from][0] + likelihood[0] + beta[0],
-        transitions[i][from][1] + likelihood[1] + beta[1]) - predictive[i]) as [number, number];
+      const cleanToClean = Math.exp(logCleanToClean - total), cleanToExternal = Math.exp(logCleanToExternal - total);
+      const externalToClean = Math.exp(logExternalToClean - total), externalToExternal = Math.exp(logExternalToExternal - total);
+      transitionCounts[0][0] += cleanToClean; group.counts[0][0] += cleanToClean;
+      transitionCounts[0][1] += cleanToExternal; group.counts[0][1] += cleanToExternal;
+      transitionCounts[1][0] += externalToClean; group.counts[1][0] += externalToClean;
+      transitionCounts[1][1] += externalToExternal; group.counts[1][1] += externalToExternal;
+      const precedingClean = logAdd(fromClean[0] + cleanDensity + betaClean, fromClean[1] + externalDensity + betaExternal) - predictive[i];
+      const precedingExternal = logAdd(fromExternal[0] + cleanDensity + betaClean, fromExternal[1] + externalDensity + betaExternal) - predictive[i];
+      betaClean = precedingClean;
+      betaExternal = precedingExternal;
     }
   }
   const nll = -predictive.reduce((sum, value) => sum + value, 0);

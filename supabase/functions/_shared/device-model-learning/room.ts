@@ -118,14 +118,18 @@ export type RoomHeatingPreparation =
   | { kind: "model"; model: Record<string, unknown> }
   | { kind: "refreshed" }
   | { kind: "superseded" }
-  | { kind: "shared"; work: { metadata: RoomSharedMetadata; rows: RoomMeanQuarter[] } };
+  | { kind: "shared"; work: { metadata: RoomSharedMetadata; rows: RoomMeanQuarter[]; policyFingerprint: string } };
 interface EvidenceWork {
   source_revision: number;
+  policy_fingerprint: string;
   next: { from_at: string; to_at: string; solar_retry_at?: string | null; solar_after?: string | null } | null;
 }
 interface EvidenceBlock {
   from_at: string; to_at: string; sha256: string; row_count: number; capture: string;
 }
+export const isRoomPolicyFingerprint = (value: unknown): value is string =>
+  typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+
 const sameEvidence = (a: RoomEvidenceBasis | undefined, b: RoomEvidenceBasis) => a !== undefined &&
   a.sourceRevision === b.sourceRevision && a.fromAt === b.fromAt && a.toAt === b.toAt && a.implementation === b.implementation;
 
@@ -176,7 +180,7 @@ export async function prepareStoredRoomHeating(
   };
   const readWork = async () => {
     const work = await rpc<EvidenceWork>("get_energy_room_evidence_work", scope);
-    if (!work || !Number.isSafeInteger(work.source_revision) || work.source_revision < 0 ||
+    if (!work || !isRoomPolicyFingerprint(work.policy_fingerprint) || !Number.isSafeInteger(work.source_revision) || work.source_revision < 0 ||
       (work.next !== null && (!work.next || !Number.isFinite(Date.parse(work.next.from_at)) || !Number.isFinite(Date.parse(work.next.to_at))))) {
       throw new Error("Invalid chronological room evidence work");
     }
@@ -241,7 +245,7 @@ export async function prepareStoredRoomHeating(
   decoded.length = 0;
   training.length = 0;
   qualified.quarters.length = 0;
-  return { kind: "shared", work: { rows, metadata: {
+  return { kind: "shared", work: { rows, policyFingerprint: work.policy_fingerprint, metadata: {
     version: ROOM_SHARED_METADATA_VERSION, implementation: ROOM_RESPONSE_IMPLEMENTATION,
     homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
     attemptedAt, fromAt, historyTo, evidence, trainingView: { length, temperatures }, library,
@@ -300,7 +304,7 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
   const { diagnostics: _diagnostics, ...kept } = library;
   const heating_bands: RoomHeatingBands = physical && fit.result.ok
     ? { ...kept, reference: { model: physical, scope: { kind: "shared" }, training_from: trainingFrom, training_to: trainingTo,
-      warnings: fit.result.warnings ?? [], learning_evidence: learning }, reference_revision: revision,
+      warnings: fit.result.warnings ?? [], learning_evidence: { ...learning, source_evidence: evidence } }, reference_revision: revision,
       active: [], candidates: [], attempted: {}, shared_attempt, pending_windows: 0 }
     : { ...library, shared_attempt, pending_windows: 0 };
   const ledger = fit.run_ledger ? { ...fit.run_ledger, assessed_against: revision } : null;

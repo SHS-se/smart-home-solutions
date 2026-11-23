@@ -58,7 +58,7 @@ export interface RoomNumericCheckpoint {
   capture: string;
   progress: { base_revision: number; cursor: number; cells: RoomBandFitCell[]; metadata: {
     version: number; runtime: string; capture: RoomSharedMetadata; sha256: string;
-    row_count: number; heat_state?: RoomHeatFitState;
+    row_count: number; policy_fingerprint?: string; heat_state?: RoomHeatFitState;
   } };
 }
 
@@ -76,9 +76,9 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
         case "claim_energy_device_learning": data = { ...claim, room_fit_progress: checkpoint?.progress ?? null }; break;
-        case "capture_energy_device_models": data = { pool: null, rooms: [], room_heating: { synthetic: context } }; break;
-        case "get_energy_room_heating_context": data = context; break;
-        case "get_energy_room_evidence_work": data = { source_revision: 1, next: null }; break;
+        case "capture_energy_device_models": assert(!checkpoint, "Numerical claims skip bundle discovery"); data = { pool: null, rooms: [], room_heating: { synthetic: context } }; break;
+        case "get_energy_room_heating_context": assert(!checkpoint, "Numerical claims skip context discovery"); data = context; break;
+        case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64), next: null }; break;
         case "load_energy_room_evidence_blocks":
           assertEquals([args.p_from_at, args.p_to_at], [at(0), at(ROWS)]);
           data = JSON.parse(new TextDecoder().decode(archive));
@@ -90,6 +90,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           const copy = JSON.parse(JSON.stringify(args));
           observeMemory?.();
           assertEquals(copy.p_expected_cursor, -1);
+          assertEquals(copy.p_metadata.policy_fingerprint, "b".repeat(64));
           assertEquals(copy.p_metadata.row_count, ROWS);
           assertEquals(copy.p_metadata.capture.trainingView.length, TRAINING_ROWS);
           assert(copy.p_metadata.capture.trainingView.temperatures.length > 0);
@@ -102,6 +103,19 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
         case "load_energy_room_fit_capture":
           assert(checkpoint);
           data = checkpoint.capture; break;
+        case "get_energy_room_fit_policy_audit":
+          assert(checkpoint && !("policy_fingerprint" in checkpoint.progress.metadata));
+          assertEquals(args.p_expected_sha, checkpoint.progress.metadata.sha256);
+          data = { policy_fingerprint: "b".repeat(64), source_policy_at: at(0), operation_facts: [],
+            exclusions: Array.from({ length: Math.ceil(ROWS / 997) }, (_, i) => ({ from_at: at(i * 997), to_at: at(i * 997 + 1) })) };
+          break;
+        case "certify_energy_room_fit_policy":
+          assert(checkpoint && !("policy_fingerprint" in checkpoint.progress.metadata));
+          assertEquals(args.p_expected_sha, checkpoint.progress.metadata.sha256);
+          assertEquals(args.p_policy_fingerprint, "b".repeat(64));
+          assertEquals(args.p_operation_witnesses, []);
+          checkpoint.progress.metadata.policy_fingerprint = "b".repeat(64);
+          saved = true; data = true; break;
         case "checkpoint_energy_room_fit_cells": {
           assert(checkpoint);
           const copy = JSON.parse(JSON.stringify(args));

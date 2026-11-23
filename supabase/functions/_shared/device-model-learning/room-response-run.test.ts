@@ -1,9 +1,10 @@
 import { evidenceStore } from "./room-evidence.fixture.ts";
-import { assert, assertEquals, assertNotEquals } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../device-learning/room/native-mean.fixture.ts";
 import { learnRoomResponse, ROOM_RESPONSE_CELL_COUNT } from "../device-learning/room/response-learning.ts";
 import { parseRoomSharedMetadata } from "./room.ts";
+import { runRoomLearning } from "./room-response-run.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import type { RoomHeatingBands } from "../planner/heating-bands.ts";
 
@@ -15,7 +16,7 @@ function jsonb<T>(value: T): T {
   return JSON.parse(JSON.stringify(normalize(value)));
 }
 
-function fixture() {
+function fixture(operationBasis?: "customer_assertion" | "source_capability") {
   const source = syntheticRoomPlant([3600], 240).rows;
   const rows = source.map(row => ({ room_key: "room", room_name: "Synthetic room", active_power_w: 500,
     start_ts: new Date(row.start_ms).toISOString(), duration_s: row.duration_s,
@@ -28,24 +29,42 @@ function fixture() {
   const context = { binding: "synthetic-binding", observed_since: rows[0].start_ts };
   const range = { from_at: rows[0].start_ts, to_at: new Date(now).toISOString() };
   const archive = evidenceStore(rows, [range]);
+  const witness = { id: "11111111-2222-4333-8444-555555555555", home_id: "home", customer_id: "customer", room_key: "room",
+    binding: context.binding, basis: operationBasis ?? "customer_assertion", kind: "heating_off_fan", from_at: range.from_at, to_at: rows[3].start_ts,
+    created_at: range.from_at.replace("Z", "001+00:00") };
+  const capturedFacts = operationBasis ? [witness] : [];
+  const audit = { source_policy_at: range.from_at as string | null, operation_facts: structuredClone(capturedFacts),
+    exclusions: [] as { from_at: string; to_at: string }[] };
   let model: StoredDeviceModel | undefined;
   let progress: { metadata: unknown; cells: unknown[]; cursor: number; base_revision: number } | null = null;
   let capture: string | null = null, fence = 0;
-  let failRpc: string | null = null, loseReply: string | null = null, supersede: string | null = null;
+  let unavailable = new Set<string>();
+  let policyRace = false;
+  let deleteWitness: string | null = null;
+  const certificates: unknown[][] = [];
+  let loseReply: string | null = null, supersede: string | null = null;
   const reads: string[] = [], writes: Record<string, unknown>[] = [], failures: Record<string, unknown>[] = [];
   const batches: number[] = [];
   let resets = 0;
   const db = {
     async rpc(name: string, args: Record<string, unknown>) {
       reads.push(name);
-      if (name === failRpc) return { data: null, error: { message: "Synthetic interrupted request" } };
+      if (unavailable.has(name)) return { data: null, error: { message: "Synthetic interrupted request" } };
       if (name === supersede) { supersede = null; return { data: false, error: null }; }
       let data: unknown = null;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_device_learning": data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
-          owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress),
-          room_history_to: historyTo }; break;
+        case "claim_energy_device_learning": {
+          // SQL drops stale scratch before returning the same claim for cold discovery.
+          const bound = (progress?.metadata as { capture?: { binding?: string } } | undefined)?.capture?.binding;
+          if (progress && (progress.base_revision !== (model?.model_revision ?? 0) || (bound && bound !== context.binding))) {
+            progress = null; capture = null;
+          }
+          data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
+            owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress),
+            room_history_to: historyTo };
+          break;
+        }
         case "capture_energy_device_models": data = { rooms: model ? [jsonb(model)] : [], devices: [], pool: null,
           room_heating: { room: context } }; break;
         case "get_energy_room_heating_context": data = context; break;
@@ -53,8 +72,8 @@ function fixture() {
           assertEquals(args.p_fence, fence);
           assertEquals(args.p_revision, model?.model_revision ?? 0);
           return await archive.rpc(name, args);
-        case "get_energy_room_evidence_work": case "load_energy_room_evidence_blocks":
-        case "get_energy_room_thermal_interval_capture": case "get_energy_room_operation_facts":
+        case "get_energy_room_operation_facts": data = capturedFacts; break;
+        case "get_energy_room_evidence_work": case "load_energy_room_evidence_blocks": case "get_energy_room_thermal_interval_capture":
           return await archive.rpc(name, args);
         case "checkpoint_energy_room_fit": {
           // Only the immutable capture uses the single-step API now.
@@ -62,6 +81,8 @@ function fixture() {
           assertEquals(args.p_revision, model?.model_revision ?? 0);
           assertEquals(progress, null);
           assertEquals(args.p_expected_cursor, -1);
+          if (policyRace) { archive.setPolicyFingerprint("b".repeat(64)); policyRace = false; }
+          if ((args.p_metadata as { policy_fingerprint: string }).policy_fingerprint !== archive.policyFingerprint) { data = false; break; }
           capture = String(args.p_capture_base64);
           progress = { metadata: jsonb(args.p_metadata), cells: [], cursor: 0, base_revision: Number(args.p_revision) };
           data = true; break;
@@ -90,13 +111,35 @@ function fixture() {
           data = true; break;
         }
         case "load_energy_room_fit_capture": data = capture; break;
+        case "get_energy_room_fit_policy_audit":
+        case "certify_energy_room_fit_policy": {
+          assert(progress);
+          const envelope = progress.metadata as { sha256: string; policy_fingerprint?: string };
+          assertEquals(args.p_fence, fence);
+          assertEquals(args.p_revision, progress.base_revision);
+          assertEquals(args.p_expected_sha, envelope.sha256);
+          assert(!("policy_fingerprint" in envelope));
+          if (name === "get_energy_room_fit_policy_audit") {
+            data = jsonb({ ...audit, policy_fingerprint: archive.policyFingerprint }); break;
+          }
+          if (policyRace) { archive.setPolicyFingerprint("b".repeat(64)); policyRace = false; }
+          if (deleteWitness) {
+            audit.operation_facts = audit.operation_facts.filter(fact => fact.id !== deleteWitness);
+            deleteWitness = null;
+          }
+          assert(Array.isArray(args.p_operation_witnesses));
+          certificates.push(args.p_operation_witnesses);
+          data = args.p_policy_fingerprint === archive.policyFingerprint && args.p_operation_witnesses.every(used =>
+            audit.operation_facts.some(current => JSON.stringify(jsonb(current)) === JSON.stringify(jsonb(used))));
+          if (data) envelope.policy_fingerprint = archive.policyFingerprint;
+          break;
+        }
         case "reset_energy_room_fit": resets++; progress = null; capture = null; data = true; break;
         case "complete_energy_room_fit": {
           assertEquals(progress?.cursor, ROOM_RESPONSE_CELL_COUNT);
           assertEquals(args.p_expected_cursor, ROOM_RESPONSE_CELL_COUNT);
-          const metadata = (progress!.metadata as { capture: { evidence: { sourceRevision: number; fromAt: string; toAt: string } } }).capture;
-          const basis = metadata.evidence;
-          if (basis.sourceRevision !== archive.sourceRevision({ from_at: basis.fromAt, to_at: basis.toAt })) {
+          const metadata = progress!.metadata as { policy_fingerprint: string };
+          if (metadata.policy_fingerprint !== archive.policyFingerprint) {
             progress = null; capture = null; data = false; break;
           }
         }
@@ -132,9 +175,11 @@ function fixture() {
     }
     throw new Error("Synthetic room cell did not finish bounded iterations");
   };
-  return { db, tick, finishCell, rows, source, range, archive, context, now, reads, writes, failures, batches,
+  return { db, tick, finishCell, rows, source, range, archive, context, now, reads, writes, failures, batches, audit, certificates,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
-    fail: (name: string | null) => { failRpc = name; },
+    fail: (name: string | null, ...others: string[]) => { unavailable = new Set(name === null ? [] : [name, ...others]); },
+    changePolicyBeforeCapture: () => { policyRace = true; },
+    deleteWitnessBeforeCertification: (id: string) => { deleteWitness = id; },
     loseReply: (name: string) => { loseReply = name; },
     supersede: (name: string) => { supersede = name; },
     corruptCapture: () => { capture = "corrupt"; },
@@ -173,6 +218,27 @@ async function publishShared(f: ReturnType<typeof fixture>) {
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) =>
   key === "revision" || key === "reference_revision" ? "generated" : item));
 
+Deno.test("a malformed numerical claim cannot write using a guessed cursor or revision", async () => {
+  const f = fixture();
+  const claim = { id: "job", home_id: "home", customer_id: "customer", owner_key: "room",
+    generation: 1, fence: 1, input: {}, room_history_to: f.range.to_at };
+  for (const [field, room_fit_progress] of [
+    ["progress cursor", { cursor: -1, base_revision: 0 }], ["base revision", { cursor: 0, base_revision: "0" }],
+  ] as const) {
+    await assertRejects(() => runRoomLearning(f.db, { ...claim, room_fit_progress }, f.now), Error, `Invalid room fit ${field}`);
+  }
+  assertEquals(f.reads, []);
+});
+
+Deno.test("a malformed authoritative policy fingerprint leaves acquisition retriable", async () => {
+  const f = fixture();
+  f.archive.setPolicyFingerprint("not-a-sha256");
+  assertEquals((await f.tick()).status, 500);
+  assertEquals(f.failures.at(-1)?.p_error, "Invalid chronological room evidence work");
+  assertEquals(f.progress, null);
+  assertEquals(f.writes, []);
+});
+
 Deno.test("the worker checkpoints one chronological capture and publishes the same response as the offline learner", async () => {
   const f = fixture();
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
@@ -180,8 +246,11 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   assertEquals(f.model, undefined, "source acquisition must not publish or revise a room model");
   assertEquals(f.writes.length, 0);
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
-  const envelope = f.progress!.metadata as { version: number; capture: unknown };
+  const envelope = f.progress!.metadata as { version: number; capture: unknown; policy_fingerprint: string };
   assertEquals(envelope.version, 4);
+  assertEquals(envelope.policy_fingerprint, f.archive.policyFingerprint);
+  f.fail("capture_energy_device_models", "get_energy_room_heating_context");
+  const numericStart = f.reads.length;
   assertEquals(parseRoomSharedMetadata(envelope.capture)?.evidence.sourceRevision, 1);
   while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) {
     await f.finishCell();
@@ -196,7 +265,9 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   const offline = learnRoomResponse(syntheticRoomResponseEvidence(f.source), 500);
   assert(offline.result.ok);
   assertEquals(library.reference?.model, offline.result.model);
-  assertEquals(library.reference?.learning_evidence, offline.result.learning_evidence);
+  assertEquals(library.reference?.learning_evidence, { ...offline.result.learning_evidence,
+    source_evidence: parseRoomSharedMetadata(envelope.capture)!.evidence });
+  assert(!f.reads.slice(numericStart).some(name => name === "capture_energy_device_models" || name === "get_energy_room_heating_context"));
 });
 
 Deno.test("a pinned chronological generation finishes despite later uploads and advancing wall time", async () => {
@@ -252,15 +323,122 @@ Deno.test("an interrupted or lost batch commit resumes from the authoritative pr
   }
 });
 
-Deno.test("a correction within the frozen horizon supersedes the completed fit", async () => {
+Deno.test("ordinary backfill across all cells publishes the frozen basis and retains newer work", async () => {
   const f = fixture();
   await f.tick(); await f.tick();
-  while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) await f.finishCell();
-  const accepted = structuredClone(f.model);
+  const capture = parseRoomSharedMetadata((f.progress!.metadata as {capture: unknown}).capture)!;
+  while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) {
+    f.archive.correct(f.range);
+    await f.finishCell();
+  }
   f.archive.correct(f.range);
-  assertEquals(await (await f.tick()).json(), { published: false, superseded: true });
-  assertEquals(f.model, accepted);
+  assertEquals(await (await f.tick()).json(), { published: true });
+  const library = f.model!.heating_bands as RoomHeatingBands;
+  assertEquals(library.shared_attempt?.evidence, capture.evidence);
+  assertEquals((library.reference?.learning_evidence as {source_evidence: unknown}).source_evidence, capture.evidence);
+  assert(f.archive.sourceRevision(f.range) > capture.evidence.sourceRevision);
+  assertEquals((await f.archive.rpc("get_energy_room_evidence_work", {
+    p_from_at: f.range.from_at, p_to_at: f.range.to_at,
+  })).data, { policy_fingerprint: f.archive.policyFingerprint, source_revision: f.archive.sourceRevision(f.range), next: f.range });
+});
+
+Deno.test("a reviewed policy race at initial capture or publication refuses that snapshot", async () => {
+  const f = fixture();
+  await f.tick();
+  f.changePolicyBeforeCapture();
+  assertEquals(await (await f.tick()).json(), { checkpointed: false, superseded: true });
   assertEquals(f.progress, null);
+  await f.tick();
+  while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) await f.finishCell();
+  f.archive.setPolicyFingerprint("c".repeat(64));
+  assertEquals(await (await f.tick()).json(), { published: false, superseded: true });
+  assertEquals(f.progress, null);
+  assertEquals(f.writes, []);
+});
+
+async function stagePrePolicyCapture(f: ReturnType<typeof fixture>, advance = false) {
+  await f.tick(); await f.tick();
+  if (advance) await f.finishCell();
+  assert(f.progress);
+  const envelope = f.progress.metadata as { policy_fingerprint?: string };
+  delete envelope.policy_fingerprint;
+}
+
+Deno.test("the worker certifies an old numerical capture in place, then resumes its exact prefix", async () => {
+  const f = fixture("customer_assertion");
+  f.rows[1].heat_w = null;
+  await stagePrePolicyCapture(f, true);
+  const previous = structuredClone(f.progress!);
+  assert(previous.cursor > 0);
+  // An excluded missing meter between known readings and a new unused automatic
+  // source fact preserve every measured input and reviewed assertion in this capture.
+  f.audit.exclusions.push({ from_at: f.rows[1].start_ts, to_at: f.rows[2].start_ts });
+  f.audit.operation_facts.push({ ...f.audit.operation_facts[0], id: "22222222-2222-4333-8444-555555555555",
+    basis: "source_capability", created_at: new Date(f.now + 1000).toISOString() });
+  f.fail("capture_energy_device_models", "get_energy_room_heating_context", "checkpoint_energy_room_fit_cells", "complete_energy_room_fit");
+  const begin = f.reads.length;
+  assertEquals(await (await f.tick()).json(), { checkpointed: true });
+  assertEquals(f.reads.slice(begin), ["verify_energy_learning_token", "claim_energy_device_learning", "load_energy_room_fit_capture",
+    "get_energy_room_fit_policy_audit", "certify_energy_room_fit_policy", "release_energy_room_learning_lane"]);
+  assertEquals(f.progress, { ...previous, metadata: { ...previous.metadata as object, policy_fingerprint: f.archive.policyFingerprint } });
+  assertEquals(f.certificates, [[f.audit.operation_facts[0]]], "Only the used witness reaches certification, once for all three intervals");
+  f.fail(null);
+  await publishShared(f);
+  assertEquals(f.resets, 0);
+  assertEquals(f.reads.filter(name => name === "get_energy_room_fit_policy_audit").length, 1);
+});
+
+Deno.test("an unverifiable pre-policy capsule resets once and reacquires an authenticated capture", async () => {
+  for (const mode of ["missing clock", "late clock", "new assertion", "missing witness", "wrong binding", "partial fact", "excluded zero"]) {
+    const f = fixture("customer_assertion");
+    f.rows[0].heat_w = 0;
+    await stagePrePolicyCapture(f);
+    const witness = f.audit.operation_facts[0];
+    const microsecondLater = (iso: string) => iso.replace("Z", "001Z");
+    switch (mode) {
+      case "missing clock": f.audit.source_policy_at = null; break;
+      case "late clock": f.audit.source_policy_at = microsecondLater(f.range.to_at); break;
+      case "new assertion": f.audit.operation_facts.push({ ...witness, id: "22222222-2222-4333-8444-555555555555",
+        created_at: microsecondLater(f.range.to_at) }); break;
+      case "missing witness": f.audit.operation_facts.length = 0; break;
+      case "wrong binding": witness.binding = "another"; break;
+      case "partial fact": witness.from_at = microsecondLater(witness.from_at); break;
+      case "excluded zero": f.audit.exclusions.push({ from_at: f.rows[0].start_ts, to_at: microsecondLater(f.rows[0].start_ts) }); break;
+    }
+    assertEquals(await (await f.tick()).json(), { superseded: true }, mode);
+    assertEquals(f.resets, 1, mode);
+    assertEquals(f.progress, null, mode);
+    assert(!f.reads.includes("certify_energy_room_fit_policy"), mode);
+    assertEquals(await (await f.tick()).json(), { checkpointed: true }, mode);
+    assertEquals((f.progress!.metadata as { policy_fingerprint: string }).policy_fingerprint, f.archive.policyFingerprint);
+    assertEquals(f.writes, [], mode);
+  }
+});
+
+Deno.test("a policy change between audit and certification leaves the numerical prefix for a fresh audit", async () => {
+  const f = fixture();
+  await stagePrePolicyCapture(f);
+  const before = structuredClone(f.progress);
+  f.changePolicyBeforeCapture();
+  assertEquals(await (await f.tick()).json(), { superseded: true });
+  assertEquals(f.progress, before);
+  assertEquals(f.resets, 0);
+  assertEquals(await (await f.tick()).json(), { checkpointed: true });
+  assertEquals((f.progress!.metadata as { policy_fingerprint: string }).policy_fingerprint, "b".repeat(64));
+});
+
+Deno.test("deleting a used source capability during certification preserves cells and refuses the certificate", async () => {
+  const f = fixture("source_capability");
+  await stagePrePolicyCapture(f, true);
+  const before = structuredClone(f.progress);
+  const policy = f.archive.policyFingerprint;
+  f.deleteWitnessBeforeCertification(f.audit.operation_facts[0].id);
+  assertEquals(await (await f.tick()).json(), { superseded: true });
+  assertEquals(f.archive.policyFingerprint, policy);
+  assertEquals(f.progress, before);
+  assertEquals(f.resets, 0);
+  assertEquals(await (await f.tick()).json(), { superseded: true });
+  assertEquals(f.resets, 1, "the fresh audit observes the deleted UUID and reacquires");
 });
 
 Deno.test("a source refresh whose fence was lost writes nothing", async () => {
@@ -271,14 +449,21 @@ Deno.test("a source refresh whose fence was lost writes nothing", async () => {
   assertEquals(f.archive.blocks.size, 0);
 });
 
-Deno.test("a superseding model revision restarts scratch without rewriting accepted models", async () => {
-  const f = fixture();
-  await f.tick(); await f.tick();
-  f.replaceModel();
-  const accepted = structuredClone(f.model);
-  assertEquals(await (await f.tick()).json(), { superseded: true });
-  assertEquals(f.progress, null);
-  assertEquals(f.model, accepted);
+Deno.test("a superseding live model or binding is discovered on the same cold claim", async () => {
+  for (const changed of ["revision", "binding"]) {
+    const f = fixture();
+    await f.tick(); await f.tick();
+    if (changed === "revision") f.replaceModel();
+    else f.context.binding = "replacement-source";
+    const accepted = structuredClone(f.model), first = f.reads.length;
+    assertEquals(await (await f.tick()).json(), { checkpointed: true });
+    assertEquals(f.model, accepted);
+    assert(f.reads.slice(first).includes("capture_energy_device_models"));
+    const fresh = parseRoomSharedMetadata((f.progress!.metadata as { capture: unknown }).capture)!;
+    assertEquals(fresh.binding, f.context.binding);
+    assertEquals(fresh.baseRevision, accepted?.model_revision ?? 0);
+    assertEquals(f.progress!.cells, []);
+  }
 });
 
 Deno.test("malformed, obsolete or over-horizon private captures are discarded without touching accepted models", async () => {
@@ -298,16 +483,18 @@ Deno.test("malformed, obsolete or over-horizon private captures are discarded wi
   assertEquals(f.writes.length, 0);
 });
 
-Deno.test("a changed source binding or malformed training qualification resets only numerical scratch", async () => {
-  for (const mode of ["binding", "prefix"] as const) {
+Deno.test("malformed private policy, revision or training qualification resets scratch using the claimed base", async () => {
+  for (const mode of ["policy", "base", "prefix"]) {
     const f = fixture();
     await f.tick(); await f.tick();
-    const accepted = structuredClone(f.model), checkpoint = f.progress!;
-    if (mode === "binding") f.context.binding = "replacement-source";
-    else {
-      const { capture } = checkpoint.metadata as { capture: { trainingView: {length:number;temperatures:unknown[]} } };
-      capture.trainingView.temperatures = [[capture.trainingView.length, 21, 20]];
-    }
+    const accepted = structuredClone(f.model);
+    const envelope = f.progress!.metadata as { policy_fingerprint?: string; capture: {
+      baseRevision: number; trainingView: {length:number;temperatures:unknown[]};
+    } };
+    if (mode === "policy") envelope.policy_fingerprint = "invalid";
+    else if (mode === "base") envelope.capture.baseRevision++;
+    else envelope.capture.trainingView.temperatures = [[envelope.capture.trainingView.length, 21, 20]];
+    f.fail("capture_energy_device_models", "get_energy_room_heating_context");
     assertEquals(await (await f.tick()).json(), { superseded: true });
     assertEquals(f.progress, null);
     assertEquals(f.model, accepted);

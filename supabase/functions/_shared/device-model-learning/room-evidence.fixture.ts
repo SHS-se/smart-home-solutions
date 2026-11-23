@@ -29,7 +29,7 @@ type Block = EvidenceRange & { sha256: string; row_count: number; capture: strin
  * tests exercise the actual locks and history signals; this store exercises
  * the canonical RPC boundary, including corrections between two calls. */
 export function evidenceStore(rows: ThermalQuarterRow[], ranges: EvidenceRange[]) {
-  let revision = 1;
+  let revision = 1, policyFingerprint = "a".repeat(64);
   const dirty = new Set(ranges.map(r => r.from_at)), blocks = new Map<string, Block>();
   const changes = ranges.map(range => ({ range, revision }));
   const reads: { name: string; args: Record<string, unknown> }[] = [];
@@ -38,6 +38,8 @@ export function evidenceStore(rows: ThermalQuarterRow[], ranges: EvidenceRange[]
   let fail: string | null = null;
   return {
     blocks, reads, sourceRevision,
+    get policyFingerprint() { return policyFingerprint; },
+    setPolicyFingerprint(value: string) { policyFingerprint = value; },
     fail: (name: string | null) => { fail = name; },
     correct(range: EvidenceRange) {
       changes.push({ range, revision: ++revision });
@@ -50,7 +52,7 @@ export function evidenceStore(rows: ThermalQuarterRow[], ranges: EvidenceRange[]
       let data: unknown;
       switch (name) {
         case "get_energy_room_evidence_work":
-          data = { source_revision: sourceRevision(range), next: ranges.find(r => overlaps(r, range) && dirty.has(r.from_at)) ?? null };
+          data = { source_revision: sourceRevision(range), policy_fingerprint: policyFingerprint, next: ranges.find(r => overlaps(r, range) && dirty.has(r.from_at)) ?? null };
           break;
         case "load_energy_room_evidence_blocks":
           data = [...blocks.values()].filter(r => overlaps(r, range));

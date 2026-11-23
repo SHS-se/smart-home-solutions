@@ -6,6 +6,7 @@ import { claim, type Claim, database, handBack, home, other, release, revision }
 const begin = "2001-01-01T00:00:00.000Z", end = "2001-01-02T00:00:00.000Z";
 const implementation = "synthetic-raw-v1", policy = "shared_interval_transitions_v1", binding = "synthetic-binding";
 const migration = "supabase/migrations/20261123130000_chronological_room_evidence.sql";
+const snapshotMigration = "supabase/migrations/20261123150000_room_fit_snapshot_publication.sql";
 const source = "energy_heating_observations";
 async function fixture() {
   const db = await database();
@@ -25,11 +26,22 @@ async function fixture() {
     CREATE TABLE energy_optimisation_device_slots(home_id uuid,device_id uuid,start_ts timestamptz,customer_id uuid,energy_kwh numeric);
     ALTER TABLE energy_optimisation_zone_models ADD COLUMN training_from timestamptz, ADD COLUMN training_to timestamptz;
     CREATE TABLE private.energy_heating_history_sources(home_id uuid,valid_from timestamptz,valid_to timestamptz,basis text);
+    ALTER TABLE private.energy_heating_history_sources ADD COLUMN room_key text DEFAULT 'room',
+      ADD COLUMN observed_source_key text DEFAULT 'old',ADD COLUMN target_source_key text DEFAULT 'new',
+      ADD COLUMN target_device_statistics jsonb DEFAULT '{}',ADD COLUMN observed_device_statistics jsonb DEFAULT '{}';
     CREATE TABLE energy_room_profiles(home_id uuid,rooms jsonb,connections jsonb);
     CREATE TABLE energy_room_probe_slots(home_id uuid,room_key text,source_key text,start_ts timestamptz);
     ALTER TABLE energy_optimisation_devices ADD COLUMN customer_id uuid;
     ALTER TABLE energy_optimisation_device_slots ADD COLUMN id uuid DEFAULT gen_random_uuid();
     CREATE TABLE private.energy_room_passive_heat_sources(home_id uuid,customer_id uuid,room_key text,device_id uuid);`);
+  const native = await Deno.readTextFile("supabase/migrations/20261118190000_native_heating_observations.sql");
+  await db.exec(native.slice(native.indexOf("CREATE FUNCTION private.energy_heating_observation_sources("),
+    native.indexOf("-- Explicit historical source assignments")));
+  await db.exec(native.slice(native.indexOf("CREATE TABLE private.energy_heating_source_revisions"),
+    native.indexOf("CREATE FUNCTION public.get_energy_heating_history_sources")));
+  const bounded = await Deno.readTextFile("supabase/migrations/20261119001500_bound_room_history_reads.sql");
+  await db.exec(bounded.slice(bounded.indexOf("CREATE OR REPLACE FUNCTION private.energy_heating_source_fingerprint"),
+    bounded.indexOf("INSERT INTO private.energy_heating_source_revisions")));
   const reliability = await Deno.readTextFile("supabase/migrations/20261119143000_exclude_reviewed_unreliable_heating_meters.sql");
   await db.exec(reliability.slice(0, reliability.indexOf("CREATE OR REPLACE FUNCTION private.energy_room_thermal_intervals")));
   const retention = await Deno.readTextFile("supabase/migrations/20261119042000_hold_room_fit_inputs_during_retention.sql");
@@ -52,10 +64,11 @@ async function fixture() {
     END; $$; SET ROLE room_migration`);
   await db.exec(await Deno.readTextFile(migration));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261123140000_exclude_inventory_estimates_from_room_evidence.sql"));
+  await db.exec(await Deno.readTextFile(snapshotMigration));
   await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()");
   return db;
 }
-type Work = { source_revision: number; next: null | { from_at: string; to_at: string; solar_retry_at?: string } };
+type Work = { source_revision: number; policy_fingerprint: string; next: null | { from_at: string; to_at: string; solar_retry_at?: string } };
 async function work(db: PGlite, from = begin, to = end, owner = "room", impl = implementation) {
   return (await db.query<{ work: Work }>(
     "SELECT get_energy_room_evidence_work($1,$1,$2,$3,$4,$5,$6) AS work",
@@ -125,7 +138,7 @@ Deno.test("chronological blocks refresh late data, share probe and weather chang
     assertEquals((await db.query("SELECT 1 FROM energy_heating_observations")).rows.length, 0);
     assertEquals((await db.query<{ marker: string }>("SELECT current_setting('shs.room_evidence_retention',true) AS marker")).rows[0].marker, "",
       "retention marker must not leak into later explicit retractions in the same transaction");
-    assertEquals(await work(db), { source_revision: w.source_revision, next: null }, "actual retention path preserves the archive");
+    assertEquals(await work(db), { ...w, next: null }, "actual retention path preserves the archive");
     const loaded = await db.query<{ blocks: { row_count: number }[] }>(
       "SELECT load_energy_room_evidence_blocks($1,$1,'room',$2,$3,$4,$5) AS blocks", [home, binding, begin, end, implementation]);
     assertEquals(loaded.rows[0].blocks.map(b => b.row_count), [2]);
@@ -143,43 +156,43 @@ Deno.test("chronological blocks refresh late data, share probe and weather chang
   } finally { await db.close(); }
 });
 
-async function stage(db: PGlite) {
+async function stage(db: PGlite, afterCell?: (index: number) => Promise<unknown>) {
   let j = await claim(db);
   const w = await work(db);
   if (w.next) j = await saveAndClaim(db, j, w);
   const rev = await revision(db);
   const evidence = { sourceRevision: w.source_revision, fromAt: begin, toAt: end, implementation };
   const fitImplementation = implementation + ":fit";
-  const capture = { implementation: fitImplementation, homeId: home, customerId: home, roomKey: "room", binding, baseRevision: rev, evidence };
-  assert((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,-1,$5,$6,null) AS ok",
-    [j.id,j.generation,j.fence,rev,JSON.stringify({ version: 4, capture }),btoa("synthetic numerical capture")])).rows[0].ok);
+  const capture = { implementation: fitImplementation, attemptedAt: new Date().toISOString(), homeId: home, customerId: home, roomKey: "room", binding, baseRevision: rev, evidence };
+  assert((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,-1,$5::jsonb||jsonb_build_object('sha256',encode(sha256(decode($6,'base64')),'hex')),$6,null) AS ok",
+    [j.id,j.generation,j.fence,rev,JSON.stringify({ version: 4, capture, policy_fingerprint: w.policy_fingerprint }),btoa("synthetic numerical capture")])).rows[0].ok);
   await release(db, j); j = await claim(db);
-  const cells = Array.from({ length: 18 }, (_, index) => ({ index }));
-  assert((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit_cells($1,$2,$3,$4,0,null,$5,null) AS ok",
-    [j.id,j.generation,j.fence,rev,JSON.stringify(cells)])).rows[0].ok);
-  await release(db, j); j = await claim(db);
+  let cursor = 0;
+  while (cursor < 18) {
+    const cells = Array.from({ length: afterCell ? 1 : 18 }, (_, i) => ({ index: cursor + i }));
+    assert((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit_cells($1,$2,$3,$4,$5,null,$6,null) AS ok",
+      [j.id,j.generation,j.fence,rev,cursor,JSON.stringify(cells)])).rows[0].ok);
+    await afterCell?.(cursor);
+    cursor += cells.length;
+    await release(db, j); j = await claim(db);
+  }
   const transition_calibration = { policy, fitted_transitions: 100 };
   const learning = { transition_calibration, residual_degrees_of_freedom: 90 };
   const model = { home_id: home, customer_id: home, room_key: "room", sample_count: 100,
-    last_fit_attempt: { learning }, heating_bands: { binding, reference_revision: "synthetic-revision",
+    last_attempted_at: new Date().toISOString(), last_fit_attempt: { learning }, heating_bands: { binding, reference_revision: "synthetic-revision",
       calibration_policy: policy, reference: { scope: {kind: "shared"}, learning_evidence: learning, model: {sample_count:100} },
       active: [], shared_attempt: { status: "fitted", implementation: fitImplementation, evidence } } };
   const complete = async (runs: {id: string; disposition: string}[] | null, patch: object = model) =>
     (await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,$4,18,$5,$6) AS ok", [j.id,j.generation,j.fence,rev,
       JSON.stringify(patch), runs === null ? null : JSON.stringify({ policy, observed_runs: runs.length, assessed_against: "synthetic-revision", runs })])).rows[0].ok;
-  return { j, complete, model };
+  return { j, complete, model, evidence };
 }
-Deno.test("publication uses changed intervals inside the pinned horizon and pages every run by response revision", async () => {
+Deno.test("a sealed capture publishes through continuous backfill and pages every run by response revision", async () => {
   const db = await fixture();
   try {
-    let fit = await stage(db);
-    await write(db, begin, .04);
-    assertEquals(await fit.complete([]), false);
-    const jobs = (await db.query<{ generation: number; pending: boolean; scratch: boolean }>(`SELECT generation,pending,
-      EXISTS(SELECT FROM private.energy_room_fit_progress WHERE job_id=j.id) AS scratch FROM private.energy_learning_jobs j WHERE id=$1`, [fit.j.id])).rows[0];
-    assertEquals(Number(jobs.generation), fit.j.generation); assert(jobs.pending); assertEquals(jobs.scratch, false);
-    await handBack(db, fit.j);
-    fit = await stage(db);
+    let fit = await stage(db, i => write(db, begin, i / 100));
+    await write(db, begin, .77);
+    assert((await work(db)).next, "ordinary corrections while every numerical cell runs remain durable");
     const { model } = fit;
     await assertRejects(() => fit.complete([], { ...model, sample_count: 99 }), Error, "Invalid shared transition support");
     await assertRejects(() => fit.complete([{ id: "repeat", disposition: "assessed" }, { id: "repeat", disposition: "assessed" }]),
@@ -193,11 +206,25 @@ Deno.test("publication uses changed intervals inside the pinned horizon and page
       "SELECT get_energy_room_response_evidence($1,'room') AS view", [home]);
     assertEquals(view.rows[0].view.ledgers[0].evidence.runs, runs.toReversed().slice(0,50));
     assertEquals(view.rows[0].view.ledgers[0].evidence.observed_runs, 73);
-    await handBack(db, fit.j);
+    assert((await work(db)).next, "publication leaves later observations for the regular refit");
+    const due = async () => (await db.query<{ due: number }>("SELECT request_energy_device_learning($1,$1,$2) AS due", [home,
+      JSON.stringify([{ kind: "room", key: "room", input: {} }])])).rows[0].due;
+    assertEquals(await due(), 0, "new observations alone cannot start an immediate successor");
+    const accepted = (await db.query<{ reference: typeof model.heating_bands.reference & {
+      learning_evidence: {source_evidence: typeof fit.evidence} } }>(
+      "SELECT heating_bands->'reference' AS reference FROM energy_optimisation_zone_models WHERE home_id=$1", [home])).rows[0].reference;
+    assertEquals(accepted.learning_evidence.source_evidence, fit.evidence);
+    await db.query("UPDATE energy_optimisation_zone_models SET last_attempted_at=now()-interval '25 hours' WHERE home_id=$1", [home]);
+    assertEquals(await due(), 1, "the trained room is admitted at its ordinary cadence");
+    await release(db, fit.j);
     fit = await stage(db);
-    const failed = { ...fit.model, heating_bands: { ...fit.model.heating_bands,
+    const failed = { ...fit.model, heating_bands: { ...fit.model.heating_bands, reference: accepted,
       shared_attempt: { ...fit.model.heating_bands.shared_attempt, status: "unidentified" } } };
     assert(await fit.complete(null, failed), "a failed attempt records its diagnostics without changing the accepted response");
+    const persisted = (await db.query<{ old: typeof fit.evidence; current: typeof fit.evidence }>(
+      "SELECT heating_bands#>'{reference,learning_evidence,source_evidence}' AS old,heating_bands#>'{shared_attempt,evidence}' AS current FROM energy_optimisation_zone_models WHERE home_id=$1", [home])).rows[0];
+    assertEquals(persisted.old, accepted.learning_evidence.source_evidence);
+    assertEquals(persisted.current, fit.evidence); assert(persisted.current.sourceRevision > persisted.old.sourceRevision);
     assertEquals((await db.query<{ items: typeof runs }>("SELECT get_energy_room_run_assessments($1,'room','synthetic-revision',50,50) AS items", [home])).rows[0].items,
       runs.toReversed().slice(50));
     await assertRejects(() => db.query("SELECT get_energy_room_run_assessments($1,'room','synthetic-revision',0,50)", [other]), Error, "access denied");
@@ -285,5 +312,253 @@ Deno.test("rolling inventory estimates preserve archived evidence and a pinned n
     assert(await fit.complete([]), "inventory estimates cannot starve a pinned fit before publication");
     await db.exec("UPDATE energy_optimisation_devices SET statistic_id='corrected-meter'");
     assert((await work(db)).next, "a real meter identity correction must still refresh evidence");
+  } finally { await db.close(); }
+});
+
+const fact = async (db: PGlite, basis: "customer_assertion" | "source_capability", from = begin, to = end) =>
+  (await db.query<{ id: string }>(`INSERT INTO private.energy_room_operation_facts(home_id,customer_id,room_key,binding,from_at,to_at,basis)
+    VALUES($1,$1,'room',$2,$3,$4,$5) RETURNING id`, [home, binding, from, to, basis])).rows[0].id;
+const removeFact = (db: PGlite, id: string) => db.query("DELETE FROM private.energy_room_operation_facts WHERE id=$1", [id]);
+const jobState = async (db: PGlite, id: string) => (await db.query<{ generation: number; pending: boolean; scratch: boolean }>(
+  `SELECT generation,pending,EXISTS(SELECT FROM private.energy_room_fit_progress WHERE job_id=j.id) AS scratch
+   FROM private.energy_learning_jobs j WHERE id=$1`, [id])).rows[0];
+
+Deno.test("customer assertions veto incompatible checkpoints and sealed fits, including deletion; automatic facts follow normal cadence", async () => {
+  const db = await fixture();
+  try {
+    const j = await claim(db);
+    const rev = await revision(db);
+    const w = await work(db);
+    const evidence = { sourceRevision: w.source_revision, fromAt: begin, toAt: end, implementation };
+    const capture = { homeId: home, customerId: home, roomKey: "room", binding, baseRevision: rev, evidence };
+    const id = await fact(db, "customer_assertion");
+    assert(w.policy_fingerprint !== (await work(db)).policy_fingerprint);
+    assertEquals((await db.query<{ ok: boolean }>("SELECT checkpoint_energy_room_fit($1,$2,$3,$4,-1,$5,$6,null) AS ok",
+      [j.id,j.generation,j.fence,rev,JSON.stringify({ version: 4, capture, policy_fingerprint: w.policy_fingerprint }),btoa("synthetic")])).rows[0].ok, false);
+    assertEquals((await jobState(db, j.id)).scratch, false);
+    await release(db, j);
+    let fit = await stage(db);
+    await removeFact(db, id);
+    assertEquals(await fit.complete([]), false, "deleting an assertion used at capture vetoes publication");
+    const active = await jobState(db, fit.j.id);
+    assert(active.pending && !active.scratch);
+    assertEquals(Number(active.generation), fit.j.generation);
+    await release(db, fit.j);
+    fit = await stage(db);
+    const reviewed = await fact(db, "customer_assertion");
+    assertEquals(await fit.complete([]), false, "adding a reviewed assertion vetoes a previously sealed capture");
+    await release(db, fit.j);
+    fit = await stage(db);
+    const hash = (await work(db)).policy_fingerprint;
+    await fact(db, "customer_assertion", end, "2001-01-03");
+    const observing = await fact(db, "source_capability");
+    assertEquals((await work(db)).policy_fingerprint, hash);
+    assert(await fit.complete([]), "source capability is ordinary evidence and future assertions cannot alter this span");
+    await release(db, fit.j);
+    const idle = await jobState(db, fit.j.id);
+    assertEquals(idle.pending, false);
+    await removeFact(db, observing);
+    const automatic = await fact(db, "source_capability");
+    assertEquals(await jobState(db, fit.j.id), idle, "automatic insertion and removal cannot requeue idle rooms");
+    await removeFact(db, automatic);
+    await removeFact(db, reviewed);
+    const awake = await jobState(db, fit.j.id);
+    assert(awake.pending); assertEquals(Number(awake.generation), Number(idle.generation) + 1);
+  } finally { await db.close(); }
+});
+
+Deno.test("material reviewed lineage wakes idle current rooms while unchanged eligibility and unrelated meters leave their capsules intact", async () => {
+  const db = await fixture();
+  try {
+    await db.query("INSERT INTO energy_room_profiles VALUES($1,jsonb_build_object('room',jsonb_build_object('source_key',repeat('a',64))),'[]')", [home]);
+    await db.query(`INSERT INTO energy_optimisation_devices(home_id,id,customer_id,device_key,statistic_id,category,
+      mapping_summary,planning_role_override,control_type_override,mapping_status,mapped_control_type,active_power_w)
+      VALUES($1,'33333333-3333-4333-8333-333333333333',$1,'heater','measured-meter','heating',
+        '{"room_key":"room","room_name":"Synthetic room"}','controllable','setpoint','ready','setpoint',1000)`, [home]);
+    // A previously accepted response used an earlier period. The review
+    // below changes the new capture's policy without withdrawing that model.
+    await db.query("UPDATE energy_optimisation_zone_models SET training_from='1999-01-01',training_to='2000-01-01' WHERE home_id=$1", [home]);
+    let fit = await stage(db);
+    const base = await revision(db);
+    const hash = (await work(db)).policy_fingerprint;
+    const exclude = (statistic: string) => db.query(`INSERT INTO private.energy_heating_meter_exclusions(
+      home_id,device_key,statistic_id,valid_from,valid_to,reason) VALUES($1,'heater',$2,$3,$4,'synthetic review')`,
+    [home, statistic, begin, end]);
+    await exclude("unrelated-physical-meter");
+    assertEquals((await work(db)).policy_fingerprint, hash);
+    await exclude("measured-meter");
+    assert(hash !== (await work(db)).policy_fingerprint);
+    assertEquals(await revision(db), base);
+    assertEquals(await fit.complete([]), false);
+    await release(db, fit.j);
+    fit = await stage(db);
+    const addAssignment = () => db.query(`INSERT INTO private.energy_heating_history_sources(home_id,valid_from,valid_to,basis,
+      target_source_key,target_device_statistics,observed_device_statistics)
+      VALUES($1,$2,$3,'synthetic review',repeat('a',64),'{"heater":"measured-meter"}','{"heater":"former"}')`, [home, begin, end]);
+    await addAssignment();
+    assertEquals(await fit.complete([]), false, "a reviewed historical source change invalidates a sealed fit");
+    await release(db, fit.j);
+    fit = await stage(db); assert(await fit.complete([])); await release(db, fit.j);
+    const idle = await jobState(db, fit.j.id);
+    await db.query("UPDATE private.energy_heating_history_sources SET basis='reworded note' WHERE home_id=$1", [home]);
+    assertEquals(await jobState(db, fit.j.id), idle);
+    await db.query("DELETE FROM private.energy_heating_history_sources WHERE home_id=$1", [home]);
+    const awakened = await jobState(db, fit.j.id);
+    assert(awakened.pending); assertEquals(Number(awakened.generation), Number(idle.generation) + 1);
+  } finally { await db.close(); }
+});
+
+Deno.test("claim discards captured work on a binding or base-model change before a numerical callback sees it", async () => {
+  for (const change of ["binding", "model"]) {
+    const db = await fixture();
+    try {
+      const fit = await stage(db);
+      if (change === "binding") await db.query("UPDATE private.synthetic_bindings SET binding='replacement' WHERE home_id=$1", [home]);
+      else await db.query("UPDATE energy_optimisation_zone_models SET gain_c_per_wh=.006 WHERE home_id=$1", [home]);
+      await db.query("SELECT private.resume_energy_room_fit($1)", [fit.j.id]);
+      await release(db, fit.j);
+      const next = (await db.query<{ j: Claim & { room_fit_progress: unknown } }>("SELECT claim_energy_device_learning($1) AS j", [fit.j.id])).rows[0].j;
+      assert(next); assertEquals(next.room_fit_progress, null, change);
+      assertEquals((await jobState(db, fit.j.id)).scratch, false);
+    } finally { await db.close(); }
+  }
+});
+
+Deno.test("the block save ignores a concurrent append exactly at the owner's pinned horizon", async () => {
+  const db = await fixture();
+  try {
+    const j = await claim(db);
+    const scope = (await db.query<{ from_at: string; to_at: string }>(`SELECT
+      (room_history_to-interval '15 minutes')::text AS from_at,room_history_to::text AS to_at
+      FROM private.energy_learning_jobs WHERE id=$1`, [j.id])).rows[0];
+    const tail = await work(db, scope.from_at, scope.to_at);
+    await write(db, scope.to_at, .02);
+    assert(await save(db, j, tail));
+    assertEquals((await work(db, scope.from_at, scope.to_at)).next, null);
+  } finally { await db.close(); }
+});
+
+Deno.test("reapplying snapshot publication preserves completed cells; missing certification fails closed", async () => {
+  const db = await fixture();
+  try {
+    const sql = await Deno.readTextFile(snapshotMigration);
+    let fit = await stage(db);
+    const staged = (await db.query("SELECT * FROM private.energy_room_fit_progress WHERE job_id=$1", [fit.j.id])).rows;
+    await db.exec(sql);
+    assertEquals((await db.query("SELECT * FROM private.energy_room_fit_progress WHERE job_id=$1", [fit.j.id])).rows, staged);
+    await db.query("UPDATE private.energy_room_fit_progress SET metadata=metadata-'policy_fingerprint' WHERE job_id=$1", [fit.j.id]);
+    await db.exec(sql);
+    assert((await jobState(db, fit.j.id)).scratch, "migration makes no destructive decision about pre-cutover work");
+    assertEquals(await fit.complete([]), false);
+    assert((await jobState(db, fit.j.id)).scratch, "an old worker cannot erase earned cells during rollout");
+    assert((await db.query<{ ok: boolean }>("SELECT reset_energy_room_fit($1,$2,$3,$4,18) AS ok",
+      [fit.j.id,fit.j.generation,fit.j.fence,await revision(db)])).rows[0].ok);
+    await release(db, fit.j);
+    fit = await stage(db);
+    assert(await fit.complete([]), "an uncertifiable fit can roll forward with current certification");
+  } finally { await db.close(); }
+});
+
+type PolicyAudit = {
+  policy_fingerprint: string;
+  source_policy_at: string | null;
+  operation_facts: { id: string; home_id: string; customer_id: string; room_key: string; binding: string;
+    kind: string; basis: string; from_at: string; to_at: string; created_at: string }[];
+  exclusions: { from_at: string; to_at: string }[];
+};
+async function unsealed(db: PGlite) {
+  const fit = await stage(db);
+  const { j } = fit;
+  const original = (await db.query<{ metadata: { sha256: string; policy_fingerprint: string }; cells: unknown[]; capture: Uint8Array }>(
+    "SELECT metadata,cells,capture FROM private.energy_room_fit_progress WHERE job_id=$1", [j.id])).rows[0];
+  await db.query("UPDATE private.energy_room_fit_progress SET metadata=metadata-'policy_fingerprint' WHERE job_id=$1", [j.id]);
+  const args = [j.id,j.generation,j.fence,await revision(db)];
+  const inspect = async (sha = original.metadata.sha256) => (await db.query<{ audit: PolicyAudit | null }>(
+    "SELECT get_energy_room_fit_policy_audit($1,$2,$3,$4,$5) AS audit", [...args,sha])).rows[0].audit;
+  const certify = async (fingerprint: string, options: { sha?: string; fence?: number; witnesses?: PolicyAudit["operation_facts"] } = {}) =>
+    (await db.query<{ ok: boolean }>("SELECT certify_energy_room_fit_policy($1,$2,$3,$4,$5,$6,$7) AS ok",
+      [j.id,j.generation,options.fence ?? j.fence,args[3],options.sha ?? original.metadata.sha256,fingerprint,
+        JSON.stringify(options.witnesses ?? [])])).rows[0].ok;
+  return { fit, original, inspect, certify };
+}
+Deno.test("only the learning service can audit and certify an unchanged immutable capture, then resume its exact cells", async () => {
+  const db = await fixture();
+  try {
+    const privileges = await db.query<{ readable: boolean; writable: boolean }>(`SELECT
+      has_function_privilege(r,'public.get_energy_room_fit_policy_audit(uuid,bigint,bigint,bigint,text)','EXECUTE') AS readable,
+      has_function_privilege(r,'public.certify_energy_room_fit_policy(uuid,bigint,bigint,bigint,text,text,jsonb)','EXECUTE') AS writable
+      FROM unnest(ARRAY['anon','authenticated','service_role']) r`);
+    assertEquals(privileges.rows, [{readable:false,writable:false},{readable:false,writable:false},{readable:true,writable:true}]);
+    await db.query(`INSERT INTO private.energy_heating_source_revisions(home_id,fingerprint,learning_updated_at)
+      VALUES($1,private.energy_heating_source_fingerprint($1),now()-interval '1 day')`, [home]);
+    const early = await fact(db, "source_capability");
+    const { fit, original, inspect, certify } = await unsealed(db);
+    const audit = await inspect(); assert(audit && audit.source_policy_at);
+    assertEquals(Object.keys(audit).sort(), ["exclusions","operation_facts","policy_fingerprint","source_policy_at"]);
+    assertEquals(audit.operation_facts.map(f => [f.id,f.home_id,f.customer_id,f.room_key,f.binding,f.kind,f.basis]),
+      [[early,home,home,"room",binding,"heating_off_fan","source_capability"]]);
+    assertEquals(audit.exclusions, []);
+    assertEquals(await inspect("not a digest"), null); assertEquals(await inspect("0".repeat(64)), null);
+    assertEquals(await certify(audit.policy_fingerprint, { sha: "0".repeat(64) }), false);
+    assertEquals(await certify(audit.policy_fingerprint, { fence: fit.j.fence+1 }), false);
+    const late = await fact(db, "customer_assertion");
+    const revised = await inspect(); assert(revised); assert(revised.policy_fingerprint !== audit.policy_fingerprint);
+    assertEquals(await certify(audit.policy_fingerprint), false, "a stale policy read cannot certify");
+    assertEquals(await certify(revised.policy_fingerprint), false, "knowing the new hash cannot certify a newly created assertion");
+    await removeFact(db, late);
+    const [used] = audit.operation_facts;
+    assertEquals(await certify(audit.policy_fingerprint, {witnesses:[used,used]}), false, "duplicate used UUID");
+    assertEquals(await certify(audit.policy_fingerprint, {witnesses:[{...used,to_at:begin}]}), false, "forged coverage");
+    assertEquals(await certify(audit.policy_fingerprint, {witnesses:[{...used,id:home}]}), false, "unknown UUID");
+    await fact(db, "source_capability");
+    assert(await certify(audit.policy_fingerprint, {witnesses:[used]}), "an additional unused automatic fact cannot cancel certification");
+    assertEquals(await certify(audit.policy_fingerprint), false, "lost-reply retry cannot rewrite certified progress");
+    assertEquals((await db.query("SELECT metadata,cells,capture FROM private.energy_room_fit_progress WHERE job_id=$1",
+      [fit.j.id])).rows[0], original, "only the expected fingerprint was restored");
+    await release(db, fit.j);
+    const next = (await db.query<{ j: Claim & { room_fit_progress: { cursor: number } } }>(
+      "SELECT claim_energy_device_learning($1) AS j", [fit.j.id])).rows[0].j;
+    assertEquals(next.generation, fit.j.generation); assert(next.fence > fit.j.fence);
+    assertEquals(next.room_fit_progress.cursor, 18);
+  } finally { await db.close(); }
+});
+
+Deno.test("removing an automatic operation actually used by a cutover capture vetoes its certificate", async () => {
+  const db = await fixture();
+  try {
+    await db.query(`INSERT INTO private.energy_heating_source_revisions(home_id,fingerprint,learning_updated_at)
+      VALUES($1,private.energy_heating_source_fingerprint($1),now()-interval '1 day')`, [home]);
+    const used = await fact(db, "source_capability");
+    const { inspect, certify, fit } = await unsealed(db);
+    const audit = await inspect(); assert(audit);
+    await removeFact(db, used);
+    const after = await inspect(); assert(after); assertEquals(after.policy_fingerprint, audit.policy_fingerprint);
+    assertEquals(await certify(audit.policy_fingerprint, {witnesses:audit.operation_facts}), false);
+    assert((await jobState(db, fit.j.id)).scratch, "failed certification leaves the reset decision to the owner");
+  } finally { await db.close(); }
+});
+
+Deno.test("cutover audit returns only exclusion spans belonging to the relevant current or reviewed physical meter epoch", async () => {
+  const db = await fixture();
+  try {
+    await db.query("INSERT INTO energy_room_profiles VALUES($1,jsonb_build_object('room',jsonb_build_object('source_key',repeat('a',64))),'[]')", [home]);
+    await db.query(`INSERT INTO energy_optimisation_devices(home_id,id,customer_id,device_key,statistic_id,category,mapping_summary,
+      planning_role_override,control_type_override,mapping_status,mapped_control_type)
+      VALUES($1,'33333333-3333-4333-8333-333333333333',$1,'heater','current','heating','{"room_key":"room"}',
+        'controllable','setpoint','ready','setpoint')`, [home]);
+    const hour = (h: number) => new Date(Date.parse(begin)+h*3600000).toISOString();
+    await db.query(`INSERT INTO private.energy_heating_history_sources(home_id,valid_from,valid_to,basis,
+      target_source_key,target_device_statistics,observed_device_statistics)
+      VALUES($1,$2,$3,'synthetic assignment',repeat('a',64),'{"heater":"current"}','{"heater":"former"}')`, [home,hour(6),hour(12)]);
+    const exclude = (statistic: string, from: number, to: number) => db.query(`INSERT INTO private.energy_heating_meter_exclusions(
+      home_id,device_key,statistic_id,valid_from,valid_to,reason) VALUES($1,'heater',$2,$3,$4,'synthetic review')`,
+      [home,statistic,hour(from),hour(to)]);
+    await exclude("current",0,24); await exclude("former",8,9); await exclude("unrelated",0,24);
+    const { inspect, certify } = await unsealed(db);
+    const audit = await inspect(); assert(audit);
+    assertEquals(audit.exclusions.map(s => [Date.parse(s.from_at),Date.parse(s.to_at)]),
+      [[0,6],[8,9],[12,24]].map(r => r.map(h => Date.parse(hour(h)))));
+    await db.query("UPDATE private.energy_heating_source_revisions SET learning_updated_at=now()+interval '1 minute' WHERE home_id=$1", [home]);
+    assertEquals(await certify(audit.policy_fingerprint), false, "a newer identity clock vetoes certification even if its hash returned to the old value");
   } finally { await db.close(); }
 });
