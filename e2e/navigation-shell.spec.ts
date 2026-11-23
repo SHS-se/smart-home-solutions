@@ -567,7 +567,7 @@ test.describe('staff navigation shell', () => {
     await heating.locator(`[data-run="${runs[5].id}"]`).click();
     const detail = panel.getByTestId('room-run-detail');
     await expect(detail).toContainText('2026');
-    await expect(detail).toContainText(/annan källa/);
+    await expect(detail).toContainText('Orsaken är inte fastställd.');
     await expect(detail).toContainText('Rummets gemensamma modell');
     await expect(cooling.locator(`[data-run="${runs[5].id}"][aria-pressed="true"]`)).toHaveCount(1);
     await page.screenshot({ path: testInfo.outputPath('room-run-charts.png'), fullPage: true });
@@ -592,6 +592,84 @@ test.describe('staff navigation shell', () => {
     await expect(panel.getByText(/gemensamma modell lärs fortfarande in/)).toBeVisible();
     await expect(heating.locator('[data-run]')).toHaveCount(12);
     await expect(heating.locator('.recharts-line-curve')).toHaveCount(0);
+  });
+
+  test('room Model shows measured run facts, reference curves and revision-scoped pages', async ({ page, context }, testInfo) => {
+    // Independently generated measurements and published lines, never household data.
+    await mockComfortLink(context);
+    const revision = 'synthetic-measured-revision';
+    const runs = Array.from({ length: 102 }, (_, i) => {
+      const start = Date.UTC(2026, 5, 30 - i), outdoor = -10 + i % 20;
+      return { id: `synthetic-${i}`, from_ms: start, on_ms: start + 900_000, off_ms: start + 4_500_000,
+        to_ms: start + 7_200_000, energy_kwh: 1,
+        heating: i === 1 ? null : { on_ms: start + 900_000, peak_ms: start + 4_500_000, peak_end_ms: start + 5_400_000,
+          energy_kwh: 1, hours: 1.25, rise_c: .8 + outdoor * .02, c_per_kwh: .8 + outdoor * .02,
+          room_start_c: 19, room_peak_c: 19.8 + outdoor * .02, room_mean_c: 19.4,
+          outdoor_c: outdoor, house_c: 19, native_seconds: [900] },
+        cooling: i === 1 ? null : { from_ms: start + 5_400_000, to_ms: start + 7_200_000, hours: .5,
+          c_per_h: .4 - outdoor * .02, room_c: 19.7, outdoor_c: outdoor, house_c: 19, energy_kwh: 0 },
+        reference_heating_c_per_kwh: i === 1 ? null : 1.1 + outdoor * .02,
+        reference_cooling_c_per_h: i === 1 ? null : .5 - outdoor * .02,
+        heating_residual: i === 1 ? null : i === 0 ? .1 : 0, cooling_residual: i === 1 ? null : 0,
+        disposition: i === 1 ? 'unmeasured' : i === 0 ? 'above_line' : 'consistent',
+        reasons: i === 1 ? ['heating_window_incomplete', 'cooling_window_incomplete'] : i === 0 ? ['descriptive_line_residual'] : [],
+      };
+    });
+    const line = (heating: boolean, reference: boolean) => ({ reference_outdoor_c: 0,
+      intercept: heating ? reference ? 1.1 : .8 : reference ? .5 : .4, slope_per_c: heating ? .02 : -.02,
+      robust_scale: .02, points: 101, effective_points: 100, constraint: heating ? 'rises' : 'falls', units: heating ? 'c_per_kwh' : 'c_per_h' });
+    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => route.fulfill({ json: {
+      room: { trained: true, rejection_reason: null, last_fit_attempt: null },
+      response: { revision, model: { response_family: 'finite', gain_c_per_wh: .002, cooling_constant_per_h: .04,
+        house_coupling_per_h: .02, background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 30,
+        time_constant_h: 16.7, heating_rate_c_per_h: 1, r2: .9, sample_count: 800, residual_std_c: .05 },
+        measured_runs: { policy: 'measured_room_runs_v1', measurement_method: 'native_mean_onset_peak_v1', fitted_observations: 800,
+          residual_degrees_of_freedom: 796, observed_runs: 102, heating_runs: 101, cooling_runs: 101, flagged_runs: 1, unmeasured_runs: 1,
+          reference: { room_c: 20, house_c: 20 }, lines: { heating: line(true, false), cooling: line(false, false),
+            reference_heating: line(true, true), reference_cooling: line(false, true) },
+          validation: { training_to: '2026-07-01T00:00:00Z', observations: 20, trajectory_mae_c: .12, trajectory_bias_c: -.01, projected_trajectory_mae_c: .2, projected_trajectory_bias_c: -.08 } } },
+      ledgers: [{ scope_key: 'shared', created_at: '2026-07-01T00:00:00Z', evidence: {
+        policy: 'measured_room_runs_v1', assessed_against: revision, observed_runs: 102, runs: runs.slice(0, 100) } }],
+    } }));
+    await context.route('**/rest/v1/rpc/get_energy_room_run_assessments', route => {
+      expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio', p_revision: revision, p_offset: 100, p_limit: 100 });
+      return route.fulfill({ json: runs.slice(100) });
+    });
+    await login(page);
+    await page.goto(COMFORT_LINK);
+    const panel = page.getByRole('region', { name: 'Valt rum' });
+    await panel.getByRole('button', { name: 'Modell', exact: true }).click();
+    const heating = panel.getByRole('img', { name: 'Nettoökning per förlopp', exact: true });
+    const cooling = panel.getByRole('img', { name: 'Avsvalning per förlopp', exact: true });
+    await expect(heating.locator('[data-run]')).toHaveCount(99);
+    await expect(cooling.locator('[data-run]')).toHaveCount(99);
+    await expect(panel.getByTestId('measured-run-counts')).toHaveText('100 behållna · 1 flaggade · 1 utan mätbart punktvärde · 100 visade');
+    await expect(panel.getByTestId('room-prediction-error')).toContainText('Medelabsolut prognosfel för temperatur');
+    await expect(panel.getByTestId('room-prediction-error').locator('dd')).toHaveText(['0,12 °C', '0,2 °C']);
+    await expect(panel.getByTestId('room-prediction-error')).toContainText('Planerarens prognos');
+    await expect(panel.getByText(/Publicerad linje: 0,8 °C\/kWh/)).toContainText('101 förlopp i anpassningen');
+    const select = panel.getByLabel('Visa detaljer för ett förlopp');
+    await select.selectOption('synthetic-0');
+    const detail = panel.getByTestId('room-run-detail');
+    await expect(detail).toContainText('Flaggat: över den anpassade linjen');
+    await expect(detail).toContainText('Start → topp (intervallmedel)');
+    await expect(detail).not.toContainText('annan källa');
+    await panel.getByRole('button', { name: 'Vid referenstemperatur', exact: true }).click();
+    await expect(panel.getByText(/20 °C i rummet och 20 °C i övriga hemmet/)).toBeVisible();
+    await expect(panel.getByText(/Publicerad linje: 1,1 °C\/kWh/)).toBeVisible();
+    await select.selectOption('synthetic-1');
+    await expect(detail).toContainText('Inget mätbart punktvärde');
+    await expect(detail).toContainText('Uppvärmningen saknar fullständiga');
+    await panel.getByRole('button', { name: 'Äldre förlopp' }).click();
+    await expect(panel.getByText('Förlopp 101–102 av 102')).toBeVisible();
+    await expect(heating.locator('[data-run]')).toHaveCount(2);
+    await expect(panel.getByText(/Publicerad linje: 1,1 °C\/kWh/)).toContainText('101 förlopp i anpassningen');
+    await expect(detail).toHaveCount(0);
+    await panel.getByRole('button', { name: 'Nyare förlopp' }).click();
+    await expect(heating.locator('[data-run]')).toHaveCount(99);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: testInfo.outputPath('measured-room-runs-mobile.png'), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
 
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {

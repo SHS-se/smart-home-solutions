@@ -2,7 +2,7 @@ import { evidenceStore } from "./room-evidence.fixture.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../device-learning/room/native-mean.fixture.ts";
-import { learnRoomResponse, ROOM_RESPONSE_CELL_COUNT } from "../device-learning/room/response-learning.ts";
+import { learnMeasuredRoomResponse as learnRoomResponse, ROOM_MEASURED_CELL_COUNT as ROOM_RESPONSE_CELL_COUNT } from "../device-learning/room/measured-response.ts";
 import { parseRoomSharedMetadata } from "./room.ts";
 import { runRoomLearning } from "./room-response-run.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
@@ -40,8 +40,6 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
   let capture: string | null = null, fence = 0;
   let unavailable = new Set<string>();
   let policyRace = false;
-  let deleteWitness: string | null = null;
-  const certificates: unknown[][] = [];
   let loseReply: string | null = null, supersede: string | null = null;
   const reads: string[] = [], writes: Record<string, unknown>[] = [], failures: Record<string, unknown>[] = [];
   const batches: number[] = [];
@@ -94,46 +92,19 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
           assertEquals(args.p_revision, model?.model_revision ?? 0);
           assertEquals(args.p_expected_cursor, progress.cursor);
           const metadata = progress.metadata as Record<string, unknown>;
-          assertEquals(jsonb(args.p_expected_state), metadata.heat_state ?? null);
+          assertEquals(args.p_expected_state, null);
+          assertEquals(args.p_heat_state, null);
+          assertEquals(metadata.heat_state, undefined);
           const cells = args.p_cells as unknown[];
           assert(Array.isArray(cells) && progress.cursor + cells.length <= ROOM_RESPONSE_CELL_COUNT);
-          assert(cells.length > 0 || args.p_heat_state !== null, "a commit records progress");
+          assert(cells.length > 0, "a commit records completed measured cells");
           for (const cell of cells) progress.cells.push(jsonb(cell));
           progress.cursor += cells.length;
-          if (args.p_heat_state === null) delete metadata.heat_state;
-          else {
-            assert(progress.cursor < ROOM_RESPONSE_CELL_COUNT);
-            assertEquals((args.p_heat_state as { index: number }).index, progress.cursor % 18);
-            metadata.heat_state = jsonb(args.p_heat_state);
-          }
           batches.push(cells.length);
           if (loseReply === name) { loseReply = null; return { data: null, error: { message: "Synthetic lost reply" } }; }
           data = true; break;
         }
         case "load_energy_room_fit_capture": data = capture; break;
-        case "get_energy_room_fit_policy_audit":
-        case "certify_energy_room_fit_policy": {
-          assert(progress);
-          const envelope = progress.metadata as { sha256: string; policy_fingerprint?: string };
-          assertEquals(args.p_fence, fence);
-          assertEquals(args.p_revision, progress.base_revision);
-          assertEquals(args.p_expected_sha, envelope.sha256);
-          assert(!("policy_fingerprint" in envelope));
-          if (name === "get_energy_room_fit_policy_audit") {
-            data = jsonb({ ...audit, policy_fingerprint: archive.policyFingerprint }); break;
-          }
-          if (policyRace) { archive.setPolicyFingerprint("b".repeat(64)); policyRace = false; }
-          if (deleteWitness) {
-            audit.operation_facts = audit.operation_facts.filter(fact => fact.id !== deleteWitness);
-            deleteWitness = null;
-          }
-          assert(Array.isArray(args.p_operation_witnesses));
-          certificates.push(args.p_operation_witnesses);
-          data = args.p_policy_fingerprint === archive.policyFingerprint && args.p_operation_witnesses.every(used =>
-            audit.operation_facts.some(current => JSON.stringify(jsonb(current)) === JSON.stringify(jsonb(used))));
-          if (data) envelope.policy_fingerprint = archive.policyFingerprint;
-          break;
-        }
         case "reset_energy_room_fit": resets++; progress = null; capture = null; data = true; break;
         case "complete_energy_room_fit": {
           assertEquals(progress?.cursor, ROOM_RESPONSE_CELL_COUNT);
@@ -161,11 +132,18 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
       return { data, error: null };
     },
   };
-  const tick = async () => {
+  const tick = async (oneCell = false) => {
+    // Deterministic elapsed time exercises resumable prefixes independently of
+    // the host CPU speed or the measured learner's faster fitting work.
+    const realNow = performance.now;
+    let elapsed = 0;
+    if (oneCell) performance.now = () => (elapsed += 1000);
+    try {
     const response = await handleDeviceLearning(new Request("https://synthetic.test/learning", { method: "POST",
       headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => wallNow);
     assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
     return response;
+    } finally { if (oneCell) performance.now = realNow; }
   };
   const finishCell = async () => {
     const cursor = progress?.cursor;
@@ -175,11 +153,10 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
     }
     throw new Error("Synthetic room cell did not finish bounded iterations");
   };
-  return { db, tick, finishCell, rows, source, range, archive, context, now, reads, writes, failures, batches, audit, certificates,
+  return { db, tick, finishCell, rows, source, range, archive, context, now, reads, writes, failures, batches, audit,
     get model() { return model; }, get progress() { return progress; }, get resets() { return resets; },
     fail: (name: string | null, ...others: string[]) => { unavailable = new Set(name === null ? [] : [name, ...others]); },
     changePolicyBeforeCapture: () => { policyRace = true; },
-    deleteWitnessBeforeCertification: (id: string) => { deleteWitness = id; },
     loseReply: (name: string) => { loseReply = name; },
     supersede: (name: string) => { supersede = name; },
     corruptCapture: () => { capture = "corrupt"; },
@@ -247,7 +224,7 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   assertEquals(f.writes.length, 0);
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
   const envelope = f.progress!.metadata as { version: number; capture: unknown; policy_fingerprint: string };
-  assertEquals(envelope.version, 4);
+  assertEquals(envelope.version, 5);
   assertEquals(envelope.policy_fingerprint, f.archive.policyFingerprint);
   f.fail("capture_energy_device_models", "get_energy_room_heating_context");
   const numericStart = f.reads.length;
@@ -258,6 +235,8 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   }
   assertEquals(await (await f.tick()).json(), { published: true });
   assertEquals(f.writes.length, 1);
+  assertEquals("gain_reference_outdoor_c" in f.model!, false);
+  assertEquals("gain_outdoor_slope_per_c" in f.model!, false);
   const library = f.model?.heating_bands as RoomHeatingBands;
   assertEquals(library.reference?.scope, { kind: "shared" });
   assertEquals(library.active, []);
@@ -297,7 +276,7 @@ Deno.test("an interrupted or lost batch commit resumes from the authoritative pr
   for (const mode of ["interrupted", "lost", "superseded"] as const) {
     const f = fixture();
     await f.tick(); await f.tick(); // Archive refresh, then the frozen capture.
-    assertEquals(await (await f.tick()).json(), { checkpointed: true }); // One successful batch first.
+    assertEquals(await (await f.tick(true)).json(), { checkpointed: true }); // One successful bounded batch first.
     assert(f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT, "the failure happens inside the prefix");
     const accepted = structuredClone(f.model);
     const before = structuredClone(f.progress);
@@ -364,28 +343,23 @@ async function stagePrePolicyCapture(f: ReturnType<typeof fixture>, advance = fa
   delete envelope.policy_fingerprint;
 }
 
-Deno.test("the worker certifies an old numerical capture in place, then resumes its exact prefix", async () => {
+Deno.test("a numerical capture without its policy seal resets while retaining its accepted model and chronological archive", async () => {
   const f = fixture("customer_assertion");
   f.rows[1].heat_w = null;
   await stagePrePolicyCapture(f, true);
-  const previous = structuredClone(f.progress!);
-  assert(previous.cursor > 0);
-  // An excluded missing meter between known readings and a new unused automatic
-  // source fact preserve every measured input and reviewed assertion in this capture.
+  assert(f.progress!.cursor > 0);
+  const accepted = structuredClone(f.model), archive = structuredClone([...f.archive.blocks]);
   f.audit.exclusions.push({ from_at: f.rows[1].start_ts, to_at: f.rows[2].start_ts });
   f.audit.operation_facts.push({ ...f.audit.operation_facts[0], id: "22222222-2222-4333-8444-555555555555",
     basis: "source_capability", created_at: new Date(f.now + 1000).toISOString() });
-  f.fail("capture_energy_device_models", "get_energy_room_heating_context", "checkpoint_energy_room_fit_cells", "complete_energy_room_fit");
-  const begin = f.reads.length;
-  assertEquals(await (await f.tick()).json(), { checkpointed: true });
-  assertEquals(f.reads.slice(begin), ["verify_energy_learning_token", "claim_energy_device_learning", "load_energy_room_fit_capture",
-    "get_energy_room_fit_policy_audit", "certify_energy_room_fit_policy", "release_energy_room_learning_lane"]);
-  assertEquals(f.progress, { ...previous, metadata: { ...previous.metadata as object, policy_fingerprint: f.archive.policyFingerprint } });
-  assertEquals(f.certificates, [[f.audit.operation_facts[0]]], "Only the used witness reaches certification, once for all three intervals");
-  f.fail(null);
+  assertEquals(await (await f.tick()).json(), { superseded: true });
+  assertEquals(f.progress, null);
+  assertEquals(f.model, accepted);
+  assertEquals([...f.archive.blocks], archive);
+  assert(!f.reads.includes("certify_energy_room_fit_policy"), "Numerical method changes never certify earlier fitter state");
   await publishShared(f);
-  assertEquals(f.resets, 0);
-  assertEquals(f.reads.filter(name => name === "get_energy_room_fit_policy_audit").length, 1);
+  assertEquals(f.resets, 1);
+  assertEquals(f.reads.filter(name => name === "get_energy_room_fit_policy_audit").length, 0);
 });
 
 Deno.test("an unverifiable pre-policy capsule resets once and reacquires an authenticated capture", async () => {
@@ -415,30 +389,32 @@ Deno.test("an unverifiable pre-policy capsule resets once and reacquires an auth
   }
 });
 
-Deno.test("a policy change between audit and certification leaves the numerical prefix for a fresh audit", async () => {
+Deno.test("a policy change while an unsealed capture is reacquired refuses the raced capture before retrying", async () => {
   const f = fixture();
   await stagePrePolicyCapture(f);
-  const before = structuredClone(f.progress);
   f.changePolicyBeforeCapture();
   assertEquals(await (await f.tick()).json(), { superseded: true });
-  assertEquals(f.progress, before);
-  assertEquals(f.resets, 0);
+  assertEquals(f.progress, null);
+  assertEquals(f.resets, 1);
+  assertEquals(await (await f.tick()).json(), { checkpointed: false, superseded: true });
+  assertEquals(f.progress, null);
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
   assertEquals((f.progress!.metadata as { policy_fingerprint: string }).policy_fingerprint, "b".repeat(64));
 });
 
-Deno.test("deleting a used source capability during certification preserves cells and refuses the certificate", async () => {
+Deno.test("a deleted operation witness cannot preserve uncertified numerical cells or erase the source archive", async () => {
   const f = fixture("source_capability");
   await stagePrePolicyCapture(f, true);
-  const before = structuredClone(f.progress);
+  const archive = structuredClone([...f.archive.blocks]);
   const policy = f.archive.policyFingerprint;
-  f.deleteWitnessBeforeCertification(f.audit.operation_facts[0].id);
+  f.audit.operation_facts.length = 0;
   assertEquals(await (await f.tick()).json(), { superseded: true });
   assertEquals(f.archive.policyFingerprint, policy);
-  assertEquals(f.progress, before);
-  assertEquals(f.resets, 0);
-  assertEquals(await (await f.tick()).json(), { superseded: true });
-  assertEquals(f.resets, 1, "the fresh audit observes the deleted UUID and reacquires");
+  assertEquals(f.progress, null);
+  assertEquals(f.resets, 1);
+  assertEquals([...f.archive.blocks], archive);
+  assert(!f.reads.includes("certify_energy_room_fit_policy"));
+  assertEquals(await (await f.tick()).json(), { checkpointed: true });
 });
 
 Deno.test("a source refresh whose fence was lost writes nothing", async () => {
@@ -472,7 +448,7 @@ Deno.test("malformed, obsolete or over-horizon private captures are discarded wi
   f.corruptCapture();
   assertEquals(await (await f.tick()).json(), { superseded: true });
   assertEquals(f.writes.length, 0);
-  // An old seasonal pool may already be past its eighteenth training/full cell.
+  // An old seasonal pool is rejected by its method even within the new cell-count bound.
   f.setProgress({ metadata: { version: 3, capture: { version: 1 } }, cells: [], cursor: 30, base_revision: f.model?.model_revision ?? 0 });
   assertEquals(await (await f.tick()).json(), { superseded: true });
   // A capture beyond the claim's history ceiling is not this generation's work.

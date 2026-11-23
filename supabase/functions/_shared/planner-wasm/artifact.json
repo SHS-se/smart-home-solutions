@@ -1,7 +1,7 @@
 {
   "abi": 18,
   "wasm_sha256": "38236c88bcf8c01b7144daed04656866cc27cc9366e04e589c069f6d3c751623",
-  "source_sha256": "b362564cf012890324ded897e9c23f5f774b0cb718ecaedc4e6a0935fbd2e75f",
+  "source_sha256": "24c7c9085a2d536bec2692eb786c7bc41daddc32d411f5e6d836ec0c48b87a41",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -82,6 +82,7 @@
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/models/pool/electrical.ts",
     "supabase/functions/_shared/planner/models/room/control.ts",
+    "supabase/functions/_shared/planner/models/room/measured-evidence.ts",
     "supabase/functions/_shared/planner/models/room/observation.ts",
     "supabase/functions/_shared/planner/models/room/read-model.ts",
     "supabase/functions/_shared/planner/models/room/run-evidence.ts",

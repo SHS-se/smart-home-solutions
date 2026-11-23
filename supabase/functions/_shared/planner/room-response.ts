@@ -10,6 +10,7 @@
  */
 import { readRoomHeatingBands, roomHeatingResponseAt, type RoomHeatingBand, type RoomHeatingBands } from "./heating-bands.ts";
 import { hasRoomRunSupport, hasRoomTransitionSupport } from "./models/room/run-evidence.ts";
+import { hasMeasuredRoomSupport } from "./models/room/measured-evidence.ts";
 import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import { readThermalModel } from "./models/room/read-model.ts";
 
@@ -52,7 +53,7 @@ export function roomResponse(library: RoomHeatingBands, forecastOutdoorC?: reado
   const model = readThermalModel(reference?.model);
   if (reference && model && reference.scope?.kind === "shared" && typeof library.reference_revision === "string") {
     return { model, source: { kind: "shared", revision: library.reference_revision }, warnings: reference.warnings ?? [],
-      supported: hasRoomTransitionSupport(reference.learning_evidence) || hasRoomRunSupport(reference.learning_evidence), legacy: false };
+      supported: hasMeasuredRoomSupport(reference.learning_evidence) || hasRoomTransitionSupport(reference.learning_evidence) || hasRoomRunSupport(reference.learning_evidence), legacy: false };
   }
   // ---- Rollout only: responses accepted before the shared response. ----
   if (reference && model && reference.scope?.kind !== "band") {

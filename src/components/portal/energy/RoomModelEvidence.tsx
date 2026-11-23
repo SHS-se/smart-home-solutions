@@ -1,4 +1,4 @@
-import { roomRunEvidence, roomTransitionEvidence } from '@/lib/energy-shift/room-run-evidence';
+import { roomMeasuredEvidence, roomRunEvidence, roomTransitionEvidence } from '@/lib/energy-shift/room-run-evidence';
 import { z } from 'zod';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
@@ -60,7 +60,7 @@ export function LatestRoomSourceEvidence({ attempt }: { attempt: unknown }) {
 }
 
 const runAttempt = z.object({ learning: z.object({
-  run_calibration: roomRunEvidence.optional(), transition_calibration: roomTransitionEvidence.optional(),
+  run_calibration: roomRunEvidence.optional(), transition_calibration: roomTransitionEvidence.optional(), measured_runs: roomMeasuredEvidence.optional(),
 }) });
 
 /** Latest attempt evidence is shown separately from the selected stored fit. */
@@ -68,15 +68,18 @@ export function LatestRoomRunEvidence({ attempt }: { attempt: unknown }) {
   const { language, t } = useLanguage();
   const parsed = runAttempt.safeParse(attempt);
   if (!parsed.success) return null;
-  const { run_calibration: run, transition_calibration: transitions } = parsed.data.learning;
-  if (!run && !transitions) return null;
+  const { run_calibration: run, transition_calibration: transitions, measured_runs: measured } = parsed.data.learning;
+  if (!run && !transitions && !measured) return null;
   return <section className="space-y-1 border-t pt-3 text-xs" data-testid="latest-room-run-evidence">
     <h4 className="text-sm font-medium">{t('Senaste anpassningsförsök', 'Latest fitting attempt')}</h4>
-    {transitions && <p>{t('Anpassade övergångar', 'Fitted transitions')}{' · '}{transitions.fitted_transitions.toLocaleString(language)}</p>}
-    {!transitions && run && <p>{run.fitted_runs.toLocaleString(language)} {t('jämförbara förlopp', 'comparable runs')}
+    {measured && <p>{measured.observed_runs.toLocaleString(language)} {t('observerade förlopp', 'observed runs')}
+      {' · '}{measured.flagged_runs.toLocaleString(language)} {t('flaggade efter anpassningen', 'flagged after fitting')}
+      {' · '}{measured.unmeasured_runs.toLocaleString(language)} {t('utan mätbart punktvärde', 'without a measurable point')}</p>}
+    {!measured && transitions && <p>{t('Anpassade övergångar', 'Fitted transitions')}{' · '}{transitions.fitted_transitions.toLocaleString(language)}</p>}
+    {!measured && !transitions && run && <p>{run.fitted_runs.toLocaleString(language)} {t('jämförbara förlopp', 'comparable runs')}
       {' · '}{run.suspect_runs.toLocaleString(language)} {t('misstänkta förlopp uteslutna', 'suspect runs excluded')}
       {' · '}{run.provisional_runs.toLocaleString(language)} {t('preliminära förlopp', 'provisional runs')}</p>}
-    {!transitions && <p className="text-muted-foreground">{t(
+    {!measured && !transitions && <p className="text-muted-foreground">{t(
       'Det senaste försöket kan gälla ett annat temperaturintervall. Underlaget för vald publicerad modell visas ovan.',
       'The latest attempt may concern another temperature range. Evidence for the selected published model appears above.',
     )}</p>}

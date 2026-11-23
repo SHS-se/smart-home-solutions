@@ -1,0 +1,84 @@
+import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
+import { learnMeasuredRoomResponse, prepareMeasuredRoomResponse, fitMeasuredRoomCell, parseMeasuredRoomCells, finalizeMeasuredRoomResponse, ROOM_MEASURED_CELL_COUNT } from "./measured-response.ts";
+import { syntheticMeasuredRoom, measuredSyntheticEvidence } from "./measured-response.fixture.ts";
+import { readThermalModel } from "../../planner/models/room/read-model.ts";
+import type { RoomMeanQuarter } from "./mean-observations.ts";
+import { hasMeasuredRoomSupport } from "../../planner/models/room/measured-evidence.ts";
+
+Deno.test("measured response identifies weather input gain and conserved delayed heat from native means", () => {
+  const plant = syntheticMeasuredRoom(), fit = learnMeasuredRoomResponse(measuredSyntheticEvidence(plant.rows), 600);
+  assert(fit.result.ok && fit.result.model.response_family === "finite");
+  const model = fit.result.model;
+  assert(readThermalModel(JSON.parse(JSON.stringify(model))));
+  assertAlmostEquals(model.cooling_constant_per_h, plant.outdoorK, .0001);
+  assertAlmostEquals(model.house_coupling_per_h!, plant.houseK, .0001);
+  assertAlmostEquals(model.heat_lag_h!, plant.lag, 1e-8);
+  const gain = model.gain_c_per_wh * (1 + model.gain_outdoor_slope_per_c! * (plant.reference - model.gain_reference_outdoor_c!));
+  assertAlmostEquals(gain, plant.gain, .00001);
+  assertAlmostEquals(model.gain_c_per_wh * model.gain_outdoor_slope_per_c!, plant.gain * plant.weatherSlope, .000001);
+  assertEquals(model.background_gain_c_per_h, 0);
+  assertAlmostEquals(fit.result.learning_evidence.forecast_nuisance.fitted_offset, plant.background, .0001);
+  assert(hasMeasuredRoomSupport(fit.result.learning_evidence));
+  assert(fit.result.learning_evidence.measured_runs.validation.trajectory_mae_c! < .001);
+});
+
+Deno.test("cells survive JSON checkpoints and exact observed counts pin publication", () => {
+  const { rows } = syntheticMeasuredRoom(90, 0, 0);
+  const prepared = prepareMeasuredRoomResponse(measuredSyntheticEvidence(rows), 600);
+  const cells = Array.from({ length: ROOM_MEASURED_CELL_COUNT }, (_, i) => fitMeasuredRoomCell(prepared, i));
+  const parsed = parseMeasuredRoomCells(JSON.parse(JSON.stringify(cells)));
+  const fit = finalizeMeasuredRoomResponse(prepared, parsed);
+  assert(fit.result.ok);
+  assertEquals(fit.result.learning_evidence.measured_runs.fitted_observations, fit.result.model.sample_count);
+  assertEquals(fit.run_ledger!.observed_runs, fit.result.learning_evidence.measured_runs.observed_runs);
+  // The constrained weather endpoints may meet at exactly the same gain.
+  // That boundary must still publish a model the planner can decode.
+  const flatWeather = parsed.map(cell => ({ ...cell, fits: cell.fits
+    .filter(candidate => candidate.family === "finite" && candidate.weather)
+    .map(candidate => ({ ...candidate, beta: candidate.beta.map((v, i) => i === 1 ? candidate.beta[0] : v) })) }));
+  const flat = finalizeMeasuredRoomResponse(prepared, flatWeather);
+  assert(flat.result.ok);
+  assert(readThermalModel(flat.result.model));
+  assertEquals(flat.result.model.gain_outdoor_slope_per_c, 0);
+  assertThrows(() => parseMeasuredRoomCells([{ index: 1, fits: [] }]));
+});
+
+Deno.test("rank deficiency publishes measured evidence without invented physical response", () => {
+  const fit = learnMeasuredRoomResponse(measuredSyntheticEvidence([]), null);
+  assertEquals(fit.result.ok, false);
+  assertEquals(fit.result.learning_evidence.measured_runs.fitted_observations, 0);
+  assertEquals(fit.run_ledger!.runs, []);
+});
+
+Deno.test("missing later irradiance preserves solar candidate shape and known heater memory", () => {
+  const plant = syntheticMeasuredRoom(240, .025, 1, 900, .0005);
+  plant.rows[200].solar_w_per_m2 = null;
+  plant.rows[180].room_c = null;
+  const fit = learnMeasuredRoomResponse(measuredSyntheticEvidence(plant.rows), 600);
+  assert(fit.result.ok && fit.result.model.response_family === "finite");
+  assertAlmostEquals(fit.result.model.solar_gain_c_per_h_per_wm2!, .0005, .00001);
+  assertAlmostEquals(fit.result.model.cooling_constant_per_h, plant.outdoorK, .0001);
+  assertAlmostEquals(fit.result.model.house_coupling_per_h!, plant.houseK, .0001);
+  assert(fit.result.learning_evidence.measured_runs.validation.trajectory_mae_c! < .001);
+});
+
+Deno.test("independent integrator and equilibrium observations publish readable family models", () => {
+  const integral: RoomMeanQuarter[] = [], algebraic: RoomMeanQuarter[] = [];
+  let temperature = 20, delivered = 0;
+  for (let i = 0; i < 100; i++) {
+    const power = i % 13 < 4 ? 500 : 0, rate = .0015 * power - .2;
+    const house = 21 + .4 * Math.cos(i / 11), outdoor = 3 + 3 * Math.sin(i / 17);
+    const base = { start_ms: i * 3_600_000, duration_s: 3600 as const, heat_w: power,
+      house_c: house, outdoor_c: outdoor, solar_w_per_m2: null, cooling: false };
+    integral.push({ ...base, room_c: temperature + rate / 2 }); temperature += rate;
+    const carry = Math.exp(-1 / 2), meanDelivered = power + (delivered - power) * 2 * (1 - carry);
+    algebraic.push({ ...base, room_c: .8 * house + .2 * outdoor + 2 + .006 * meanDelivered });
+    delivered = power + (delivered - power) * carry;
+  }
+  for (const [rows, family] of [[integral, "integrator"], [algebraic, "equilibrium"]] as const) {
+    const fit = learnMeasuredRoomResponse(measuredSyntheticEvidence([...rows]), 500);
+    assert(fit.result.ok); assertEquals(fit.result.model.response_family, family);
+    assert(readThermalModel(JSON.parse(JSON.stringify(fit.result.model))));
+    if (family === "equilibrium") assertEquals(fit.result.learning_evidence.measured_runs.lines.reference_heating, null);
+  }
+});

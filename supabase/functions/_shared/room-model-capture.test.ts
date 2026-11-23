@@ -66,7 +66,7 @@ Deno.test("capture reads current temperatures and routines without selecting mod
   assertEquals(result.thermal_zones![0].model, prepared.rooms[0].model);
 });
 
-Deno.test("room history warns by room and source only for substantial gaps", async () => {
+Deno.test("room history identifies late observations and every older gap by room and source", async () => {
   const { snapshot, mappings, bundle } = syntheticCapture();
   const prepared = prepareRoomModels(snapshot, mappings, bundle);
   const [room, neighbour] = prepared.rooms.filter(r => r.model);
@@ -100,7 +100,7 @@ Deno.test("room history warns by room and source only for substantial gaps", asy
       } },
     });
     const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), [room, neighbour]);
-    return { quarters, warnings: result.planning_warnings ?? [], zone: result.thermal_zones!.find(zone => zone.key === room.key)! };
+    return { quarters, warnings: (result.planning_warnings ?? []).filter(warning => warning.scope === room.key || warning.scope === "rooms"), zone: result.thermal_zones!.find(zone => zone.key === room.key)! };
   };
   const complete = await run([], []);
   const late = await run([], [95]);
@@ -108,7 +108,7 @@ Deno.test("room history warns by room and source only for substantial gaps", asy
   assertEquals(actionablePlanningWarnings(late.warnings), []);
   assert(late.zone.start_stored_heat_c! < complete.zone.start_stored_heat_c!);
   const small = await run([40], [86, 87, 88, 89, 90, 91, 94, 95]);
-  assertEquals(actionablePlanningWarnings(small.warnings), []);
+  assertEquals(actionablePlanningWarnings(small.warnings)[0].evidence?.quarters, 7);
   const large = await run([60, 61, 62, 63, 64, 65], [64, 65, 66, 67, 94, 95]);
   const [warning] = actionablePlanningWarnings(large.warnings);
   assertEquals(actionablePlanningWarnings(large.warnings).length, 1);
@@ -179,7 +179,7 @@ Deno.test("monitored heat warms the native room projection without creating appl
   assert(late.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
   assertEquals(late.planning_warnings?.some(w => w.code === "room_heat_history_late"), true);
   assert(gap.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
-  assertEquals(gap.planning_warnings?.some(w => w.code === "room_passive_heat_history_missing"), false);
+  assertEquals(gap.planning_warnings?.some(w => w.code === "room_passive_heat_history_missing"), true);
   assertEquals(substantial.planning_warnings?.find(w => w.code === "room_passive_heat_history_missing")?.evidence?.quarters, 8);
   assertEquals(unavailable.thermal_zones![0].passive_heat_c_per_h, Array(8).fill(0));
   assertEquals(unavailable.thermal_zones![0].model, zone.model);
@@ -315,7 +315,7 @@ Deno.test("history reconstructs stored heat with the one response and bounds mis
   const prepared = prepareRoomModels(snapshot, mappings, bundle);
   const room = prepared.rooms.find(candidate => candidate.model)!;
   room.model = { ...room.model!, heat_lag_h: 2, gain_c_per_wh: .002 } as typeof room.model;
-  const run = async (missing: number[], missingEnergy: number[] = []) => {
+  const run = async (missing: number[], missingEnergy: number[] = [], missingWeather: number[] = []) => {
     const db = createClient("http://localhost:54321", "synthetic-service", {
       auth: { persistSession: false }, global: { fetch: (url, request) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
@@ -332,7 +332,7 @@ Deno.test("history reconstructs stored heat with the one response and bounds mis
           return Promise.resolve(Response.json([{ room_key: room.key,
             temperature_starts: starts.filter((_start, i) => !missing.includes(i)),
             heater_quarters: starts.flatMap((start, i) => missingEnergy.includes(i) ? [] : [[start, 800]]),
-            outdoor_quarters: starts.map(start => [start, -7]),
+            outdoor_quarters: starts.flatMap((start, i) => missingWeather.includes(i) ? [] : [[start, -7]]),
           }]));
         }
         throw new Error(`Unexpected synthetic capture dependency ${endpoint}`);
@@ -344,17 +344,18 @@ Deno.test("history reconstructs stored heat with the one response and bounds mis
   for (let i = 0; i < 96; i++) expected = Math.exp(-.25 / 2) * expected + .002 * 2 * -Math.expm1(-.25 / 2) * 800;
   const complete = await run([]);
   assertAlmostEquals(complete.thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
-  // The newest quarter arriving late is a routine note and a lower bound.
+  // A missing thermometer does not erase independently received electricity.
   const late = await run([95]);
-  assert(late.thermal_zones![0].start_stored_heat_c! < expected);
+  assertAlmostEquals(late.thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
   assert(late.planning_warnings!.some(warning => warning.code === "room_heat_history_late"));
   // A hole in the middle keeps the room and never overstates its stored heat.
   const hole = await run([40]);
   assert(hole.thermal_zones![0].model);
   assert(hole.thermal_zones![0].start_stored_heat_c! <= expected);
-  // No readings at all, or an unavailable heater counter, stores nothing and says so.
+  // Missing room readings retain measured electricity; an unavailable counter
+  // instead contributes the useful-heat lower bound and says so.
   const absent = await run(Array.from({ length: 96 }, (_, i) => i));
-  assertEquals(absent.thermal_zones![0].start_stored_heat_c, 0);
+  assertAlmostEquals(absent.thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
   assert(absent.planning_warnings!.some(warning => warning.code === "room_heat_history_missing"));
   const noEnergy = await run([], Array.from({ length: 96 }, (_, i) => i));
   assert(noEnergy.thermal_zones![0].model);
@@ -362,6 +363,16 @@ Deno.test("history reconstructs stored heat with the one response and bounds mis
   assert(noEnergy.planning_warnings!.some(warning => warning.code === "room_heat_history_missing"));
   // A later complete capture repairs the estimate with no relearning.
   assertAlmostEquals((await run([])).thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
+  room.model = { ...room.model!, gain_reference_outdoor_c: 10, gain_outdoor_slope_per_c: -.03 };
+  const weatherExpected = expected * (1 - .03 * (-7 - 10));
+  assertAlmostEquals((await run([])).thermal_zones![0].start_stored_heat_c!, weatherExpected, 1e-12);
+  for (const missing of [[95], [40], Array.from({ length: 96 }, (_, i) => i)]) {
+    const bounded = await run([], [], missing);
+    assert(bounded.thermal_zones![0].model);
+    assert(bounded.thermal_zones![0].start_stored_heat_c! < weatherExpected);
+    assert(bounded.planning_warnings!.some(warning => warning.code === (missing[0] === 95 ? "room_heat_history_late" : "room_heat_history_missing")));
+  }
+  assertAlmostEquals((await run([])).thermal_zones![0].start_stored_heat_c!, weatherExpected, 1e-12);
 });
 
 Deno.test("a band-only room keeps one previously accepted band for the whole forecast until its shared response publishes", () => {

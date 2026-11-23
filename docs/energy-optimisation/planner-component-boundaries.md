@@ -613,3 +613,49 @@ that its temperature or consumption forecasts are accurate. Sparse fitted
 responses continue through the existing measured-demand path. Chronological
 heater-off and pulse validation, uncertainty publication and commissioning
 demand evidence remain separate work in the model owner.
+
+## Measured room runs
+
+`device-learning/room/run-measurements.ts` owns run identity and the native-mean
+measurements: onset to peak rise per delivered kWh, matching outdoor exposure,
+and the signed fall rate in a post-peak off window. Unknown meter coverage is
+never an off observation. `measured-lines.ts` owns energy-weighted robust lines
+and residual assessments. Heating lines rise or stay flat with outdoor
+temperature; positive fall-rate lines fall or stay flat. A residual flag reports
+which side of the line a run occupies, not its unobserved cause. Flags do not
+remove runs from learning. Room/house reference corrections use identified
+exchange coefficients and are separate from the raw points.
+
+These descriptive lines do not identify the floor's entry storage or intrinsic
+heater gain. `measured-response.ts` therefore fits the supporting chronological
+native interval means with the exact mean-pair equations, profiled nonnegative
+entry storage and robust run-energy weights. It compares constant and outdoor-
+dependent heater gain in the finite, integrator and equilibrium response
+families. The chronological training prefix selects the response against later
+open-loop observations; full evidence supplies the published parameters. Rank
+and residual degrees of freedom establish support, without a three-agreeing-run
+rule. Completed events supply chart measurements; unfinished known-input
+trajectories remain physical fitting evidence.
+
+The planner reads the accepted `measured_room_runs_v1` response through
+`planner/room-response.ts`. A relative outdoor gain slope applies to electricity
+when it enters the delayed state. Changes in weather never rescale already
+stored heat. Unknown outdoor history for a varying gain contributes the useful-
+heat lower bound; a missing room thermometer never erases independently measured
+electricity. Positive uncontrolled fitted heat receives no future planning
+credit. The exact affine transition remains the TypeScript/Rust boundary.
+
+The durable worker retains the chronological source archive and its correction
+policy. Numerical envelope 5 replaces only fitting scratch state. Checkpointed
+lag/family/weather/partition cells replace the latent episode search. Publication
+retains binding, source-policy, owner-generation, fence and model-revision checks.
+A failed attempt retains the accepted model and its ledger, with attempted
+measurements stored under a separate page identity. Existing accepted policies
+remain readable only for continuity until a replacement publishes.
+
+The Model tab reads canonical points, curves, room-reference corrections and
+revision-scoped paginated assessments. It does no browser fitting. Actual cooling
+rates are labelled in °C/h; temperature prediction error is labelled as mean
+absolute prediction error in °C. Private measured validation stays outside the
+public repository; regression fixtures are independently generated synthetic
+plants.

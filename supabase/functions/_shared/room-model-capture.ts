@@ -6,7 +6,7 @@ import type { DeviceControlType, OptimisationSnapshot } from "./planner/planning
 import type { DeviceModelBundle } from "./device-model-store.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { isEquilibrium, passiveHeatRates, roomTransition, excludeUncontrolledRoomHeat } from "./planner/models/room/thermal.ts";
+import { isEquilibrium, passiveHeatRates, storedRoomHeat, excludeUncontrolledRoomHeat } from "./planner/models/room/thermal.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "./room-passive-heat-evidence.ts";
 import { ROOM_HISTORY_QUARTER_MS as SLOT_MS, roomHistoryWarning } from "./room-history-warnings.ts";
 import { readThermalModel } from "./planner/models/room/read-model.ts";
@@ -322,21 +322,17 @@ export async function captureRoomPlanningState(
     if (!readings && recentResult.error) continue;
     const temperatureStarts = new Set(readings?.temperature_starts ?? []);
     const heaterWatts = new Map(readings?.heater_quarters ?? []);
-    // Missing pairs contribute the lower bound on heat still on its way into the room.
-    recent.set(room.key, quarters.map(start => temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0));
-    // One response throughout: the delayed heat its last day of measured
-    // heating still holds. Missing pairs count as no delivered heat.
-    let heat = 0;
-    if (room.model) for (const start of quarters) {
-      const watts = temperatureStarts.has(start) ? heaterWatts.get(start) ?? 0 : 0;
-      const step = roomTransition(room.model, { hours: SLOT_MS / 3_600_000, outdoor_c: 0, house_c: 0, background_c_per_h: 0 });
-      heat = step.carry * heat + step.stored_heat_gain_c_per_w * watts;
-    }
+    const outdoor = new Map(readings?.outdoor_quarters ?? []);
+    recent.set(room.key, quarters.map(start => heaterWatts.get(start) ?? 0));
+    const heat = room.model ? storedRoomHeat(room.model, quarters.map(start => ({
+      watts: heaterWatts.get(start) ?? null, outdoor_c: outdoor.get(start) ?? null,
+    }))) : 0;
     stored.set(room.key, heat);
 
     const warning = roomHistoryWarning(room, "room_heat_history_missing", quarters, [
       { label: "Room temperature", observed: temperatureStarts },
       { label: "Heater energy", observed: heaterWatts },
+      ...((room.model?.gain_outdoor_slope_per_c ?? 0) !== 0 ? [{ label: "Outdoor temperature", observed: outdoor }] : []),
     ], "The forecast counts measured heater energy and bounds remaining warmth where room or weather readings are missing.", snapshot.timezone);
     if (warning) historyWarnings.push(warning);
   }

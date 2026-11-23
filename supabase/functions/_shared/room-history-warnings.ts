@@ -3,8 +3,6 @@ import { timeZoneFormatter } from "./time-zone-formatter.ts";
 
 export const ROOM_HISTORY_QUARTER_MS = 900_000;
 const LATE_QUARTERS = 2;
-// This threshold controls visibility only. Each missing quarter still affects the estimate.
-const WARNING_QUARTERS = 8;
 const gapClock = timeZoneFormatter("sv-SE", {
   year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   hourCycle: "h23", timeZoneName: "shortOffset",
@@ -37,7 +35,6 @@ export function roomHistoryWarning(
   const older = incomplete.filter(quarter => quarter.index < starts.length - LATE_QUARTERS);
   if (older.length === 0) return planningWarning("room_heat_history_late", room.key,
     `${room.name} is waiting for its latest room history.`, consequence, { quarters: incomplete.length });
-  if (older.length < WARNING_QUARTERS) return;
 
   const intervals: MissingInterval[] = [];
   for (const { start, sources } of older) {

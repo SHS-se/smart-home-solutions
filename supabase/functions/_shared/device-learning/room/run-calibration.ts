@@ -12,18 +12,8 @@ import { ROOM_TRANSITION_POLICY, type ROOM_RUN_POLICY, type MAX_ROOM_HEATING_RUN
 /** Within-run heater contrast needed to distinguish a gain from measurement noise. */
 const RESPONSE_STANDARD_ERRORS = 3;
 
-export interface HeatingRun {
-  id: string;
-  from_ms: number;
-  on_from_ms: number;
-  off_from_ms: number;
-  to_ms: number;
-  from: number;
-  on: number;
-  off: number;
-  end: number;
-  measured_wh: number;
-}
+import { roomHeatingRuns, type HeatingRun } from "./run-measurements.ts";
+export { roomHeatingRuns, type HeatingRun } from "./run-measurements.ts";
 export interface HeatingRunAssessment {
   id: string;
   from_ms: number;
@@ -100,38 +90,6 @@ export interface RoomTransitionRunLedger {
 
 const finite = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v);
 const known = (row: RoomMeanQuarter) => finite(row.heat_w) && row.heat_w >= 0 && roomHeatingDirectionKnown(row);
-const follows = (a: RoomMeanQuarter, b: RoomMeanQuarter) =>
-  b.start_ms === a.start_ms + roomIntervalSeconds(a) * 1000;
-
-/** Only a measured off/on/off sequence identifies a complete heating event. */
-export function roomHeatingRuns(rows: readonly RoomMeanQuarter[]): HeatingRun[] {
-  const runs: HeatingRun[] = [];
-  let start = 0;
-  while (start < rows.length) {
-    while (start < rows.length && !known(rows[start])) start++;
-    let stop = start + 1;
-    while (stop < rows.length && known(rows[stop]) && follows(rows[stop - 1], rows[stop])) stop++;
-    for (let i = start + 1; i < stop; i++) {
-      if (rows[i].heat_w! <= HEATED_SAMPLE_MIN_W || rows[i - 1].heat_w! > HEATED_SAMPLE_MIN_W) continue;
-      const on = i;
-      while (i < stop && rows[i].heat_w! > HEATED_SAMPLE_MIN_W) i++;
-      const off = i;
-      if (off === stop) break;
-      while (i < stop && rows[i].heat_w! <= HEATED_SAMPLE_MIN_W) i++;
-      const end = i - 1;
-      const from = on - 1;
-      runs.push({ id: String(rows[on].start_ms), from_ms: rows[from].start_ms,
-        on_from_ms: rows[on].start_ms, off_from_ms: rows[off].start_ms,
-        to_ms: rows[end].start_ms + roomIntervalSeconds(rows[end]) * 1000,
-        from, on, off, end,
-        measured_wh: rows.slice(on, off).reduce((sum, row) => sum + row.heat_w! * roomIntervalHours(row), 0) });
-      i--;
-    }
-    start = stop;
-  }
-  return runs;
-}
-
 /** Descriptive run conditions stored with an assessed response revision. */
 export const ROOM_RUN_CONDITIONS = "run_conditions_v2";
 

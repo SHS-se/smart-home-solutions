@@ -1,5 +1,6 @@
-import { roomResponseTrainingLength, type LearnedRoomResponse, ROOM_TRANSITION_POLICY } from "../device-learning/room/response-learning.ts";
-import { ROOM_RUN_CONDITIONS, type RoomTransitionRunLedger } from "../device-learning/room/run-calibration.ts";
+import { roomResponseTrainingLength } from "../device-learning/room/chronological-evidence.ts";
+import type { LearnedMeasuredRoomResponse } from "../device-learning/room/measured-response.ts";
+import { ROOM_MEASURED_POLICY, ROOM_MEASUREMENT_METHOD, type MeasuredRoomLedger } from "../planner/models/room/measured-evidence.ts";
 import { decodeRoomEvidenceCapture, encodeRoomEvidenceCapture, qualifyRoomEvidenceBlocks, type DecodedRoomEvidenceBlock } from "./room-evidence-capture.ts";
 import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
@@ -7,7 +8,7 @@ import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
 import { fitRoomsFromQuarters, TRAINING_WINDOW_DAYS, thermalQuarter, zoneModelRows, type ThermalQuarterRow } from "../thermal-training.ts";
 import { roomIntervalHours, roomIntervalSeconds } from "../device-learning/room/mean-evidence.ts";
-import { fitIndependentRoomBand, fitRoomMeans, ROOM_MEAN_IMPLEMENTATION, type RoomMeanQuarter, type RoomLearningEvidence } from "../device-learning/room/mean-observations.ts";
+import { fitIndependentRoomBand, fitRoomMeans, type RoomMeanQuarter, type RoomLearningEvidence } from "../device-learning/room/mean-observations.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "../room-passive-heat-evidence.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
 import { historicalIrradiancePoints, irradiancePoints, irradianceOnto } from "../solar-irradiance.ts";
@@ -73,7 +74,7 @@ export function nativeRoomReadWindows(from: string, to: string): [string, string
 
 /** Source archives are independent of fitting policy and derived estimates. */
 export const ROOM_SOURCE_IMPLEMENTATION = "chronological_native_evidence_v1";
-export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEAN_IMPLEMENTATION}:${ROOM_TRANSITION_POLICY}:${ROOM_RUN_CONDITIONS}`;
+export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEASURED_POLICY}:${ROOM_MEASUREMENT_METHOD}`;
 export const ROOM_SHARED_METADATA_VERSION = 2;
 
 export interface RoomEvidenceBasis {
@@ -101,6 +102,8 @@ export interface RoomSharedMetadata {
   evidence: RoomEvidenceBasis;
   trainingView: RoomTrainingView;
   library: RoomHeatingBands;
+  /** Exact accepted JSON: readers normalize nullable fields, publication must not. */
+  acceptedReference?: unknown;
   ratedPowerW: number | null;
   roomName: string;
   sourceFreshness: ProbeFreshnessReport | null;
@@ -151,6 +154,10 @@ export async function prepareStoredRoomHeating(
 ): Promise<RoomHeatingPreparation> {
   const { home_id: homeId, customer_id: customerId, owner_key: roomKey } = owner;
   const current = readRoomHeatingBands(previous?.heating_bands);
+  const storedLibrary = previous?.heating_bands;
+  const acceptedReference = current?.binding === context.binding && current.reference &&
+    storedLibrary && typeof storedLibrary === "object" && "reference" in storedLibrary
+    ? storedLibrary.reference : undefined;
   const historyTo = new Date(clock.historyTo).toISOString(), attemptedAt = new Date(clock.wallNow).toISOString();
   const floorMs = clock.historyTo - 400 * 86_400_000;
   const since = current?.binding === context.binding
@@ -166,10 +173,10 @@ export async function prepareStoredRoomHeating(
       ...(current?.reference_revision || current?.previous_reference_revision
         ? { previous_reference_revision: (current.reference_revision ?? current.previous_reference_revision)! } : {}),
     };
-  const library: RoomHeatingBands = { ...retained, since, calibration_policy: ROOM_TRANSITION_POLICY };
+  const library: RoomHeatingBands = { ...retained, since, calibration_policy: ROOM_MEASURED_POLICY };
   const bookkeeping = (): RoomHeatingPreparation => ({ kind: "model", model: {
     home_id: homeId, customer_id: customerId, room_key: roomKey, last_attempted_at: attemptedAt,
-    heating_bands: { ...library, pending_windows: 0 },
+    heating_bands: { ...library, ...(acceptedReference !== undefined ? { reference: acceptedReference } : {}), pending_windows: 0 },
   } });
   const scope = { p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: context.binding,
     p_from_at: fromAt, p_to_at: historyTo, p_implementation: ROOM_SOURCE_IMPLEMENTATION };
@@ -249,7 +256,7 @@ export async function prepareStoredRoomHeating(
     version: ROOM_SHARED_METADATA_VERSION, implementation: ROOM_RESPONSE_IMPLEMENTATION,
     homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
     attemptedAt, fromAt, historyTo, evidence, trainingView: { length, temperatures }, library,
-    ratedPowerW, roomName,
+    ratedPowerW, roomName, ...(acceptedReference !== undefined ? { acceptedReference } : {}),
     sourceFreshness: qualified.sourceFreshness,
   } } };
 }
@@ -272,6 +279,10 @@ export function parseRoomSharedMetadata(value: unknown): RoomSharedMetadata | nu
     !finite(row.ratedPowerW) || typeof row.roomName !== "string") return null;
   const library = readRoomHeatingBands(row.library);
   if (!library || library.binding !== row.binding) return null;
+  const accepted = row.acceptedReference;
+  if (library.reference && accepted === undefined) return null;
+  if (accepted !== undefined && (!library.reference || !accepted || typeof accepted !== "object" ||
+    !("model" in accepted) || !readThermalModel(accepted.model))) return null;
   if (row.sourceFreshness !== null && (!row.sourceFreshness || ![row.sourceFreshness.room, row.sourceFreshness.house].every(part =>
     part && [part.inferred, part.unavailable, part.unverified].every(v => Number.isSafeInteger(v) && v >= 0)))) return null;
   return row;
@@ -280,7 +291,7 @@ export function parseRoomSharedMetadata(value: unknown): RoomSharedMetadata | nu
 /** A failed attempt retains the accepted response; only a complete numerical
  * fit publishes a new shared model and its revision-scoped assessments. */
 export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: RoomMeanQuarter[],
-  fit: LearnedRoomResponse): { model: Record<string, unknown>; ledger: RoomTransitionRunLedger | null } {
+  fit: LearnedMeasuredRoomResponse): { model: Record<string, unknown>; ledger: MeasuredRoomLedger | null } {
   const { homeId, customerId, roomKey, attemptedAt, library, sourceFreshness, evidence } = metadata;
   const learning = fit.result.learning_evidence;
   const attempt = { status: fit.result.ok ? "fitted" : "unidentified",
@@ -291,7 +302,10 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
   const trainingFrom = rows.length ? new Date(rows[0].start_ms).toISOString() : metadata.fromAt;
   const trainingTo = rows.length ? new Date(rows.at(-1)!.start_ms + roomIntervalSeconds(rows.at(-1)!)*1000).toISOString() : metadata.historyTo;
   const dynamic = physical && !isEquilibrium(physical) ? physical : null;
-  const scalar = dynamic ? Object.fromEntries(Object.entries(dynamic).filter(([key]) => key !== "response_family")) : physical ? {
+  // The complete response, including gain's weather coordinate, lives in the
+  // revisioned reference JSON. The scalar table has no weather-gain columns.
+  const scalar = dynamic ? Object.fromEntries(Object.entries(dynamic).filter(([key]) =>
+    !["response_family", "gain_reference_outdoor_c", "gain_outdoor_slope_per_c"].includes(key))) : physical ? {
     gain_c_per_wh: null, cooling_constant_per_h: null, background_gain_c_per_h: null,
     thermal_capacity_wh_per_c: null, heat_loss_w_per_c: null, time_constant_h: null, heating_rate_c_per_h: null,
     house_coupling_per_h: null, solar_gain_c_per_h_per_wm2: null, r2: physical.r2,
@@ -307,13 +321,15 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
       warnings: fit.result.warnings ?? [], learning_evidence: { ...learning, source_evidence: evidence } }, reference_revision: revision,
       active: [], candidates: [], attempted: {}, shared_attempt, pending_windows: 0 }
     : { ...library, shared_attempt, pending_windows: 0 };
-  const ledger = fit.run_ledger ? { ...fit.run_ledger, assessed_against: revision } : null;
+  const ledger = fit.run_ledger ? { ...fit.run_ledger, assessed_against: revision ?? library.reference_revision ?? null } : null;
   return { ledger, model: { home_id: homeId, customer_id: customerId, room_key: roomKey, room_name: metadata.roomName,
     ...(!physical && !accepted ? { trained: false, rejection_reason: fit.result.ok ? "insufficient_samples" : fit.result.reason,
       sample_count: rows.length, training_from: trainingFrom, training_to: trainingTo } : {}),
     ...(physical ? { ...scalar, trained: true, rejection_reason: null, sample_count: physical.sample_count,
       fitted_at: attemptedAt, training_from: trainingFrom, training_to: trainingTo, passive_heat: null, doorway_exchange: null } : {}),
-    last_attempted_at: attemptedAt, last_fit_attempt: attempt, heating_bands } };
+    last_attempted_at: attemptedAt, last_fit_attempt: attempt,
+    heating_bands: !physical && metadata.acceptedReference !== undefined
+      ? { ...heating_bands, reference: metadata.acceptedReference } : heating_bands } };
 }
 
 function roomReference(model: ThermalZoneModel, row?: Record<string, unknown>): RoomHeatingReference {

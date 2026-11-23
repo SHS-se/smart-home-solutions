@@ -1,8 +1,9 @@
 import { assert, assertEquals } from "@std/assert";
 import { encodeRoomEvidenceCapture } from "../supabase/functions/_shared/device-model-learning/room-evidence-capture.ts";
 import { syntheticRoomBandStress } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
-import { fitIndependentRoomBandCell, advanceIndependentRoomBandCell, type RoomMeanQuarter, type RoomHeatFitState, type RoomBandFitCell } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
-import { prepareRoomResponse } from "../supabase/functions/_shared/device-learning/room/response-learning.ts";
+import { type RoomMeanQuarter } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
+import { fitMeasuredRoomCell, prepareMeasuredRoomResponse, ROOM_MEASURED_CELL_COUNT, type MeasuredRoomCell } from "../supabase/functions/_shared/device-learning/room/measured-response.ts";
+import { ROOM_MEASURED_POLICY } from "../supabase/functions/_shared/planner/models/room/measured-evidence.ts";
 import { decodeRoomResponseFitCapture } from "../supabase/functions/_shared/device-model-learning/room-band-fit-capture.ts";
 import { roomResponseEvidence, type RoomSharedMetadata } from "../supabase/functions/_shared/device-model-learning/room.ts";
 import type { ThermalQuarterRow } from "../supabase/functions/_shared/thermal-training.ts";
@@ -56,9 +57,9 @@ export async function syntheticRoomArchive(blockCount: number, measuredPlant = f
 
 export interface RoomNumericCheckpoint {
   capture: string;
-  progress: { base_revision: number; cursor: number; cells: RoomBandFitCell[]; metadata: {
+  progress: { base_revision: number; cursor: number; cells: MeasuredRoomCell[]; metadata: {
     version: number; runtime: string; capture: RoomSharedMetadata; sha256: string;
-    row_count: number; policy_fingerprint?: string; heat_state?: RoomHeatFitState;
+    row_count: number; policy_fingerprint?: string; heat_state?: unknown;
   } };
 }
 
@@ -69,7 +70,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
   const context = { binding: "synthetic", observed_since: at(0) };
   const claim = { id: "synthetic", home_id: "synthetic-home", customer_id: "synthetic-customer", owner_kind: "room",
     owner_key: "synthetic", generation: 1, fence: 1, input: {}, room_history_to: at(ROWS) };
-  let saved = false, released = false;
+  let saved = false, released = false, reset = false;
   return {
     rpc(name: string, args: Record<string, unknown>) {
       let data: unknown;
@@ -92,6 +93,8 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           assertEquals(copy.p_expected_cursor, -1);
           assertEquals(copy.p_metadata.policy_fingerprint, "b".repeat(64));
           assertEquals(copy.p_metadata.row_count, ROWS);
+          assertEquals(copy.p_metadata.version, 5);
+          assert(copy.p_metadata.capture.implementation.includes(ROOM_MEASURED_POLICY));
           assertEquals(copy.p_metadata.capture.trainingView.length, TRAINING_ROWS);
           assert(copy.p_metadata.capture.trainingView.temperatures.length > 0);
           assert(copy.p_capture_base64.length > 0 && /^[a-f0-9]{64}$/.test(copy.p_metadata.sha256));
@@ -103,26 +106,18 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
         case "load_energy_room_fit_capture":
           assert(checkpoint);
           data = checkpoint.capture; break;
-        case "get_energy_room_fit_policy_audit":
-          assert(checkpoint && !("policy_fingerprint" in checkpoint.progress.metadata));
-          assertEquals(args.p_expected_sha, checkpoint.progress.metadata.sha256);
-          data = { policy_fingerprint: "b".repeat(64), source_policy_at: at(0), operation_facts: [],
-            exclusions: Array.from({ length: Math.ceil(ROWS / 997) }, (_, i) => ({ from_at: at(i * 997), to_at: at(i * 997 + 1) })) };
-          break;
-        case "certify_energy_room_fit_policy":
-          assert(checkpoint && !("policy_fingerprint" in checkpoint.progress.metadata));
-          assertEquals(args.p_expected_sha, checkpoint.progress.metadata.sha256);
-          assertEquals(args.p_policy_fingerprint, "b".repeat(64));
-          assertEquals(args.p_operation_witnesses, []);
-          checkpoint.progress.metadata.policy_fingerprint = "b".repeat(64);
-          saved = true; data = true; break;
+        case "reset_energy_room_fit":
+          assert(checkpoint);
+          assertEquals(args.p_expected_cursor, checkpoint.progress.cursor);
+          checkpoint = null; reset = true; data = true; break;
         case "checkpoint_energy_room_fit_cells": {
           assert(checkpoint);
           const copy = JSON.parse(JSON.stringify(args));
           const progress = checkpoint.progress;
           assertEquals(copy.p_expected_cursor, progress.cursor);
           assertEquals(copy.p_expected_state, progress.metadata.heat_state ?? null);
-          assert(copy.p_cells.length > 0 || copy.p_heat_state !== null);
+          assert(copy.p_cells.length > 0);
+          assertEquals(copy.p_heat_state, null, "Measured cells do not resume a latent heat state");
           assertEquals(copy.p_revision, progress.base_revision);
           progress.cells.push(...copy.p_cells);
           progress.cursor = progress.cells.length;
@@ -135,28 +130,25 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
       }
       return Promise.resolve({ data: JSON.parse(JSON.stringify(data)), error: null });
     },
-    check() { assert(saved && released && checkpoint); return checkpoint; },
+    check() { assert(saved && released && checkpoint && !reset); return checkpoint; },
+    checkReset() { assert(reset && released && !saved && checkpoint === null); },
   };
 }
 
-/** Produce the exact first active positive-heat iteration of the full-history
- * cell. A zero time budget advances one production microstep. Its iteration
- * and fitted prefix are independent of the machine used to build the fixture. */
+/** Resume immediately before an expensive weather-dependent finite/full cell
+ * at a nonzero lag. Every preceding cell is genuine production output, built
+ * outside the measured request; the checkpoint has no latent scratch state. */
 export async function resumedRoomCheckpoint(first: RoomNumericCheckpoint): Promise<RoomNumericCheckpoint> {
   const { metadata } = first.progress, view = metadata.capture;
   const rows = await decodeRoomResponseFitCapture(first.capture, view.fromAt, metadata.sha256);
-  const prepared = prepareRoomResponse(roomResponseEvidence(rows, view.trainingView), view.ratedPowerW);
-  const cells = [fitIndependentRoomBandCell(prepared, 0)];
-  assertEquals(cells[0].partition, "training");
-  let state: RoomHeatFitState | null = null;
-  for (;;) {
-    const step = advanceIndependentRoomBandCell(prepared, cells.length, state, 0);
-    assert(step.state && !step.cell, "The full synthetic cell must exercise the positive-heat model");
-    state = step.state;
-    if (state.working?.observation_fit?.kind === "additional_heat" && state.working.observation_fit.iterations > 0) break;
-  }
-  assertEquals(state.cell.partition, "full");
-  return { capture: first.capture, progress: { ...first.progress, cells, cursor: cells.length, metadata: { ...metadata, heat_state: state } } };
+  const prepared = prepareMeasuredRoomResponse(roomResponseEvidence(rows, view.trainingView), view.ratedPowerW);
+  assertEquals(ROOM_MEASURED_CELL_COUNT, 108);
+  // lag .5, full partition, weather-dependent finite family.
+  const cursor = 21;
+  const cells = Array.from({ length: cursor }, (_, index) => fitMeasuredRoomCell(prepared, index));
+  assertEquals(cells[18].fits[0]?.family, "finite");
+  assertEquals(cells[18].fits[0]?.lag, .5);
+  return { capture: first.capture, progress: { ...first.progress, cells, cursor, metadata: { ...metadata } } };
 }
 
 /** A missing meter every 997 quarters removes the adjacent transitions. Only

@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { prepareStoredRoomHeating, finalizeStoredRoomResponse, roomResponseEvidence, auxiliaryIntervalMean,
-  bandObservations, readRoomQuarters, nativeRoomReadWindows } from "./room.ts";
-import { learnRoomResponse } from "../device-learning/room/response-learning.ts";
+  bandObservations, readRoomQuarters, nativeRoomReadWindows, parseRoomSharedMetadata } from "./room.ts";
+import { learnMeasuredRoomResponse as learnRoomResponse } from "../device-learning/room/measured-response.ts";
 import { compactCapture, evidenceStore } from "./room-evidence.fixture.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import { thermalQuarter, type ThermalQuarterRow } from "../thermal-training.ts";
@@ -256,7 +256,7 @@ Deno.test("an unidentifiable chronological capture retains its accepted referenc
   const db = evidenceStore([], ranges);
   const prior = { sourceRevision: 0, fromAt: at(0), toAt: at(12), implementation: "chronological_native_evidence_v1" };
   const accepted = { model_revision: 1, trained: true, heating_bands: { binding: context.binding, since: at(0),
-    reference_revision: "accepted", reference: { scope: { kind: "shared" }, model: acceptedModel, learning_evidence: { source_evidence: prior } },
+    reference_revision: "accepted", reference: { scope: { kind: "shared" as const }, model: acceptedModel, learning_evidence: { source_evidence: prior } },
     active: [], candidates: [], attempted: {} } };
   const step = () => prepareStoredRoomHeating(db, owner, context, accepted, null, clock);
   await step(); await step();
@@ -265,13 +265,26 @@ Deno.test("an unidentifiable chronological capture retains its accepted referenc
   const { rows, metadata } = result.work;
   const fit = learnRoomResponse(roomResponseEvidence(rows, metadata.trainingView), 500);
   assert(!fit.result.ok);
-  const { model, ledger } = finalizeStoredRoomResponse(metadata, rows, fit);
-  assertEquals(ledger, null);
+  // Simulate durable JSONB capture transport after a successful model omitted
+  // optional scalar fields. Normalized readers add nulls; publication cannot.
+  assertEquals(metadata.acceptedReference, accepted.heating_bands.reference);
+  const restored = parseRoomSharedMetadata(JSON.parse(JSON.stringify(metadata)));
+  assert(restored);
+  const { model, ledger } = finalizeStoredRoomResponse(restored, rows, fit);
+  assertEquals(ledger?.assessed_against, "accepted");
+  assertEquals(ledger?.observed_runs, 0);
+  assertEquals(ledger?.runs, []);
   assertEquals(model.trained, undefined);
   const library = model.heating_bands as RoomHeatingBands;
   assertEquals(library.reference_revision, "accepted");
+  assertEquals(library.reference, accepted.heating_bands.reference);
+  assertEquals(Object.hasOwn(library.reference!.model, "solar_mean_w_per_m2"), false);
   assertEquals(library.reference?.learning_evidence, { source_evidence: prior });
   assertEquals(library.shared_attempt?.evidence, metadata.evidence);
+  const changed = await prepareStoredRoomHeating(db, owner, { ...context, binding: "new-binding" }, accepted, null, clock);
+  assert(changed.kind === "shared");
+  assertEquals(changed.work.metadata.acceptedReference, undefined);
+  assertEquals(changed.work.metadata.library.reference, undefined);
 });
 
 

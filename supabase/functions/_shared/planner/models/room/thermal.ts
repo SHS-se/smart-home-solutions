@@ -10,7 +10,13 @@ export interface PassiveRoomHeat {
   lag_h: number;
 }
 
-export interface DynamicThermalZoneModel {
+export interface RoomHeaterWeatherResponse {
+  /** Gain is measured at this outdoor temperature; slope is relative per °C. */
+  gain_reference_outdoor_c?: number | null;
+  gain_outdoor_slope_per_c?: number | null;
+}
+
+export interface DynamicThermalZoneModel extends RoomHeaterWeatherResponse {
   response_family?: "finite" | "integrator";
   /** Temperature rise per watt-hour delivered, °C/Wh. */
   gain_c_per_wh: number;
@@ -65,7 +71,7 @@ export interface DynamicThermalZoneModel {
 }
 
 /** Algebraic temperature response; no dynamic capacity or energy gain is identified. */
-export interface EquilibriumThermalZoneModel {
+export interface EquilibriumThermalZoneModel extends RoomHeaterWeatherResponse {
   response_family: "equilibrium";
   heater_c_per_w: number;
   outdoor_share: number;
@@ -87,6 +93,14 @@ export function excludeUncontrolledRoomHeat(model: ThermalZoneModel): ThermalZon
     : model.background_gain_c_per_h > 0 ? { ...model, background_gain_c_per_h: 0 } : model;
 }
 export const heaterResponse = (model: ThermalZoneModel): number => isEquilibrium(model) ? model.heater_c_per_w : model.gain_c_per_wh;
+/** Weather changes newly delivered heat, never heat already stored in the floor.
+ * Unknown weather has a zero useful-heat lower bound for a varying response. */
+export function roomHeaterGain(model: ThermalZoneModel, outdoorC: number | null): number {
+  const slope = model.gain_outdoor_slope_per_c ?? 0;
+  if (slope === 0) return heaterResponse(model);
+  if (outdoorC === null || !Number.isFinite(outdoorC)) return 0;
+  return heaterResponse(model) * Math.max(0, 1 + slope * (outdoorC - model.gain_reference_outdoor_c!));
+}
 /** Scale from delivered heater watts to this response's delayed state. */
 export const roomMemoryPerWatt = (model: ThermalZoneModel): number => !(model.heat_lag_h! > 0) ? 0 :
   isEquilibrium(model) ? model.heater_c_per_w : model.gain_c_per_wh * model.heat_lag_h!;
@@ -134,7 +148,7 @@ export function roomTransition(model: ThermalZoneModel, conditions: RoomConditio
     if (hours === 0) return { decay: 1, offset_c: 0, stored_heat_release: 0, gain_c_per_w: 0, stored_heat_gain_c_per_w: 0, carry: 1 };
     if (usesHouse(model) && !(typeof conditions.house_c === "number" && Number.isFinite(conditions.house_c))) throw new Error("a house-coupled room needs the house temperature");
     const lag = model.heat_lag_h ?? 0, carry = lag > 0 ? Math.exp(-hours / lag) : 0;
-    const gain = model.heater_c_per_w * (1 - carry);
+    const gain = roomHeaterGain(model, conditions.outdoor_c) * (1 - carry);
     return { decay: 0, offset_c: model.outdoor_share * conditions.outdoor_c +
       (usesHouse(model) ? (1 - model.outdoor_share) * conditions.house_c! : 0) + conditions.background_c_per_h,
       stored_heat_release: carry, gain_c_per_w: gain,
@@ -149,7 +163,7 @@ export function roomTransition(model: ThermalZoneModel, conditions: RoomConditio
   const op = roomMeanObservation(coupling, lag, hours);
   const offset_c = (model.cooling_constant_per_h * conditions.outdoor_c +
     (house > 0 ? house * conditions.house_c! : 0) + conditions.background_c_per_h) * op.effect;
-  const gain = model.gain_c_per_wh;
+  const gain = roomHeaterGain(model, conditions.outdoor_c);
   return {
     decay: op.a, offset_c,
     // At zero lag existing stored heat is released at the interval's start.
@@ -178,7 +192,24 @@ export const stepRoom = (transition: RoomTransition, state: RoomState, watts: nu
 export function storedHeat(model: ThermalZoneModel, recentQuarterW: readonly number[]): number {
   const lag = model.heat_lag_h ?? 0;
   if (!(lag > 0)) return 0;
-  return roomMemoryPerWatt(model) * deliveredHeatAtLag(lag, recentQuarterW);
+  // This legacy caller supplies no weather observations. A varying gain can
+  // only count electricity when its associated outdoor reading is available.
+  return storedRoomHeat(model, recentQuarterW.map(watts => ({ watts, outdoor_c: null })));
+}
+
+/** Reconstruct the useful-heat lower bound from received electricity and weather.
+ * Missing electricity is unknown, not measured idle. No room thermometer is
+ * needed to conserve heat whose injection was independently measured. */
+export function storedRoomHeat(model: ThermalZoneModel,
+  intervals: readonly { watts: number | null; outdoor_c: number | null; hours?: number }[]): number {
+  const lag = model.heat_lag_h ?? 0;
+  if (!(lag > 0)) return 0;
+  return intervals.reduce((heat, interval) => {
+    const carry = Math.exp(-(interval.hours ?? SLOT_HOURS) / lag);
+    const gain = roomHeaterGain(model, interval.outdoor_c) * (isEquilibrium(model) ? 1 : lag);
+    return carry * heat + gain * (1 - carry) *
+      (interval.watts !== null && Number.isFinite(interval.watts) ? Math.max(0, interval.watts) : 0);
+  }, 0);
 }
 
 function deliveredHeatAtLag(lag: number, recentQuarterW: readonly number[]): number {

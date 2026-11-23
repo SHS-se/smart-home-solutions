@@ -1,5 +1,6 @@
 import { assertAlmostEquals, assertEquals } from "@std/assert";
-import { roomTransition, stepRoom, type RoomState, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { roomTransition, stepRoom, storedRoomHeat, type RoomState, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { readThermalModel } from "./planner/models/room/read-model.ts";
 
 // Independently generated synthetic physics; no household observations.
 const model = (lag: number, gain = .001, exchange = 0): ThermalZoneModel => ({
@@ -26,6 +27,32 @@ Deno.test("stored heat is conserved across independent gain and lag bands", () =
 Deno.test("zero elapsed time preserves stored heat even when the next band is immediate", () => {
   const state = { temperature_c: 19, stored_heat_c: 1.2 };
   for (const lag of [0, .5, 2]) assertEquals(stepRoom(transition(model(lag), 0), state, 800), state);
+});
+
+Deno.test("weather-dependent gain changes new electricity without rescaling stored floor heat", () => {
+  const physics = { ...model(2), gain_reference_outdoor_c: 10, gain_outdoor_slope_per_c: -.03 };
+  let state = { temperature_c: 19, stored_heat_c: 1.2 }, expected = 20.2;
+  for (const [outdoor, watts] of [[-10, 800], [20, 0], [5, 400], [-5, 0]]) {
+    state = stepRoom(roomTransition(physics, { hours: .25, outdoor_c: outdoor, background_c_per_h: 0 }), state, watts);
+    expected += .001 * (1 - .03 * (outdoor - 10)) * .25 * watts;
+    assertAlmostEquals(state.temperature_c + state.stored_heat_c, expected, 1e-12);
+  }
+  assertEquals(readThermalModel(physics)?.gain_outdoor_slope_per_c, -.03);
+  assertEquals(readThermalModel({ ...physics, gain_reference_outdoor_c: null }), null);
+  assertEquals(readThermalModel({ ...physics, gain_outdoor_slope_per_c: Infinity }), null);
+});
+
+Deno.test("stored useful heat uses each interval's weather and bounds unreceived observations", () => {
+  const physics = { ...model(2), gain_reference_outdoor_c: 10, gain_outdoor_slope_per_c: -.03 };
+  const intervals = [{ watts: 800, outdoor_c: -10 }, { watts: 400, outdoor_c: 20 }, { watts: 0, outdoor_c: 5 }];
+  let state = { temperature_c: 19, stored_heat_c: 0 };
+  for (const interval of intervals) state = stepRoom(roomTransition(physics,
+    { hours: .25, outdoor_c: interval.outdoor_c, background_c_per_h: 0 }), state, interval.watts);
+  assertAlmostEquals(storedRoomHeat(physics, intervals), state.stored_heat_c, 1e-12);
+  const missingWeather = storedRoomHeat(physics, intervals.map((row, i) => i === 1 ? { ...row, outdoor_c: null } : row));
+  const missingPower = storedRoomHeat(physics, intervals.map((row, i) => i === 1 ? { ...row, watts: null } : row));
+  assertEquals(missingWeather, missingPower);
+  assertEquals(missingWeather < state.stored_heat_c, true);
 });
 
 Deno.test("exact endpoint matches independent integration for hourly, quarter and short intervals", () => {

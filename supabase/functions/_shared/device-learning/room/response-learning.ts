@@ -4,38 +4,18 @@
 import {
   advanceIndependentRoomBandCell, finalizeIndependentRoomBand, fitIndependentRoomBandCell,
   prepareIndependentRoomBand, ROOM_BAND_FIT_CELL_COUNT,
-  type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState, type RoomMeanQuarter,
+  type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState,
 } from "./mean-observations.ts";
 import { assessRoomHeatingRuns, type RoomTransitionRunLedger } from "./run-calibration.ts";
 import { ROOM_TRANSITION_POLICY } from "../../planner/models/room/run-evidence.ts";
 export { ROOM_TRANSITION_POLICY };
 
 export const ROOM_RESPONSE_CELL_COUNT = ROOM_BAND_FIT_CELL_COUNT;
-export interface RoomResponseEvidence {
-  fullRows: RoomMeanQuarter[];
-  /** Same chronological prefix, qualified using only facts available in it. */
-  trainingRows: RoomMeanQuarter[];
-}
-
-/** Split at an observed native interval boundary before reading any training
- * outcomes. Mixed-resolution histories give every observed hour equal weight. */
-export function roomResponseTrainingLength(durations: readonly (900 | 3600)[]): number {
-  const total = durations.reduce<number>((sum, s) => sum + s, 0);
-  let elapsed = 0;
-  for (let i = 0; i < durations.length; i++) {
-    elapsed += durations[i];
-    if (elapsed * 3 >= total * 2) return i + 1;
-  }
-  return durations.length;
-}
-
-export function prepareRoomResponse({ fullRows, trainingRows }: RoomResponseEvidence, ratedPowerW: number | null): PreparedIndependentRoomBand {
-  if (trainingRows.length !== roomResponseTrainingLength(fullRows.map(row => row.duration_s ?? 900)) ||
-    fullRows.some((row, i) => i > 0 && row.start_ms <= fullRows[i - 1].start_ms) ||
-    trainingRows.some((row, i) => row.start_ms !== fullRows[i].start_ms || (row.duration_s ?? 900) !== (fullRows[i].duration_s ?? 900))) {
-    throw new Error("Invalid chronological room training prefix");
-  }
-  return prepareIndependentRoomBand(fullRows, null, ratedPowerW, trainingRows);
+import { validateRoomResponseEvidence, type RoomResponseEvidence } from "./chronological-evidence.ts";
+export { roomResponseTrainingLength, type RoomResponseEvidence } from "./chronological-evidence.ts";
+export function prepareRoomResponse(evidence: RoomResponseEvidence, ratedPowerW: number | null): PreparedIndependentRoomBand {
+  validateRoomResponseEvidence(evidence);
+  return prepareIndependentRoomBand(evidence.fullRows, null, ratedPowerW, evidence.trainingRows);
 }
 
 export interface RoomResponseBatch {

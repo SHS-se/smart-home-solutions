@@ -12,6 +12,7 @@
 import { cpuUsage, memoryUsage, resourceUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
 import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import { ROOM_MEASURED_POLICY } from "../supabase/functions/_shared/planner/models/room/measured-evidence.ts";
 import type { RoomPreparationProgress } from "../supabase/functions/_shared/rules-room-services.ts";
 import type { PreparedRulesInput, SolvedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
@@ -133,29 +134,45 @@ async function roomCaptureSample(profileMemory = false) {
 const checkpointBytes = (value: RoomNumericCheckpoint) => new TextEncoder().encode(JSON.stringify(value));
 
 /** Freeze real production checkpoints outside every measured child. First
- * admit the full 400-day archive. Then complete the training cell and stop
- * after a genuine HMM iteration in its paired full-history cell. */
+ * admit the full 400-day archive. Then finish the exact candidate prefix and
+ * stop before a weather-dependent finite/full candidate with nonzero lag. */
 async function roomNumericalInputs() {
   const source = await syntheticRoomArchive(40, true);
   const first = await checkpointRoomWorker(replayRoomCapture(source.buffer));
   return { initial: checkpointBytes(first), resumed: checkpointBytes(await resumedRoomCheckpoint(first)) };
 }
 
-async function roomNumericalSample(auditPolicy = false) {
+async function roomNumericalSample(resetPolicy = false) {
   const checkpoint: RoomNumericCheckpoint = await new Response(Deno.stdin.readable).json();
   const started = checkpoint.progress.cursor;
-  const expected = syntheticFitTransitions(checkpoint.progress.metadata.heat_state?.cell.partition ?? "training");
-  if (auditPolicy) delete checkpoint.progress.metadata.policy_fingerprint;
+  const partition = Math.floor(started / 6) % 2 === 0 ? "training" : "full";
+  const expected = syntheticFitTransitions(partition);
+  if (resetPolicy) delete checkpoint.progress.metadata.policy_fingerprint;
   const sample = await measure(async () => {
-    const next = await checkpointRoomWorker(replayRoomCapture(checkpoint));
-    if (auditPolicy) {
-      assertEquals(next.progress.cursor, started);
-      assertEquals(next.progress.metadata.policy_fingerprint, "b".repeat(64));
+    const replay = replayRoomCapture(checkpoint);
+    if (resetPolicy) {
+      const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
+        method: "POST", headers: { "x-energy-learning-token": "synthetic" },
+        body: JSON.stringify({ job_id: "synthetic" }),
+      }), replay, () => ROOM_CAPTURE_NOW);
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), { superseded: true });
+      replay.checkReset();
       return;
     }
-    const cell = next.progress.cells[started] ?? next.progress.metadata.heat_state?.cell;
+    const next = await checkpointRoomWorker(replay);
+    assert(next.progress.metadata.capture.implementation.includes(ROOM_MEASURED_POLICY));
+    assertEquals(next.progress.metadata.heat_state, undefined);
+    const cell = next.progress.cells[started];
     assert(cell);
-    assertEquals(cell.fits.finite?.n, expected);
+    assertEquals(cell.fits.length, 2);
+    assertEquals(cell.fits.map(fit => fit.solar), [false, true]);
+    for (const fit of cell.fits) {
+      assertEquals(fit.n, expected);
+      assertEquals(fit.family, "finite");
+      assertEquals(fit.weather, started > 0);
+      assertEquals(fit.lag, started > 0 ? .5 : 0);
+    }
   });
   return { ...sample, max_rss_kib: resourceUsage().maxRSS };
 }
@@ -240,7 +257,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture" | "room-numerical" | "room-policy-audit",
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture" | "room-numerical" | "room-policy-reset",
   input?: Uint8Array<ArrayBuffer>): Promise<Sample> {
   const child = new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
@@ -282,8 +299,8 @@ if (Deno.args.includes("--room-capture-fixture")) {
 } else if (Deno.args.includes("--room-numerical-fixture")) {
   const inputs = await roomNumericalInputs();
   await new Blob([inputs[Deno.args.includes("--resumed") ? "resumed" : "initial"]]).stream().pipeTo(Deno.stdout.writable);
-} else if (Deno.args.includes("--room-numerical") || Deno.args.includes("--room-policy-audit")) {
-  console.log(JSON.stringify(await roomNumericalSample(Deno.args.includes("--room-policy-audit"))));
+} else if (Deno.args.includes("--room-numerical") || Deno.args.includes("--room-policy-reset")) {
+  console.log(JSON.stringify(await roomNumericalSample(Deno.args.includes("--room-policy-reset"))));
 } else if (Deno.args.includes("--room-capture")) {
   console.log(JSON.stringify(await roomCaptureSample(Deno.args.includes("--profile-memory"))));
 } else if (Deno.args.includes("--plan")) {
@@ -312,7 +329,7 @@ if (Deno.args.includes("--room-capture-fixture")) {
   // and gzip frames across 400 days. Fixture bytes are never generated in a measured worker.
   const archive = await syntheticRoomArchive(9600);
   const numericInputs = await roomNumericalInputs();
-  const initialRoomFits: number[] = [], resumedRoomFits: number[] = [], roomPolicyAudits: number[] = [];
+  const initialRoomFits: number[] = [], resumedRoomFits: number[] = [], roomPolicyResets: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -329,8 +346,8 @@ if (Deno.args.includes("--room-capture-fixture")) {
     roomCaptures.push(roomCapture.cpu_ms);
     const initialFit = await coldSample("room-numerical", numericInputs.initial);
     const resumedFit = await coldSample("room-numerical", numericInputs.resumed);
-    const policyAudit = await coldSample("room-policy-audit", numericInputs.resumed);
-    roomPolicyAudits.push(policyAudit.cpu_ms);
+    const policyReset = await coldSample("room-policy-reset", numericInputs.resumed);
+    roomPolicyResets.push(policyReset.cpu_ms);
     initialRoomFits.push(initialFit.cpu_ms);
     resumedRoomFits.push(resumedFit.cpu_ms);
     calibrations.push(calibration.cpu_ms);
@@ -341,7 +358,7 @@ if (Deno.args.includes("--room-capture-fixture")) {
     varyingRooms.push(varying.cpu_ms);
     roomTargets.push(roomTarget.cpu_ms);
     varyingRoomTargets.push(varyingRoomTarget.cpu_ms);
-    console.log(JSON.stringify({ run, room_initial_fit_cpu_ms: initialFit.cpu_ms, room_resumed_fit_cpu_ms: resumedFit.cpu_ms, room_policy_audit_cpu_ms: policyAudit.cpu_ms,
+    console.log(JSON.stringify({ run, room_initial_fit_cpu_ms: initialFit.cpu_ms, room_resumed_fit_cpu_ms: resumedFit.cpu_ms, room_policy_reset_cpu_ms: policyReset.cpu_ms,
       room_initial_fit_rss_kib: initialFit.max_rss_kib, room_resumed_fit_rss_kib: resumedFit.max_rss_kib,
       room_capture_cpu_ms: roomCapture.cpu_ms, room_capture_rss_kib: roomCapture.max_rss_kib,
       reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
@@ -368,9 +385,9 @@ if (Deno.args.includes("--room-capture-fixture")) {
     median_room_resumed_fit_cpu_ms: median(resumedRoomFits), baseline_room_resumed_fit_cpu_ms: resumedRoomFit }));
   assert(Math.max(initialRoomFit, resumedRoomFit) < BUDGET_MS,
     `Cold numerical room worker used ${initialRoomFit.toFixed(1)} initial / ${resumedRoomFit.toFixed(1)} resumed baseline ms CPU; budget is ${BUDGET_MS} ms`);
-  const roomPolicyAudit = median(roomPolicyAudits) * speed;
-  console.log(JSON.stringify({ median_room_policy_audit_cpu_ms: median(roomPolicyAudits), baseline_room_policy_audit_cpu_ms: roomPolicyAudit }));
-  assert(roomPolicyAudit < BUDGET_MS, `Cold room policy audit used ${roomPolicyAudit.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
+  const roomPolicyReset = median(roomPolicyResets) * speed;
+  console.log(JSON.stringify({ median_room_policy_reset_cpu_ms: median(roomPolicyResets), baseline_room_policy_reset_cpu_ms: roomPolicyReset }));
+  assert(roomPolicyReset < BUDGET_MS, `Cold room policy reset used ${roomPolicyReset.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
   const prepared = median(preparations) * speed;
   console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
   assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

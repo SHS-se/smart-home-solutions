@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v34:b349832041112baf116f709d328597203eee0dfac0e1fed5376a3959bccc5d05",
+    "model_version": "rules-planner-v34:883f0cb6d7c518c640d94aff0d27b09d9d14b57bbd11b15c502a9aab4d293133",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -4526,7 +4526,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "rules-planner-v34:b349832041112baf116f709d328597203eee0dfac0e1fed5376a3959bccc5d05",
+      "model_version": "rules-planner-v34:883f0cb6d7c518c640d94aff0d27b09d9d14b57bbd11b15c502a9aab4d293133",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -8972,7 +8972,7 @@
       "generation": 1,
       "mode": "controlling",
       "scope_revision": "fixture-whole-house",
-      "model_revision": "sha256:13e70845dc67d336b52c2e554ec1ec5041e39d25ddc29d54d6cb3668e43d3b6a",
+      "model_revision": "sha256:a03301ca354bcea27a7ba361ef2242e04f80d0f0c4dfbca1e52d626955b73fab",
       "energy_basis": "stored_energy_mwh",
       "capacity_mwh": 18080000,
       "minimum_mwh": 904000,

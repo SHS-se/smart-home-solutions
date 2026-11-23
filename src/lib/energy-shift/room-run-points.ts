@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { heatingBand } from '../../../supabase/functions/_shared/planner/heating-bands';
+import type { MeasuredRoomAssessment } from '../../../supabase/functions/_shared/planner/models/room/measured-evidence';
 
 /** Display reading of the stored run ledgers; fitting stays in the learner. */
 const num = z.number().finite();
@@ -82,6 +83,25 @@ function runPoint(value: z.infer<typeof run>, scope: string): RoomRunPoint {
 }
 
 export const ROOM_RUN_PAGE_SIZE = 50;
+export const MEASURED_ROOM_RUN_PAGE_SIZE = 100;
+
+const measuredAssessment = z.object({
+  id: z.string(), from_ms: num, on_ms: num, off_ms: num, to_ms: num, energy_kwh: num,
+  heating: z.object({ on_ms: num, peak_ms: num, peak_end_ms: num, energy_kwh: num, hours: num,
+    rise_c: num, c_per_kwh: num, room_start_c: num, room_peak_c: num, room_mean_c: num,
+    outdoor_c: num, house_c: num.nullable(), native_seconds: z.array(num) }).nullable(),
+  cooling: z.object({ from_ms: num, to_ms: num, hours: num, c_per_h: num, room_c: num,
+    outdoor_c: num, house_c: num.nullable(), energy_kwh: num }).nullable(),
+  reasons: z.array(z.string()), reference_heating_c_per_kwh: num.nullable(), reference_cooling_c_per_h: num.nullable(),
+  heating_residual: num.nullable(), cooling_residual: num.nullable(),
+  disposition: z.enum(['consistent', 'above_line', 'below_line', 'unmeasured']),
+});
+
+export function readMeasuredRoomAssessmentPage(raw: unknown, count: number): MeasuredRoomAssessment[] | null {
+  const result = z.array(measuredAssessment).length(count).safeParse(raw);
+  if (!result.success || new Set(result.data.map(value => value.id)).size !== count) return null;
+  return result.data as MeasuredRoomAssessment[];
+}
 
 const assessedRun = run.extend({ disposition: z.enum(['assessed', 'suspect_change', 'uninformative']) });
 
