@@ -183,9 +183,9 @@ export default function RoomRunCharts({ homeId, roomId }: { homeId: string; room
     const heatingFit = heating.filter(trendRun);
     const coolingFit = cooling.filter(trendCooldown);
     const heaterTrend = heatingFit.length >= MIN_ROOM_HEATING_RUNS
-      ? fitTrend(heatingFit.map(p => ({ x: p.outdoorC!, y: p.gain!, se: p.gainSe }))) : null;
+      ? fitTrend(heatingFit.map(p => ({ x: p.outdoorC!, y: p.gain!, se: p.gainSe })), 'response') : null;
     const coolingTrend = coolingFit.length >= MIN_ROOM_HEATING_RUNS
-      ? fitTrend(coolingFit.map(p => ({ x: p.cooldown!.outdoor_c, y: p.cooldown!.c_per_h })), 2, 1) : null;
+      ? fitTrend(coolingFit.map(p => ({ x: p.cooldown!.outdoor_c, y: p.cooldown!.c_per_h })), 'cooling') : null;
     const xs = [...heating.map(p => p.outdoorC!), ...cooling.map(p => p.cooldown!.outdoor_c)];
     const xDomain: [number, number] = xs.length ? niceDomain(xs, 5) : [-15, 15];
     if (xDomain[1] - xDomain[0] < 15) xDomain[1] = xDomain[0] + 15;
@@ -222,7 +222,7 @@ export default function RoomRunCharts({ homeId, roomId }: { homeId: string; room
     return gain > 0 && cool > 0 ? [{ c, kw: cool / gain }] : [];
   });
   const shape = (trend: Trend | null) => !trend ? null : trend.degree === 0 ? t('platt', 'flat')
-    : trend.degree === 1 ? t('rak', 'straight') : t('böjd', 'curved');
+    : trend.degree === 1 ? t('rak', 'straight') : t('brantare i kyla', 'steeper in the cold');
 
   if (query.isPending) return <p role="status" className="text-muted-foreground">{t('Laddar förlopp…', 'Loading runs…')}</p>;
   if (query.isError) return <p role="alert" className="text-muted-foreground">{t('Förloppen kunde inte läsas.', 'The runs could not be loaded.')}</p>;
@@ -258,14 +258,15 @@ export default function RoomRunCharts({ homeId, roomId }: { homeId: string; room
       <section className="min-w-0 space-y-1">
         <h5 className="font-medium">{coolingTitle}</h5>
         <p className="text-xs text-muted-foreground">{t(
-          'Hur snabbt rummet svalnar under de första timmarna efter att värmaren stängts av och dess eftervärme har avtagit.',
-          'How fast the room cools in the first hours after the heater stops and its stored heat has passed.',
+          'Hur snabbt rummet svalnar under de första timmarna efter att värmaren stängts av och dess eftervärme har avtagit. Fysiken förväntar sig en linje som faller när det blir varmare ute och aldrig stiger.',
+          'How fast the room cools in the first hours after the heater stops and its stored heat has passed. Physics expects a line that falls as it gets warmer outside and never rises.',
         )}</p>
         {view.cooling.length ? <>
           <RunScatter label={coolingTitle} unit="°C/h" dots={view.coolingDots} trend={view.coolingTrend} zeroLine
             xDomain={view.xDomain} yDomain={view.yCool} selected={selected} onSelect={select} />
           <p className="text-xs tabular-nums" aria-live="polite">{view.coolingTrend
             ? `${t('Trend', 'Trend')}: ${shape(view.coolingTrend)} · ${view.coolingTrend.n} ${t('förlopp', 'runs')}` +
+              (view.coolingTrend.constrained ? ` · ${t('förloppen visar ännu inget beroende av utetemperaturen', 'the runs show no dependence on outdoor temperature yet')}` : '') +
               (balance !== null ? ` · ${t('svalnar inte utan värme över', 'stops cooling unheated above')} ${format(balance)} °C` : '')
             : t(`Minst ${MIN_ROOM_HEATING_RUNS} avsvalningar behövs för en trend.`, `At least ${MIN_ROOM_HEATING_RUNS} cool-downs are needed for a trend.`)}</p>
         </> : <p role="status" className="text-xs text-muted-foreground">{t(

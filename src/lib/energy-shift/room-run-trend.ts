@@ -4,8 +4,8 @@
  * Each run is one noisy experiment. Weighted least squares trusts a run by its
  * own stated uncertainty; when runs scatter more than those uncertainties
  * allow, the extra spread widens the trend's band instead of being ignored.
- * The shape (flat, straight or curved) is chosen by small-sample AICc, and a
- * curve is only kept when it is clearly better than a simpler shape.
+ * Among the shapes physics allows (see TrendShape), small-sample AICc picks
+ * the simplest one that is not clearly worse than a more complex one.
  */
 export interface TrendPoint { x: number; y: number; se?: number | null }
 
@@ -18,6 +18,8 @@ export interface Trend {
   n: number;
   minX: number;
   maxX: number;
+  /** The straight fit broke the shape physics allows, so the trend is flat. */
+  constrained?: true;
 }
 
 /** A curve needs this many more points than it has coefficients. */
@@ -72,7 +74,39 @@ function fitDegree(points: readonly TrendPoint[], weights: number[], centre: num
   return { coefficients: solved.solution, covariance: solved.inverse.map(row => row.map(v => v * scale)), aicc };
 }
 
-export function fitTrend(input: readonly TrendPoint[], maxDegree = 2, minDegree = 0): Trend | null {
+/**
+ * The shapes physics allows each per-run measurement to take.
+ * - `response`: heater °C/kWh, which an ideal room shows flat. A straight
+ *   slope is kept as a diagnostic of misattributed losses, never a curve, and
+ *   never one that reaches zero across the measured runs.
+ * - `cooling`: cool-down °C/h against outdoor temperature. It falls with
+ *   warmer weather and never rises, and may only bow steeper in the cold (air
+ *   leakage grows faster than the temperature difference). Flat is only the
+ *   bound for runs whose straight fit rises.
+ */
+export type TrendShape = 'response' | 'cooling';
+
+const MAX_DEGREE: Record<TrendShape, number> = { response: 1, cooling: 2 };
+
+function slopeAt(coefficients: number[], centre: number, x: number): number {
+  return coefficients.reduce((sum, c, j) => j === 0 ? sum : sum + j * c * (x - centre) ** (j - 1), 0);
+}
+function valueAt(coefficients: number[], centre: number, x: number): number {
+  return coefficients.reduce((sum, c, j) => sum + c * (x - centre) ** j, 0);
+}
+
+function admissible(shape: TrendShape, coefficients: number[], centre: number, minX: number, maxX: number): boolean {
+  if (shape === 'response') {
+    // A heater cannot cool its room: a slope may not carry the trend to zero.
+    return valueAt(coefficients, centre, minX) > 0 && valueAt(coefficients, centre, maxX) > 0;
+  }
+  // The slope of a quadratic is linear, so both ends bound it everywhere between.
+  const tolerance = 1e-12;
+  return (coefficients[2] ?? 0) >= -tolerance &&
+    slopeAt(coefficients, centre, minX) <= tolerance && slopeAt(coefficients, centre, maxX) <= tolerance;
+}
+
+export function fitTrend(input: readonly TrendPoint[], shape: TrendShape): Trend | null {
   const points = input.filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) &&
     (point.se == null || (Number.isFinite(point.se) && point.se > 0)));
   if (!points.length) return null;
@@ -81,31 +115,43 @@ export function fitTrend(input: readonly TrendPoint[], maxDegree = 2, minDegree 
   const total = weights.reduce((a, b) => a + b, 0);
   const centre = points.reduce((sum, point, i) => sum + weights[i] * point.x, 0) / total;
   const xs = points.map(point => point.x);
-  const span = Math.max(...xs) - Math.min(...xs);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
   const candidates: { degree: number; fit: NonNullable<ReturnType<typeof fitDegree>> }[] = [];
-  for (let degree = minDegree; degree <= maxDegree; degree++) {
-    if (points.length < degree + 1 + SPARE_POINTS && !(degree === minDegree && points.length >= degree + 1)) continue;
-    if (degree > 0 && span < MIN_SPAN_C) continue;
+  let straightRejected = false;
+  for (let degree = 0; degree <= MAX_DEGREE[shape]; degree++) {
+    if (degree > 0 && (points.length < degree + 1 + SPARE_POINTS || maxX - minX < MIN_SPAN_C)) continue;
     const fit = fitDegree(points, weights, centre, degree, weighted);
-    if (fit) candidates.push({ degree, fit });
+    if (!fit) continue;
+    // A flat trend is always physical; a shape physics rules out is never shown.
+    if (degree > 0 && !admissible(shape, fit.coefficients, centre, minX, maxX)) { straightRejected ||= degree === 1; continue; }
+    candidates.push({ degree, fit });
   }
   if (!candidates.length) return null;
+  // A room always loses some heat to outdoors, so a falling line is the
+  // weakest cool-down physics allows; flat is only the bound for rising runs.
+  if (shape === 'cooling' && candidates.some(candidate => candidate.degree > 0)) {
+    candidates.splice(0, candidates.length, ...candidates.filter(candidate => candidate.degree > 0));
+  }
   const best = Math.min(...candidates.map(candidate => candidate.fit.aicc));
   const chosen = candidates.find(candidate => candidate.fit.aicc <= best + PARSIMONY)!;
   return { degree: chosen.degree, coefficients: chosen.fit.coefficients, covariance: chosen.fit.covariance,
-    centre, n: points.length, minX: Math.min(...xs), maxX: Math.max(...xs) };
+    centre, n: points.length, minX, maxX, ...(straightRejected && chosen.degree === 0 ? { constrained: true as const } : {}) };
 }
 
+/** Inside the measured runs, the fitted shape. Beyond them the line continues
+ * along its edge tangent: a curve fitted to the data is not evidence of where
+ * it would bend next. The band is only meaningful inside the measured runs. */
 export function trendAt(trend: Trend, x: number): { y: number; se: number } {
-  const powers = trend.coefficients.map((_, j) => (x - trend.centre) ** j);
-  const y = powers.reduce((sum, p, j) => sum + p * trend.coefficients[j], 0);
+  const edge = Math.min(trend.maxX, Math.max(trend.minX, x));
+  const powers = trend.coefficients.map((_, j) => (edge - trend.centre) ** j);
+  const y = valueAt(trend.coefficients, trend.centre, edge) + slopeAt(trend.coefficients, trend.centre, edge) * (x - edge);
   const variance = powers.reduce((sum, a, i) => sum + powers.reduce((inner, b, j) => inner + a * b * trend.covariance[i][j], 0), 0);
   return { y, se: Math.sqrt(Math.max(0, variance)) };
 }
 
 /** Slope of the trend at x, per unit of x. */
 export function trendSlopeAt(trend: Trend, x: number): number {
-  return trend.coefficients.reduce((sum, c, j) => j === 0 ? sum : sum + j * c * (x - trend.centre) ** (j - 1), 0);
+  return slopeAt(trend.coefficients, trend.centre, Math.min(trend.maxX, Math.max(trend.minX, x)));
 }
 
 /** Where the trend crosses zero inside [from, to], scanning from cold to warm. */
