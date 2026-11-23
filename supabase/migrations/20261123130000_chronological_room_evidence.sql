@@ -139,11 +139,89 @@ LANGUAGE sql STABLE SET search_path=pg_catalog,public,private AS $$
    'empty'::tstzrange,NULL::jsonb FROM owned;
 $$;
 
--- Function-scoped flags follow the actual deletion path, never a guess from
--- the age of the row. Explicit retraction of an equally old row stays dirty.
-ALTER FUNCTION private.prune_native_room_fit_history(uuid,timestamptz,boolean) SET shs.room_evidence_retention='on';
-ALTER FUNCTION private.prune_room_fit_device_history(uuid,timestamptz) SET shs.room_evidence_retention='on';
-ALTER FUNCTION private.prune_room_fit_doorway_history(uuid,timestamptz) SET shs.room_evidence_retention='on';
+-- Scope the marker to the actual prune call and restore the caller's value.
+-- Managed PostgreSQL permits transaction-local set_config but requires
+-- superuser privileges for custom parameters in ALTER FUNCTION ... SET.
+-- Any error rolls back the marker with the deletion's statement/subtransaction.
+CREATE OR REPLACE FUNCTION private.prune_native_room_fit_history(p_home_id uuid,p_before timestamptz,p_probes boolean)
+RETURNS void LANGUAGE plpgsql SET search_path=public,private SET jit=off AS $$
+DECLARE prior_marker text:=coalesce(current_setting('shs.room_evidence_retention',true),'');
+BEGIN
+ IF NOT private.lock_room_fit_retention(p_home_id,false) THEN RETURN; END IF;
+ PERFORM set_config('shs.room_evidence_retention','on',true);
+ -- Read committed holds after acquiring the lock. A deleted hold can only
+ -- defer cleanup until the next prune and cannot remove input from a new one.
+ IF p_probes THEN
+   WITH holds AS MATERIALIZED (SELECT * FROM private.room_fit_retention_holds(p_home_id))
+   DELETE FROM energy_heating_probe_observations WHERE ctid IN (
+     SELECT p.ctid FROM energy_heating_probe_observations p WHERE p.home_id=p_home_id AND p.start_ts<p_before
+       AND NOT EXISTS(SELECT FROM holds h WHERE h.customer_id=p.customer_id AND h.discovery_at @> p.start_ts)
+     ORDER BY p.start_ts LIMIT 2000 FOR UPDATE SKIP LOCKED);
+ ELSE
+   WITH holds AS MATERIALIZED (SELECT * FROM private.room_fit_retention_holds(p_home_id))
+   DELETE FROM energy_heating_observations WHERE ctid IN (
+     SELECT n.ctid FROM energy_heating_observations n WHERE n.home_id=p_home_id AND n.start_ts<p_before
+       AND NOT EXISTS(SELECT FROM holds h WHERE h.customer_id=n.customer_id AND h.room_key=n.room_key AND h.discovery_at @> n.start_ts)
+     ORDER BY n.start_ts LIMIT 2000 FOR UPDATE SKIP LOCKED);
+ END IF;
+ PERFORM set_config('shs.room_evidence_retention',prior_marker,true);
+END; $$;
+
+CREATE OR REPLACE FUNCTION private.prune_room_fit_device_history(p_home_id uuid,p_before timestamptz)
+RETURNS void LANGUAGE plpgsql SET search_path=public,private SET jit=off AS $$
+DECLARE prior_marker text:=coalesce(current_setting('shs.room_evidence_retention',true),'');
+BEGIN
+ IF NOT private.lock_room_fit_retention(p_home_id,false) THEN RETURN; END IF;
+ PERFORM set_config('shs.room_evidence_retention','on',true);
+ WITH holds AS MATERIALIZED (SELECT * FROM private.room_fit_retention_holds(p_home_id)),
+ held_meters AS MATERIALIZED (
+   SELECT h.customer_id,d.id AS device_id,
+     CASE WHEN d.mapping_summary->>'room_key'=h.room_key THEN h.discovery_at ELSE h.fit_at END AS held_at FROM holds h
+   JOIN energy_optimisation_devices d ON d.home_id=p_home_id AND d.customer_id=h.customer_id AND d.retired_at IS NULL
+   WHERE d.mapping_summary->>'room_key'=h.room_key OR (
+     d.device_key=h.reference#>>'{passive_heat,device_key}' AND d.planning_role_override='base_load'
+     AND EXISTS(SELECT FROM private.energy_room_passive_heat_sources s WHERE s.home_id=p_home_id
+       AND s.customer_id=h.customer_id AND s.room_key=h.room_key AND s.device_id=d.id)
+   )
+ )
+ DELETE FROM energy_optimisation_device_slots WHERE id IN (
+   SELECT e.id FROM energy_optimisation_device_slots e WHERE e.home_id=p_home_id AND e.start_ts<p_before
+     AND NOT EXISTS(SELECT FROM held_meters h WHERE h.customer_id=e.customer_id AND h.device_id=e.device_id AND h.held_at @> e.start_ts)
+   ORDER BY e.start_ts,e.id LIMIT 1000 FOR UPDATE SKIP LOCKED);
+ PERFORM set_config('shs.room_evidence_retention',prior_marker,true);
+END; $$;
+
+CREATE OR REPLACE FUNCTION private.prune_room_fit_doorway_history(p_home_id uuid,p_before timestamptz)
+RETURNS void LANGUAGE plpgsql SET search_path=public,private SET jit=off AS $$
+DECLARE prior_marker text:=coalesce(current_setting('shs.room_evidence_retention',true),'');
+BEGIN
+ IF NOT private.lock_room_fit_retention(p_home_id,false) THEN RETURN; END IF;
+ PERFORM set_config('shs.room_evidence_retention','on',true);
+ WITH holds AS MATERIALIZED (SELECT * FROM private.room_fit_retention_holds(p_home_id)),
+ held_doors AS MATERIALIZED (
+   SELECT room_key,reference#>>'{doorway_exchange,source}' AS source_key,fit_at FROM holds
+   UNION ALL
+   SELECT peer->>'key',peer->>'source',h.fit_at FROM holds h
+   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(h.reference#>'{doorway_exchange,peers}')='array'
+     THEN h.reference#>'{doorway_exchange,peers}' ELSE '[]'::jsonb END) peer
+ ),
+ -- The canonical legacy cutoff uses the owner's last different thermometer.
+ -- That single row can be earlier than the captured training interval.
+ anchors AS MATERIALIZED (
+   SELECT a.room_key,a.source_key,a.start_ts FROM holds h JOIN energy_room_profiles r ON r.home_id=p_home_id
+   CROSS JOIN LATERAL (
+     SELECT p.room_key,p.source_key,p.start_ts FROM energy_room_probe_slots p
+     WHERE p.home_id=p_home_id AND p.room_key=h.room_key AND p.source_key IS DISTINCT FROM r.rooms->h.room_key->>'source_key'
+     ORDER BY p.start_ts DESC,p.source_key LIMIT 1
+   ) a
+ )
+ DELETE FROM energy_room_probe_slots WHERE ctid IN (
+   SELECT p.ctid FROM energy_room_probe_slots p WHERE p.home_id=p_home_id AND p.start_ts<p_before
+     AND NOT EXISTS(SELECT FROM held_doors h WHERE h.room_key=p.room_key AND h.source_key=p.source_key AND h.fit_at @> p.start_ts)
+     AND NOT EXISTS(SELECT FROM anchors a WHERE (a.room_key,a.source_key,a.start_ts)=(p.room_key,p.source_key,p.start_ts))
+   FOR UPDATE SKIP LOCKED);
+ PERFORM set_config('shs.room_evidence_retention',prior_marker,true);
+END; $$;
 
 CREATE FUNCTION private.room_evidence_changed(p_home uuid,p_room text,p_revision bigint,p_from timestamptz,p_to timestamptz)
 RETURNS boolean LANGUAGE sql STABLE SET search_path=pg_catalog,private AS $$

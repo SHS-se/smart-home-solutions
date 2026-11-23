@@ -35,6 +35,21 @@ async function fixture() {
   const retention = await Deno.readTextFile("supabase/migrations/20261119042000_hold_room_fit_inputs_during_retention.sql");
   await db.exec(retention.slice(0, retention.indexOf("SELECT cron.schedule")));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261120001000_room_operation_facts.sql"));
+  // Hosted migrations own application objects without PostgreSQL superuser rights.
+  await db.exec(`CREATE ROLE room_migration NOSUPERUSER;
+    DO $$ DECLARE obj record; BEGIN
+      FOR obj IN SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname IN ('public','private','net','cron','extensions') AND c.relkind IN ('r','p') LOOP
+        EXECUTE format('ALTER TABLE %I.%I OWNER TO room_migration',obj.nspname,obj.relname);
+      END LOOP;
+      FOR obj IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname IN ('public','private','net','cron','extensions') LOOP
+        EXECUTE format('ALTER FUNCTION %s OWNER TO room_migration',obj.signature);
+      END LOOP;
+      FOR obj IN SELECT nspname FROM pg_namespace WHERE nspname IN ('public','private','net','cron','extensions') LOOP
+        EXECUTE format('ALTER SCHEMA %I OWNER TO room_migration',obj.nspname);
+      END LOOP;
+    END; $$; SET ROLE room_migration`);
   await db.exec(await Deno.readTextFile(migration));
   await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()");
   return db;
@@ -104,14 +119,18 @@ Deno.test("chronological blocks refresh late data, share probe and weather chang
     await db.query("INSERT INTO energy_optimisation_outdoor_slots VALUES($1,$2,$1,2,null)", [home, begin]);
     assert((await work(db)).next);
     w = await work(db); j = await saveAndClaim(db, j, w, { rows: 2 });
+    await db.exec("BEGIN");
     await db.query("SELECT private.prune_native_room_fit_history($1,$2,false)", [home, end]);
     assertEquals((await db.query("SELECT 1 FROM energy_heating_observations")).rows.length, 0);
+    assertEquals((await db.query<{ marker: string }>("SELECT current_setting('shs.room_evidence_retention',true) AS marker")).rows[0].marker, "",
+      "retention marker must not leak into later explicit retractions in the same transaction");
     assertEquals(await work(db), { source_revision: w.source_revision, next: null }, "actual retention path preserves the archive");
     const loaded = await db.query<{ blocks: { row_count: number }[] }>(
       "SELECT load_energy_room_evidence_blocks($1,$1,'room',$2,$3,$4,$5) AS blocks", [home, binding, begin, end, implementation]);
     assertEquals(loaded.rows[0].blocks.map(b => b.row_count), [2]);
     await db.query("DELETE FROM energy_heating_probe_observations WHERE home_id=$1", [home]);
     w = await work(db); assert(w.next, "explicit deletion of evidence from the same date still counts");
+    await db.exec("COMMIT");
     j = await saveAndClaim(db, j, w);
     const extended = await work(db, "2001-01-01T12:00Z", "2001-02-01T00:00Z");
     assertEquals(Date.parse(extended.next!.from_at), Date.parse(end), "a moving floor can lie inside an existing extent");
