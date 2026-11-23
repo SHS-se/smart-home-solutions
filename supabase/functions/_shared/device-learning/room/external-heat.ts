@@ -381,11 +381,12 @@ export function inferExternalHeat(rows: readonly ExternalHeatResidual[], paramet
     transition_counts_by_duration: [...durationCounts.values()] };
 }
 
-/** One EM step. Undefined transitions retain their current parameter because
- * the evidence has no likelihood information about that transition row. */
-export function updateExternalHeat(rows: readonly ExternalHeatResidual[], parameters: ExternalHeatParameters):
+/** One EM step. A supplied inference must be the smoothed posterior for
+ * these same rows and parameters. Unobserved transitions retain their
+ * current parameter. */
+export function updateExternalHeat(rows: readonly ExternalHeatResidual[], parameters: ExternalHeatParameters,
+  inference = inferExternalHeat(rows, parameters)):
   { parameters: ExternalHeatParameters; inference: ExternalHeatInference } {
-  const inference = inferExternalHeat(rows, parameters);
   const minimum = arithmeticFloor(rows);
   let variance = 0, external = 0, mass = 0;
   const classes = new Map<string, { variance: number; count: number; rows: ExternalHeatResidual[] }>();

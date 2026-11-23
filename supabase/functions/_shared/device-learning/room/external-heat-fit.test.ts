@@ -1,5 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { finalizeIndependentRoomBand, fitIndependentRoomBand, fitIndependentRoomBandCell, prepareIndependentRoomBand, ROOM_BAND_FIT_CELL_COUNT } from "./mean-observations.ts";
+import { advanceIndependentRoomBandCell, finalizeIndependentRoomBand, fitIndependentRoomBand, fitIndependentRoomBandCell,
+  parseRoomHeatFitState, prepareIndependentRoomBand, ROOM_BAND_FIT_CELL_COUNT, type RoomHeatFitState } from "./mean-observations.ts";
 import { syntheticRoomPlant } from "./native-mean.fixture.ts";
 
 /** Independently generated synthetic plant. The room/heater state is RK4
@@ -35,6 +36,27 @@ function plant(additionalHeat: boolean, durations: (900 | 3600)[] = [900]) {
   });
   return { ...result, forcing };
 }
+
+Deno.test("reusing an iteration posterior preserves every fit field across a mid-family checkpoint", () => {
+  const prepared = prepareIndependentRoomBand(plant(true, [900, 900, 3600]).rows.slice(0, 220), null, 500);
+  const index = 3;
+  let state: RoomHeatFitState | null = null, checkpoint: RoomHeatFitState | null = null;
+  for (;;) {
+    // Each zero-budget call has to reconstruct the posterior from scratch.
+    const step = advanceIndependentRoomBandCell(prepared, index, state, 0);
+    assertEquals(Object.keys(step).sort(), ["cell", "state"]);
+    if (step.cell) {
+      assert(checkpoint, "the comparison exercises several additional-heat iterations");
+      assertEquals(advanceIndependentRoomBandCell(prepared, index, null, Infinity).cell, step.cell);
+      assertEquals(advanceIndependentRoomBandCell(prepared, index, checkpoint, Infinity).cell, step.cell);
+      break;
+    }
+    state = parseRoomHeatFitState(JSON.parse(JSON.stringify(step.state)), index);
+    if (!checkpoint && state?.observation_kind === "additional_heat" && state.working?.observation_fit?.iterations === 2) {
+      checkpoint = state;
+    }
+  }
+});
 
 Deno.test("joint band fit separates extra heat from heater gain with fan, heater overlap and thermal tails", () => {
   const { rows, forcing } = plant(true), original = structuredClone(rows);

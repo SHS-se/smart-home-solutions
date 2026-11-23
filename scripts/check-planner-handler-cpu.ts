@@ -22,7 +22,7 @@ import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-p
 import { createDeviceLearningReplay } from "../supabase/functions/_shared/device-learning-replay.ts";
 import { handleDeviceLearning } from "../supabase/functions/_shared/device-learning-worker.ts";
 import { syntheticPoolLearningReplay } from "../tests/device-learning-cpu.fixture.ts";
-import { replayRoomCapture, ROOM_CAPTURE_NOW, syntheticRoomArchive } from "../tests/room-capture-cpu.fixture.ts";
+import { replayRoomCapture, resumedRoomCheckpoint, ROOM_CAPTURE_NOW, syntheticFitTransitions, syntheticRoomArchive, type RoomNumericCheckpoint } from "../tests/room-capture-cpu.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the
 // hosted two-second CPU ceiling for host differences and transport. The native
@@ -93,6 +93,16 @@ async function calibrationSample(): Promise<Sample> {
   return sample;
 }
 
+async function checkpointRoomWorker(replay: ReturnType<typeof replayRoomCapture>) {
+  const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
+    method: "POST", headers: { "x-energy-learning-token": "synthetic" },
+    body: JSON.stringify({ job_id: "synthetic" }),
+  }), replay, () => ROOM_CAPTURE_NOW);
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), { checkpointed: true });
+  return replay.check();
+}
+
 /** Complete chronological capture through the production worker. The caller
  * supplies the serialized SQL archive from another process, outside its clock. */
 async function roomCaptureSample(profileMemory = false) {
@@ -111,21 +121,37 @@ async function roomCaptureSample(profileMemory = false) {
   // allocations between observations can exceed these sampled peaks.
   const timer = profileMemory ? setInterval(observe, 5) : undefined;
   try {
-    const sample = await measure(async () => {
-      const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
-        method: "POST", headers: { "x-energy-learning-token": "synthetic" },
-        body: JSON.stringify({ job_id: "synthetic" }),
-      }), replay, () => ROOM_CAPTURE_NOW);
-      assertEquals(response.status, 200);
-      assertEquals(await response.json(), { checkpointed: true });
-    });
-    replay.check();
+    const sample = await measure(() => checkpointRoomWorker(replay));
     observe();
     return { ...sample, max_rss_kib: resourceUsage().maxRSS,
       ...(profileMemory ? { memory_bytes: { baseline, sampled_peak: peaks, post_capture: snapshot() } } : {}) };
   } finally {
     if (timer !== undefined) clearInterval(timer);
   }
+}
+
+const checkpointBytes = (value: RoomNumericCheckpoint) => new TextEncoder().encode(JSON.stringify(value));
+
+/** Freeze real production checkpoints outside every measured child. First
+ * admit the full 400-day archive. Then complete the training cell and stop
+ * after a genuine HMM iteration in its paired full-history cell. */
+async function roomNumericalInputs() {
+  const source = await syntheticRoomArchive(40, true);
+  const first = await checkpointRoomWorker(replayRoomCapture(source.buffer));
+  return { initial: checkpointBytes(first), resumed: checkpointBytes(await resumedRoomCheckpoint(first)) };
+}
+
+async function roomNumericalSample() {
+  const checkpoint: RoomNumericCheckpoint = await new Response(Deno.stdin.readable).json();
+  const started = checkpoint.progress.cursor;
+  const expected = syntheticFitTransitions(checkpoint.progress.metadata.heat_state?.cell.partition ?? "training");
+  const sample = await measure(async () => {
+    const next = await checkpointRoomWorker(replayRoomCapture(checkpoint));
+    const cell = next.progress.cells[started] ?? next.progress.metadata.heat_state?.cell;
+    assert(cell);
+    assertEquals(cell.fits.finite?.n, expected);
+  });
+  return { ...sample, max_rss_kib: resourceUsage().maxRSS };
 }
 
 /** Cold preparation handler, including transport encoding, with nine rooms. */
@@ -208,7 +234,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture",
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture" | "room-numerical",
   input?: Uint8Array<ArrayBuffer>): Promise<Sample> {
   const child = new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
@@ -247,6 +273,11 @@ const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floo
 if (Deno.args.includes("--room-capture-fixture")) {
   const bytes = await syntheticRoomArchive(Number(Deno.args[1]));
   await new Blob([bytes]).stream().pipeTo(Deno.stdout.writable);
+} else if (Deno.args.includes("--room-numerical-fixture")) {
+  const inputs = await roomNumericalInputs();
+  await new Blob([inputs[Deno.args.includes("--resumed") ? "resumed" : "initial"]]).stream().pipeTo(Deno.stdout.writable);
+} else if (Deno.args.includes("--room-numerical")) {
+  console.log(JSON.stringify(await roomNumericalSample()));
 } else if (Deno.args.includes("--room-capture")) {
   console.log(JSON.stringify(await roomCaptureSample(Deno.args.includes("--profile-memory"))));
 } else if (Deno.args.includes("--plan")) {
@@ -274,6 +305,8 @@ if (Deno.args.includes("--room-capture-fixture")) {
   // An hour per source block exercises the cost of 9,600 independent digests
   // and gzip frames across 400 days. Fixture bytes are never generated in a measured worker.
   const archive = await syntheticRoomArchive(9600);
+  const numericInputs = await roomNumericalInputs();
+  const initialRoomFits: number[] = [], resumedRoomFits: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -288,6 +321,10 @@ if (Deno.args.includes("--room-capture-fixture")) {
     const calibration = await coldSample("calibration");
     const roomCapture = await coldSample("room-capture", archive);
     roomCaptures.push(roomCapture.cpu_ms);
+    const initialFit = await coldSample("room-numerical", numericInputs.initial);
+    const resumedFit = await coldSample("room-numerical", numericInputs.resumed);
+    initialRoomFits.push(initialFit.cpu_ms);
+    resumedRoomFits.push(resumedFit.cpu_ms);
     calibrations.push(calibration.cpu_ms);
     references.push(ref.cpu_ms);
     plans.push(plan.cpu_ms);
@@ -296,7 +333,9 @@ if (Deno.args.includes("--room-capture-fixture")) {
     varyingRooms.push(varying.cpu_ms);
     roomTargets.push(roomTarget.cpu_ms);
     varyingRoomTargets.push(varyingRoomTarget.cpu_ms);
-    console.log(JSON.stringify({ run, room_capture_cpu_ms: roomCapture.cpu_ms, room_capture_rss_kib: roomCapture.max_rss_kib,
+    console.log(JSON.stringify({ run, room_initial_fit_cpu_ms: initialFit.cpu_ms, room_resumed_fit_cpu_ms: resumedFit.cpu_ms,
+      room_initial_fit_rss_kib: initialFit.max_rss_kib, room_resumed_fit_rss_kib: resumedFit.max_rss_kib,
+      room_capture_cpu_ms: roomCapture.cpu_ms, room_capture_rss_kib: roomCapture.max_rss_kib,
       reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
       preparation_cpu_ms: preparation.cpu_ms, preparation_elapsed_ms: preparation.elapsed_ms,
       mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms, room_targets_cpu_ms: roomTarget.cpu_ms, varying_room_targets_cpu_ms: varyingRoomTarget.cpu_ms,
@@ -316,6 +355,11 @@ if (Deno.args.includes("--room-capture-fixture")) {
   const roomCapture = median(roomCaptures) * speed;
   console.log(JSON.stringify({ median_room_capture_cpu_ms: median(roomCaptures), baseline_room_capture_cpu_ms: roomCapture }));
   assert(roomCapture < BUDGET_MS, `Cold chronological room capture used ${roomCapture.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
+  const initialRoomFit = median(initialRoomFits) * speed, resumedRoomFit = median(resumedRoomFits) * speed;
+  console.log(JSON.stringify({ median_room_initial_fit_cpu_ms: median(initialRoomFits), baseline_room_initial_fit_cpu_ms: initialRoomFit,
+    median_room_resumed_fit_cpu_ms: median(resumedRoomFits), baseline_room_resumed_fit_cpu_ms: resumedRoomFit }));
+  assert(Math.max(initialRoomFit, resumedRoomFit) < BUDGET_MS,
+    `Cold numerical room worker used ${initialRoomFit.toFixed(1)} initial / ${resumedRoomFit.toFixed(1)} resumed baseline ms CPU; budget is ${BUDGET_MS} ms`);
   const prepared = median(preparations) * speed;
   console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
   assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

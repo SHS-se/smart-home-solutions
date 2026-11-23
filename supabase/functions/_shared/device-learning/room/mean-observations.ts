@@ -3,7 +3,7 @@ import type { RoomRunEvidence } from "./run-calibration.ts";
 import { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 export { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
-import { initializeExternalHeat, inferExternalHeat, scoreExternalHeatEpisodes, updateExternalHeat, type ExternalHeatParameters, type ExternalHeatResidual, type ExternalHeatValidationResidual } from "./external-heat.ts";
+import { initializeExternalHeat, inferExternalHeat, scoreExternalHeatEpisodes, updateExternalHeat, type ExternalHeatInference, type ExternalHeatParameters, type ExternalHeatResidual, type ExternalHeatValidationResidual } from "./external-heat.ts";
 import { MeanFeatureWorkspace } from "./mean-features.ts";
 import { compareFiniteRoomResponse, conditionalAicc, type RoomResponseSelection } from "./mean-identification.ts";
 import { solveNonnegativeNuisance } from "./mean-nuisance.ts";
@@ -969,8 +969,15 @@ export function parseRoomHeatFitState(value: unknown, index: number): RoomHeatFi
     observation_kind: fields.observation_kind as RoomHeatFitState["observation_kind"], cell: { ...expected, fits: decoded(fits), additional_heat: decoded(additional) }, working };
 }
 
+interface RoomHeatIterationInference {
+  state: RoomHeatFitState;
+  residuals: ReturnType<typeof externalResiduals>;
+  inference: ExternalHeatInference;
+}
+
 function roomHeatFitMicrostep(prepared: PreparedIndependentRoomBand, index: number,
-  previous: RoomHeatFitState | null = null): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
+  previous: RoomHeatFitState | null, preceding?: RoomHeatIterationInference):
+  { cell: RoomBandFitCell | null; state: RoomHeatFitState | null; nextInference?: RoomHeatIterationInference } {
   const state: RoomHeatFitState = previous ? structuredClone(previous) : {
     version: 2, index, cell: plainRoomBandFitCell(prepared, index), family_index: 0, working: null, observation_kind: "gaussian",
   };
@@ -1017,8 +1024,12 @@ function roomHeatFitMicrostep(prepared: PreparedIndependentRoomBand, index: numb
     }
     const evaluation: FitEvaluation = { ...working, family, lag, solar };
     const external = working.observation_fit!;
-    const residuals = externalResiduals(rows, evaluation, new Map(external.initial), band);
-    const update = updateExternalHeat(residuals, external.parameters);
+    // The preceding convergence check already smoothed these residuals. Only
+    // an unfinished iteration of this exact state can pass its inference on.
+    const reuse = preceding && preceding.state === previous && state.family_index === previous.family_index &&
+        state.observation_kind === previous.observation_kind ? preceding : undefined;
+    const residuals = reuse?.residuals ?? externalResiduals(rows, evaluation, new Map(external.initial), band);
+    const update = updateExternalHeat(residuals, external.parameters, reuse?.inference);
     const latent = { mean: new Map<number, number>(), variance: new Map<number, number>(), precision: new Map<number, number>() };
     residuals.forEach((residual, i) => {
       const scale = residual.forcing_scale, mean = update.inference.expected_c[i] / scale;
@@ -1052,7 +1063,10 @@ function roomHeatFitMicrostep(prepared: PreparedIndependentRoomBand, index: numb
       if (state.observation_kind === "gaussian") { state.cell.fits[family] = completed; state.observation_kind = "additional_heat"; }
       else { state.cell.additional_heat[family] = completed; state.family_index++; state.observation_kind = "gaussian"; }
       state.working = null;
-    } else state.working = summary;
+    } else {
+      state.working = summary;
+      return { cell: null, state, nextInference: { state, residuals: nextResiduals, inference } };
+    }
     if (state.family_index < RESPONSE_FAMILIES.length) return { cell: null, state };
   }
   return { cell: state.cell, state: null };
@@ -1066,8 +1080,10 @@ export function advanceIndependentRoomBandCell(prepared: PreparedIndependentRoom
   state: RoomHeatFitState | null = null, maxElapsedMs = 200): { cell: RoomBandFitCell | null; state: RoomHeatFitState | null } {
   const started = performance.now();
   let step = roomHeatFitMicrostep(prepared, index, state);
-  while (!step.cell && performance.now() - started < maxElapsedMs) step = roomHeatFitMicrostep(prepared, index, step.state);
-  return step;
+  while (!step.cell && performance.now() - started < maxElapsedMs) {
+    step = roomHeatFitMicrostep(prepared, index, step.state, step.nextInference);
+  }
+  return { cell: step.cell, state: step.state };
 }
 
 /** Offline callers run exactly the same deterministic checkpoint steps. */

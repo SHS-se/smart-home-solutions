@@ -15,7 +15,7 @@ interface Database {
 /** Envelope 4: every chronological transition plus its independently qualified training view. */
 export const ROOM_FIT_CAPTURE_VERSION = 4;
 /** Total numerical work per request, shared by all cells it completes. */
-export const ROOM_FIT_NUMERIC_BUDGET_MS = 500;
+export const ROOM_FIT_NUMERIC_BUDGET_MS = 650;
 export interface RoomLearningClaim {
   id: string; home_id: string; customer_id: string; owner_key: string;
   generation: number; fence: number; room_fit_progress?: unknown;
