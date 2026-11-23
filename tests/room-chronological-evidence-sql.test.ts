@@ -51,6 +51,7 @@ async function fixture() {
       END LOOP;
     END; $$; SET ROLE room_migration`);
   await db.exec(await Deno.readTextFile(migration));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261123140000_exclude_inventory_estimates_from_room_evidence.sql"));
   await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()");
   return db;
 }
@@ -264,5 +265,25 @@ Deno.test("retention protects the source side of a partially aged block while it
     const corrected = await work(db, at(0), at(2));
     assertEquals(Date.parse(corrected.next!.from_at), Date.parse(at(-2)));
     j = await saveAndClaim(db, j, corrected, { rows: 2 });
+  } finally { await db.close(); }
+});
+
+Deno.test("rolling inventory estimates preserve archived evidence and a pinned numerical fit", async () => {
+  const db = await fixture();
+  try {
+    await db.query(`INSERT INTO energy_optimisation_devices(home_id,id,customer_id,device_key,statistic_id,category,
+      mapping_summary,planning_role_override,control_type_override,mapping_status,mapped_control_type,active_power_w)
+      VALUES($1,'33333333-3333-4333-8333-333333333333',$1,'heater','measured-meter','heating',
+        '{"room_key":"room","room_name":"Synthetic room"}','controllable','setpoint','ready','setpoint',1000)`, [home]);
+    const fit = await stage(db);
+    const before = await work(db);
+    for (let power = 1001; power < 1005; power++) {
+      await db.query("UPDATE energy_optimisation_devices SET active_power_w=$1,mapping_summary=mapping_summary||jsonb_build_object('room_name',$2::text)",
+        [power, `Synthetic display ${power}`]);
+      assertEquals(await work(db), before, "successive inventory uploads do not re-read historical evidence");
+    }
+    assert(await fit.complete([]), "inventory estimates cannot starve a pinned fit before publication");
+    await db.exec("UPDATE energy_optimisation_devices SET statistic_id='corrected-meter'");
+    assert((await work(db)).next, "a real meter identity correction must still refresh evidence");
   } finally { await db.close(); }
 });
