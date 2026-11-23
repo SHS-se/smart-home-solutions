@@ -37,5 +37,19 @@ Deno.test("a transient heat write failure still syncs reviewed sources and share
   } } as unknown as Database;
   const result = await ingestHeatingHistory(db, input);
   assertEquals(result.exchange, { heating_observations_accepted: null, heating_observations_accepted_by_source: null,
-    heating_probe_observations_accepted: 1, heating_history_sources: configuration });
+    heating_probe_observations_accepted: 1, heating_history_sources: configuration,
+    heating_history_errors: ["Heating history: the server could not store the upload. SHS will retry automatically."] });
+});
+
+Deno.test("a database timeout names the failed history write while other receipts continue", async () => {
+  const configuration = { revision: "synthetic-revision", assignments: [] };
+  const db = { rpc: (name: string) => Promise.resolve(name === "record_energy_heating_observations"
+    ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }
+    : { data: name === "get_energy_heating_history_sources" ? configuration : 1, error: null }) } as unknown as Database;
+  const result = await ingestHeatingHistory(db, input);
+  assertEquals(result.exchange.heating_history_errors,
+    ["Heating history: the server database write timed out. SHS will retry automatically."]);
+  assertEquals(result.exchange.heating_observations_accepted, null);
+  assertEquals(result.exchange.heating_probe_observations_accepted, 1);
+  assertEquals(result.exchange.heating_history_sources, configuration);
 });

@@ -15,8 +15,9 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
     heating_observations_accepted: number | null;
     heating_observations_accepted_by_source: { room_key: string; source_key: string; accepted: number }[] | null;
     heating_probe_observations_accepted: number | null;
+    heating_history_errors: string[];
     heating_history_sources?: unknown;
-  } = { heating_observations_accepted: 0, heating_observations_accepted_by_source: [], heating_probe_observations_accepted: 0 };
+  } = { heating_observations_accepted: 0, heating_observations_accepted_by_source: [], heating_probe_observations_accepted: 0, heating_history_errors: [] };
   // A failed side of the capture keeps its app cursor pending. Known heat and
   // probe facts can still land independently and identical retries are safe.
   await Promise.all([
@@ -30,6 +31,7 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
       } catch (error) {
         exchange.heating_observations_accepted = null;
         exchange.heating_observations_accepted_by_source = null;
+        exchange.heating_history_errors.push(historyWriteError("Heating history", error));
         console.error("[ENERGY-OPTIMISATION] heating history write needs retry", error);
       }
     })(),
@@ -41,6 +43,7 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
         exchange.heating_probe_observations_accepted = data;
       } catch (error) {
         exchange.heating_probe_observations_accepted = null;
+        exchange.heating_history_errors.push(historyWriteError("Temperature probe history", error));
         console.error("[ENERGY-OPTIMISATION] heating probe history write needs retry", error);
       }
     })(),
@@ -57,4 +60,10 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
     })(),
   ]);
   return { exchange, ignored: { ...measured.ignored, ...probes.ignored } };
+}
+
+function historyWriteError(subject: string, error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  return code === "57014" ? `${subject}: the server database write timed out. SHS will retry automatically.`
+    : `${subject}: the server could not store the upload. SHS will retry automatically.`;
 }

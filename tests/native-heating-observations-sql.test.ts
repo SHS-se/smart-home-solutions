@@ -882,6 +882,21 @@ Deno.test("native heating storage preserves interval energy, source lineage and 
     await db.exec(`CREATE FUNCTION private.prune_native_room_fit_history(uuid,timestamptz,boolean)
       RETURNS void LANGUAGE sql AS $$ SELECT $$`);
     await db.exec(await Deno.readTextFile("supabase/migrations/20261119130000_fence_heating_counter_processing.sql"));
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261123043000_bound_heating_history_ingestion.sql"));
+    const writeSettings = (await db.query<{ settings: string[] }>(`SELECT proconfig AS settings FROM pg_proc WHERE oid IN (
+      'record_energy_heating_observations(uuid,uuid,jsonb)'::regprocedure,
+      'record_energy_heating_probe_observations(uuid,uuid,jsonb)'::regprocedure,
+      'private.prune_native_room_fit_history(uuid,timestamptz,boolean)'::regprocedure)`)).rows;
+    assertEquals(writeSettings.length, 3);
+    assertEquals(writeSettings.every(value => value.settings.includes("jit=off")), true);
+    assertEquals((await db.query<{ definition: string }>(`SELECT indexdef AS definition FROM pg_indexes
+      WHERE indexname='energy_heating_observations_retention'`)).rows[0].definition.includes("(home_id, start_ts)"), true);
+    await db.exec("SET jit=on");
+    assertEquals(await write({ ...row, invalidated_device_keys: [] }),
+      { accepted: 1, accepted_by_source: [{ room_key: "room", source_key: source, accepted: 1 }] });
+    assertEquals((await db.query<{ jit: string }>("SELECT current_setting('jit') AS jit")).rows[0].jit, "on",
+      "ingestion restores the caller's compilation policy");
+    await db.query("SELECT set_config('jit',$1,false)", [callerJit]);
     const protectedAt = new Date(Date.parse(start) - 10 * 86_400_000).toISOString();
     const protectedRow = { ...row, start: protectedAt, device_energy_kwh: { heater: 5 }, heater_energy_limits_w: { heater: 800 } };
     const rawEnergy = async (at = protectedAt) => (await db.query<{
