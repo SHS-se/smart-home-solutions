@@ -221,8 +221,8 @@ export function prepareRoomModels(
     if (response?.legacy) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_heating_response_learning", room.key, `${room.name}: the shared room response is still being learned.`,
       "A previously accepted response is used at every forecast temperature until it publishes. Positive uncontrolled background heat is excluded.")]);
-    else if (response && !response.run_supported) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
-      "room_heating_response_learning", room.key, `${room.name}: the room response has not yet been assessed against independent heating runs.`,
+    else if (response && !response.supported) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "room_heating_response_learning", room.key, `${room.name}: the shared room response is awaiting calibration evidence.`,
       "The accepted response remains available while learning continues. Positive uncontrolled background heat is excluded.")]);
     const modelWarnings = response ? response.warnings : generalRoomFitWarnings(attempt);
     if (heatingContext && library && !compatible && model) {

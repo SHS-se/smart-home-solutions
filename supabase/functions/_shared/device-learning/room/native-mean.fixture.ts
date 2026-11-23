@@ -1,3 +1,4 @@
+import { roomResponseTrainingLength } from "./response-learning.ts";
 import type { RoomMeanQuarter } from "./mean-observations.ts";
 
 const defaultProfile = {
@@ -51,4 +52,10 @@ export function syntheticRoomBandStress(fragmented = true): RoomMeanQuarter[] {
   });
   if (fragmented) for (let i = 95; i < rows.length; i += 96) rows[i].heat_w = null;
   return rows;
+}
+
+/** Synthetic inputs have no read-time probe inference. Training and full
+ * observe the same source-qualified values at their common timestamps. */
+export function syntheticRoomResponseEvidence(rows: RoomMeanQuarter[]) {
+  return { fullRows: rows, trainingRows: rows.slice(0, roomResponseTrainingLength(rows.map(row => row.duration_s ?? 900))) };
 }

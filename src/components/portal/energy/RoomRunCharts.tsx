@@ -14,11 +14,11 @@ const SUSPECT = '#b47724';
 const GRID_STEPS = 60;
 
 type Kind = 'used' | 'credible' | 'noisy' | 'suspect';
-const kindOf = (disposition: RoomRunDisposition): Kind => disposition === 'fitted' ? 'used'
+const kindOf = (disposition: RoomRunDisposition): Kind => (disposition === 'fitted' || disposition === 'assessed') ? 'used'
   : disposition === 'provisional' ? 'credible' : disposition === 'suspect_change' ? 'suspect' : 'noisy';
 
 interface Dot { id: string; x: number; y: number; err?: [number, number]; kind: Kind; label: string }
-interface ModelLine { at: (x: number) => number; minX: number; maxX: number }
+interface ModelLine { at: (x: number) => number; measuredRange: { minX: number; maxX: number } | null }
 
 function Marker({ cx, cy, dot, selected, onSelect }: {
   cx?: number; cy?: number; dot: Dot; selected: boolean; onSelect: (id: string) => void;
@@ -54,7 +54,8 @@ function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSel
   const format = (value: number) => value.toLocaleString(language, { maximumFractionDigits: 2 });
   const grid = line ? Array.from({ length: GRID_STEPS + 1 }, (_, i) => {
     const x = xDomain[0] + (xDomain[1] - xDomain[0]) * i / GRID_STEPS;
-    const inside = x >= line.minX - 1e-9 && x <= line.maxX + 1e-9;
+    const range = line.measuredRange;
+    const inside = range && x >= range.minX - 1e-9 && x <= range.maxX + 1e-9;
     return { x, fit: inside ? line.at(x) : null, beyond: inside ? null : line.at(x) };
   }) : [];
   // Join the dashed segments to the solid measured segment.
@@ -83,14 +84,14 @@ function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSel
   </ChartContainer>;
 }
 
-function Key({ lines }: { lines: boolean }) {
+function Key({ lines, chronological }: { lines: boolean; chronological: boolean }) {
   const { t } = useLanguage();
   const items: [Kind, string][] = [
-    ['used', t('I publicerad anpassning', 'In the published fit')],
-    ['credible', t('Trovärdigt förlopp', 'Credible run')],
+    ['used', chronological ? t('Bedömt mot modellen', 'Assessed against the model') : t('I publicerad anpassning', 'In the published fit')],
     ['noisy', t('För brusigt att bedöma', 'Too noisy to judge')],
     ['suspect', t('Annan värme ändrades under förloppet', 'Other heat changed during the run')],
   ];
+  if (!chronological) items.splice(1, 0, ['credible', t('Trovärdigt förlopp', 'Credible run')]);
   return <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
     {items.map(([kind, label]) => <li key={kind} className="flex items-center gap-1.5">
       <svg width="12" height="12" aria-hidden="true">{kind === 'suspect'
@@ -103,7 +104,7 @@ function Key({ lines }: { lines: boolean }) {
       <li className="flex items-center gap-1.5"><svg width="18" height="12" aria-hidden="true">
         <line x1="0" y1="6" x2="18" y2="6" stroke={ACCENT} strokeWidth="2.5" /></svg>{t('Rummets modell', 'Room model')}</li>
       <li className="flex items-center gap-1.5"><svg width="18" height="12" aria-hidden="true">
-        <line x1="0" y1="6" x2="18" y2="6" stroke={ACCENT} strokeWidth="1.5" strokeDasharray="5 4" /></svg>{t('Utanför uppmätta förlopp', 'Beyond measured runs')}</li>
+        <line x1="0" y1="6" x2="18" y2="6" stroke={ACCENT} strokeWidth="1.5" strokeDasharray="5 4" /></svg>{t('Utanför visade förlopp', 'Beyond the runs shown')}</li>
     </>}
   </ul>;
 }
@@ -124,6 +125,8 @@ function RunDetail({ point, lines, shared, onClose }: {
   const time = (ms: number) => new Date(ms).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
   const sameDay = new Date(point.fromMs).toDateString() === new Date(point.toMs).toDateString();
   const status: Record<RoomRunDisposition, string> = {
+    assessed: t('Förloppets uppmätta värmerespons har jämförts med rummets publicerade modell.',
+      'The run’s measured heating response was assessed against the published room model.'),
     fitted: t('Ingår i den publicerade anpassningen: det överensstämmer med minst två andra förlopp.',
       'Part of the published fit: it agrees with at least two other runs.'),
     provisional: t('Trovärdigt, men inte i gruppen av förlopp som stämmer överens med varandra.',
@@ -131,8 +134,8 @@ function RunDetail({ point, lines, shared, onClose }: {
     older_response: t('Trovärdigt, men äldre än responsen som nu används.', 'Credible, but older than the response now in use.'),
     uninformative: t('Värmen var för liten eller för kort jämfört med mätbruset för att bedöma rummets respons.',
       'Too little or too brief heating against the measurement noise to judge the room’s response.'),
-    suspect_change: t('Värme från en annan källa verkar ha ändrats under förloppet, så det används inte.',
-      'Heat from another source appears to have changed during the run, so it is not used.'),
+    suspect_change: t('Värme från en annan källa verkar ha ändrats under förloppet.',
+      'Heat from another source appears to have changed during the run.'),
   };
   const standardized = lines?.cooling.pointY(point) ?? null;
   return <section aria-label={t('Valt förlopp', 'Selected run')} data-testid="room-run-detail"
@@ -160,7 +163,7 @@ function RunDetail({ point, lines, shared, onClose }: {
         : t('För kort för att mäta', 'Too short to measure')}</Row>
       {standardized !== null && lines && <Row term={t(`Avsvalning vid ${format(lines.cooling.reference.roomC)} °C`,
         `Cool-down at ${format(lines.cooling.reference.roomC)} °C`)}>{format(standardized, 2)} °C/h</Row>}
-      <Row term={t('Anpassade övergångar', 'Fitted transitions')}>{point.transitions.toLocaleString(language)}</Row>
+      <Row term={t('Övergångar i förloppet', 'Transitions in this run')}>{point.transitions.toLocaleString(language)}</Row>
       <Row term={t('Bedömt mot', 'Assessed against')}>{shared ? t('Rummets gemensamma modell', 'The shared room model')
         : point.scope === 'general' ? t('Tidigare allmän respons', 'Previous general response')
         : `${t('Tidigare intervall', 'Previous band')} ${format(Number(point.scope))} – ${format(Number(point.scope) + 5)} °C`}</Row>
@@ -182,19 +185,25 @@ function ModelSummary({ view }: { view: RoomResponseView }) {
       ? t('Ingen dynamisk tidskonstant', 'No dynamic time constant') : model.response_family === 'integrator'
       ? t('Obegränsad i modellen', 'Unbounded in this model') : model.time_constant_h === null ? '—' : `${format(model.time_constant_h, 1)} h`}</dd></div>
     <div><dt>{t('Värmefördröjning', 'Heater lag')}</dt><dd className="font-medium">{format(model.heat_lag_h ?? 0)} h</dd></div>
-    <div><dt>{t('Anpassade uppvärmningsförlopp', 'Fitted heating runs')}</dt><dd className="font-medium" data-testid="fitted-heating-runs">
-      {response.fittedRuns === null ? t('Inte bedömt', 'Not assessed') : `${response.fittedRuns} / ${response.maximumRuns ?? 24}`}</dd></div>
+    {response.fittedTransitions !== null && <div><dt>{t('Anpassade övergångar', 'Fitted transitions')}</dt>
+      <dd className="font-medium" data-testid="fitted-transitions">{format(response.fittedTransitions, 0)}</dd></div>}
+    {view.observedRuns !== null && <div><dt>{t('Bedömda uppvärmningsförlopp', 'Assessed heating runs')}</dt>
+      <dd className="font-medium" data-testid="assessed-heating-runs">{format(view.observedRuns, 0)}</dd></div>}
+    {response.fittedTransitions === null && response.fittedRuns !== null && <div>
+      <dt>{t('Anpassade uppvärmningsförlopp', 'Fitted heating runs')}</dt>
+      <dd className="font-medium" data-testid="fitted-heating-runs">{format(response.fittedRuns, 0)}</dd></div>}
     {response.trainingFrom && response.trainingTo && <div className="col-span-2"><dt>{t('Träningsdata', 'Training data')}</dt>
       <dd className="font-medium">{response.trainingFrom.slice(0, 10)} – {response.trainingTo.slice(0, 10)}</dd></div>}
   </dl>;
 }
 
-export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
+export default function RoomRunCharts({ view, pageControls }: { view: RoomResponseView; pageControls?: ReactNode }) {
   const { language, t } = useLanguage();
   const [selected, setSelected] = useState<string | null>(null);
   const format = (value: number, digits = 1) => value.toLocaleString(language, { maximumFractionDigits: digits });
   const lines = useMemo(() => roomResponseLines(view), [view]);
   const shared = view.assessed === 'shared';
+  const chronological = view.response?.fittedTransitions != null;
   const chart = useMemo(() => {
     const { points } = view;
     const date = (ms: number) => new Date(ms).toLocaleDateString(language, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -213,7 +222,7 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
     const yHeat: [number, number] = [0, Math.max(niceDomain([heaterTop || 1], 1)[1], 1)];
     const coolValues = cooling.map(p => coolingY(p)!);
     const lineValues = lines ? [lines.cooling.at(xDomain[0]), lines.cooling.at(xDomain[1])] : [];
-    const yCool: [number, number] = coolValues.length ? niceDomain([...coolValues, ...lineValues, 0], 0.1) : [0, 1];
+    const yCool: [number, number] = (coolValues.length || lineValues.length) ? niceDomain([...coolValues, ...lineValues, 0], 0.1) : [0, 1];
     const clamp = (value: number, [lo, hi]: [number, number]) => Math.min(hi, Math.max(lo, value));
     const heaterDots: Dot[] = heating.map(p => {
       const y = clamp(p.gain!, yHeat), se = p.gainSe ?? 0;
@@ -234,15 +243,15 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
   const select = (id: string) => setSelected(current => current === id ? null : id);
   const heaterTitle = t('Värmerespons per förlopp', 'Heating response per run');
   const coolingTitle = t('Avsvalning per förlopp', 'Cool-down per run');
-  const heaterLine: ModelLine | null = lines && chart.heatRange ? { at: () => lines.heater.cPerKwh, ...chart.heatRange } : null;
-  const coolingLine: ModelLine | null = lines && chart.coolRange ? { at: lines.cooling.at, ...chart.coolRange } : null;
+  const heaterLine: ModelLine | null = lines ? { at: () => lines.heater.cPerKwh, measuredRange: chart.heatRange } : null;
+  const coolingLine: ModelLine | null = lines ? { at: lines.cooling.at, measuredRange: chart.coolRange } : null;
   const balance = lines?.cooling.balanceC ?? null;
   const hold = lines && chart.coolRange ? [-20, -15, -10, -5, 0, 5, 10, 15]
     .filter(c => c >= chart.coolRange!.minX - 1 && c <= chart.coolRange!.maxX + 1)
     .flatMap(c => { const kw = lines.holdKw(c); return kw === null ? [] : [{ c, kw }]; }) : [];
 
   return <section className="space-y-3" aria-label={t('Uppvärmningsförlopp efter utetemperatur', 'Heating runs by outdoor temperature')}>
-    {view.response && shared && <>
+    {view.response && <>
       <ModelSummary view={view} />
       <p className="text-xs text-muted-foreground">{t(
         'Planeraren använder den här enda responsen vid varje prognostiserad utetemperatur.',
@@ -254,7 +263,15 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
       'Varje punkt är ett uppmätt förlopp där värmaren slogs på och sedan av. Välj en punkt för detaljer.',
       'Each point is one measured run where the heater switched on and then off. Select a point for details.',
     )}</p>
-    {!shared && <p role="status" className="text-xs text-muted-foreground">{t(
+    {pageControls}
+    {chronological && <p className="text-xs text-muted-foreground">{t(
+      'Modellen anpassas till alla användbara intervallövergångar. Avslutade uppvärmningsförlopp bedöms sedan mot den publicerade modellen.',
+      'The model uses all eligible interval transitions. Each completed heating run is then assessed against the published model.',
+    )}</p>}
+    {chronological && view.observedRuns === null && <p role="status" className="text-xs text-muted-foreground">{t(
+      'Bedömningar för den publicerade modellen är inte tillgängliga.', 'Run assessments for the published model are unavailable.',
+    )}</p>}
+    {!shared && !chronological && <p role="status" className="text-xs text-muted-foreground">{t(
       'Rummets gemensamma modell lärs fortfarande in. Punkterna är bedömda mot tidigare temperaturintervall och visas utan linje.',
       'The shared room model is still being learned. These points were assessed against earlier temperature bands and are shown without a line.',
     )}</p>}
@@ -266,8 +283,8 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
       <section className="min-w-0 space-y-1">
         <h5 className="font-medium">{heaterTitle}</h5>
         <p className="text-xs text-muted-foreground">{t(
-          'Temperaturökning per tillförd kWh, med värmeförluster räknade separat. Den beror på rummets värmekapacitet och inte på utetemperaturen, så linjen är platt.',
-          'Temperature rise per kWh delivered, with heat losses counted separately. It depends on the room’s heat capacity, not the outdoor temperature, so the line is flat.',
+          'Temperaturökning per kWh som värmaren tillför. Modellen beräknar värmeförlusterna separat och använder samma värmerespons vid alla utetemperaturer.',
+          'Temperature rise per kWh delivered by the heater. The model calculates heat losses separately and uses the same heating response at every outdoor temperature.',
         )}</p>
         <RunScatter label={heaterTitle} unit="°C/kWh" dots={chart.heaterDots} line={heaterLine}
           xDomain={chart.xDomain} yDomain={chart.yHeat} selected={selected} onSelect={select} />
@@ -281,13 +298,13 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
       <section className="min-w-0 space-y-1">
         <h5 className="font-medium">{coolingTitle}</h5>
         <p className="text-xs text-muted-foreground">{lines ? t(
-          `Hur snabbt rummet svalnar utan värme och sol, vid ${format(lines.cooling.reference.roomC)} °C inne och ${format(lines.cooling.reference.houseC)} °C i övriga hemmet. Varje förlopp är flyttat till samma förhållanden med modellen.`,
-          `How fast the room cools without heat or sun, at ${format(lines.cooling.reference.roomC)} °C indoors and ${format(lines.cooling.reference.houseC)} °C in the rest of the home. Each run is moved to the same conditions with the model.`,
+          `Linjen visar hur snabbt rummet svalnar med värmaren avstängd och utan solinstrålning, vid ${format(lines.cooling.reference.roomC)} °C inne och ${format(lines.cooling.reference.houseC)} °C i övriga hemmet. Varje förlopp är flyttat till samma förhållanden med modellen.`,
+          `The line shows how fast the room cools with the heater off and no sunlight, at ${format(lines.cooling.reference.roomC)} °C indoors and ${format(lines.cooling.reference.houseC)} °C in the rest of the home. Each run is moved to the same conditions with the model.`,
         ) : t(
           'Hur snabbt rummet svalnar under de första timmarna efter att värmaren stängts av och dess eftervärme har avtagit.',
           'How fast the room cools in the first hours after the heater stops and its stored heat has passed.',
         )}</p>
-        {chart.cooling.length ? <>
+        {chart.cooling.length > 0 || lines ? <>
           <RunScatter label={coolingTitle} unit="°C/h" dots={chart.coolingDots} line={coolingLine} zeroLine
             xDomain={chart.xDomain} yDomain={chart.yCool} selected={selected} onSelect={select} />
           {lines && balance !== null && Number.isFinite(balance) && <p className="text-xs tabular-nums" aria-live="polite">
@@ -296,13 +313,24 @@ export default function RoomRunCharts({ view }: { view: RoomResponseView }) {
           'Inga avsvalningar har mätts ännu.', 'No cool-downs have been measured yet.')}</p>}
       </section>
     </div>
-    <Key lines={!!lines} />
+    <Key lines={!!lines} chronological={chronological} />
+    {view.points.length > 0 && <label className="flex flex-wrap items-center gap-2 text-xs">
+      {t('Visa detaljer för ett förlopp', 'Inspect a heating run')}
+      <select className="min-h-11 max-w-full rounded-md border bg-background px-2" value={point?.id ?? ''}
+        onChange={event => setSelected(event.target.value || null)}>
+        <option value="">{t('Välj förlopp', 'Select run')}</option>
+        {view.points.map(run => <option key={run.id} value={run.id}>
+          {new Date(run.fromMs).toLocaleString(language, { dateStyle: 'medium', timeStyle: 'short' })}</option>)}
+      </select>
+    </label>}
     {point && <RunDetail point={point} lines={lines} shared={shared} onClose={() => setSelected(null)} />}
     {hold.length > 0 && <section className="space-y-1">
       <h5 className="font-medium">{t('Effekt som håller rummets temperatur (uppskattning)', 'Power that holds the room temperature (estimate)')}</h5>
       <p className="text-xs text-muted-foreground">{t(
-        'Modellens avsvalning delad med dess värmerespons. Den räknar med uppmätt bakgrundsvärme, som planeraren inte tillgodoräknar sig.',
-        'The model’s cool-down divided by its heating response. It counts measured background heat, which the planner does not rely on.')}</p>
+        'Den publicerade modellens avsvalningshastighet delad med värmarens temperaturökning per kWh.',
+        'The published model’s cooling rate divided by the heater’s temperature rise per kWh.')}
+        {chronological && ' ' + t('Prognosen räknar inte med framtida värmetillskott från omätta källor.',
+          'The forecast assumes no future heat gains from unmetered sources.')}</p>
       <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs tabular-nums">{hold.map(({ c, kw }) => <div key={c} className="flex gap-1.5">
         <dt className="text-muted-foreground">{format(c)} °C</dt><dd className="font-medium">{format(kw, 2)} kW</dd>
       </div>)}</dl>

@@ -5401,6 +5401,10 @@ export type Database = {
         Args: { p_home_id: string; p_room_key: string }
         Returns: Json
       }
+      get_energy_room_run_assessments: {
+        Args: { p_home_id: string; p_room_key: string; p_revision: string; p_offset: number; p_limit: number }
+        Returns: Json
+      }
       get_energy_room_response_evidence: {
         Args: { p_home_id: string; p_room_key: string }
         Returns: Json

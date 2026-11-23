@@ -45,8 +45,9 @@ export interface RoomHeatingBands {
   general_solar_pending?: boolean;
   general_solar_retry_at?: string | null;
   pending_windows?: number;
-  /** The latest shared-response attempt over the exact harvested run pool. */
-  shared_attempt?: { implementation: string; pool: { window_key: string; sha256: string }[]; attempted_at: string;
+  /** The latest shared-response attempt and its immutable source evidence. */
+  shared_attempt?: { implementation: string; pool?: { window_key: string; sha256: string }[];
+    evidence?: { sourceRevision: number; fromAt: string; toAt: string; implementation: string }; attempted_at: string;
     status: "fitted" | "unidentified" };
   diagnostics?: Record<string, unknown>;
 }

@@ -9,7 +9,7 @@
  * best-supported band. Planning never stops for a room in transition.
  */
 import { readRoomHeatingBands, roomHeatingResponseAt, type RoomHeatingBand, type RoomHeatingBands } from "./heating-bands.ts";
-import { hasRoomRunSupport } from "./models/room/run-evidence.ts";
+import { hasRoomRunSupport, hasRoomTransitionSupport } from "./models/room/run-evidence.ts";
 import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import { readThermalModel } from "./models/room/read-model.ts";
 
@@ -22,8 +22,8 @@ export interface RoomResponse {
   model: ThermalZoneModel;
   source: RoomResponseSource;
   warnings: string[];
-  /** Fitted from at least three agreeing independent heating runs. */
-  run_supported: boolean;
+  /** The published response has evidence under its calibration policy. */
+  supported: boolean;
   /** A response accepted before the shared response; replaced on publication. */
   legacy: boolean;
   /** Boundary evidence fitted with the general response (legacy only). */
@@ -52,12 +52,12 @@ export function roomResponse(library: RoomHeatingBands, forecastOutdoorC?: reado
   const model = readThermalModel(reference?.model);
   if (reference && model && reference.scope?.kind === "shared" && typeof library.reference_revision === "string") {
     return { model, source: { kind: "shared", revision: library.reference_revision }, warnings: reference.warnings ?? [],
-      run_supported: hasRoomRunSupport(reference.learning_evidence), legacy: false };
+      supported: hasRoomTransitionSupport(reference.learning_evidence) || hasRoomRunSupport(reference.learning_evidence), legacy: false };
   }
   // ---- Rollout only: responses accepted before the shared response. ----
   if (reference && model && reference.scope?.kind !== "band") {
     return { model, source: { kind: "general", revision: library.reference_revision ?? library.previous_reference_revision ?? null },
-      warnings: reference.warnings ?? [], run_supported: hasRoomRunSupport(reference.learning_evidence), legacy: true,
+      warnings: reference.warnings ?? [], supported: hasRoomRunSupport(reference.learning_evidence), legacy: true,
       ...(reference.passive_heat !== undefined ? { passive_heat: reference.passive_heat } : {}),
       ...(reference.doorway_exchange !== undefined ? { doorway_exchange: reference.doorway_exchange } : {}) };
   }
@@ -66,7 +66,7 @@ export function roomResponse(library: RoomHeatingBands, forecastOutdoorC?: reado
     [...library.active].sort((a, b) => fittedRuns(b) - fittedRuns(a) ||
       Date.parse(b.training_to) - Date.parse(a.training_to) || a.band_c - b.band_c)[0];
   return band ? { model: band.model, source: { kind: "band", band_c: band.band_c, revision: band.revision },
-    warnings: band.warnings ?? [], run_supported: hasRoomRunSupport(band.learning_evidence), legacy: true } : null;
+    warnings: band.warnings ?? [], supported: hasRoomRunSupport(band.learning_evidence), legacy: true } : null;
 }
 
 /** Fits the learner flagged as resting on too little heating cannot justify preheating. */

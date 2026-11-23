@@ -1,11 +1,11 @@
-import { learnRoomResponse, ROOM_RESPONSE_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/response-learning.ts";
+import { learnRoomResponse } from "../supabase/functions/_shared/device-learning/room/response-learning.ts";
 // Independently generated synthetic jobs/captures; no household observations.
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { HEAT_LAG_GRID_H } from "../supabase/functions/_shared/device-learning/room/fit.ts";
 import { parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
 
-import { syntheticRoomPlant } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
+import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
 
 const home = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -108,8 +108,7 @@ async function scratchCount(db: PGlite) {
   return (await db.query<{ count: number }>("SELECT count(*)::int AS count FROM private.energy_room_fit_progress")).rows[0].count;
 }
 
-Deno.test("current run calibration persists a private bounded ledger with one fenced 36-cell publication", async () => {
-  assertEquals(ROOM_RESPONSE_CELL_COUNT,36,"SQL scratch bound matches the production response stages");
+Deno.test("historical run calibration persists a private bounded ledger with one fenced 36-cell publication", async () => {
   const db = await database(true, true, true, true);
   try {
     let j = await claim(db);
@@ -616,7 +615,7 @@ Deno.test("independent band publication preserves the general model SQL domain a
     }
     const rows = syntheticRoomPlant([3600],240).rows;
     const from = new Date(rows[0].start_ms).toISOString(), to = new Date(rows.at(-1)!.start_ms+3_600_000).toISOString();
-    const fit = learnRoomResponse(rows, 500);
+    const fit = learnRoomResponse(syntheticRoomResponseEvidence(rows), 500);
     assert(fit.result.ok, "independent synthetic plant produces an accepted finite response");
     // A legacy band-only publication, as the band learner wrote it before the
     // shared response; the SQL owner still accepts it during rollout.

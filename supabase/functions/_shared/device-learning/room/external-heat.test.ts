@@ -305,3 +305,17 @@ Deno.test("noise prior counts only actual noise classes and preserves its empiri
   assertAlmostEquals(updated.sigma_by_class!.hour ** 2, (.04 + .04) / 4, 1e-12);
   assertEquals(updated.noise_reference_c2, .04);
 });
+
+Deno.test("persistent unexplained heat retains chronology when Gaussian regression moments agree", () => {
+  // Independently generated synthetic residuals: identical observations and
+  // ordinary regression moments, but one sustained heat episode versus pulses.
+  const clustered = [0, 0, 0, 0, 1, 1, 1, 1];
+  const alternating = [0, 1, 0, 1, 0, 1, 0, 1];
+  const moments = (rows: number[]) => [rows.length, rows.reduce((s, v) => s + v, 0), rows.reduce((s, v) => s + v*v, 0)];
+  assertEquals(moments(clustered), moments(alternating));
+  const parameters = { sigma_c: .2, external_mean_c: 1,
+    transition: [[.98, .02], [.02, .98]] as [[number, number], [number, number]], initial: [.5, .5] as [number, number] };
+  const infer = (rows: number[]) => inferExternalHeat(rows.map(residual_c => ({ residual_c, segment: 0 })), parameters);
+  const episode = infer(clustered), pulses = infer(alternating);
+  assert(episode.nll < pulses.nll, "persistent heat must distinguish ordered episodes from the same unordered moments");
+});

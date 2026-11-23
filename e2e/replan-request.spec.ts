@@ -1059,7 +1059,7 @@ test.describe('requesting a replan', () => {
     });
     await page.goto(`/portal/energy-modeling?tab=comfort&room=${key}`);
     await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
-    await expect(page.getByTestId('fitted-heating-runs')).toHaveText('3 / 24');
+    await expect(page.getByTestId('fitted-heating-runs')).toHaveText('3');
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();
     await expect(page.getByText(/2025-01-02.*2025-01-14/)).toBeVisible();
     const fitWarnings = page.getByTestId('room-fit-warnings');

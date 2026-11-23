@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { readThermalModel } from '../../../supabase/functions/_shared/planner/models/room/read-model';
 import { isEquilibrium, type DynamicThermalZoneModel, type ThermalZoneModel } from '../../../supabase/functions/_shared/planner/models/room/thermal';
-import { roomRunPoints, trendRun, type RoomRunPoint } from './room-run-points';
+import { roomTransitionEvidence } from './room-run-evidence';
+import { readRoomAssessmentPage, ROOM_RUN_PAGE_SIZE, roomRunPoints, trendRun, type RoomRunPoint } from './room-run-points';
 
 /** One read of the room Model tab: the published shared response and the run
  * ledger assessed against exactly that revision. The browser evaluates the
@@ -12,6 +13,7 @@ const response = z.object({
   training_from: z.string().nullable().optional(),
   training_to: z.string().nullable().optional(),
   warnings: z.array(z.string()).nullable().optional(),
+  transition_calibration: roomTransitionEvidence.nullable().optional(),
   run_calibration: z.object({ fitted_runs: z.number().int(), maximum_runs: z.number().int().optional() }).passthrough().nullable().optional(),
 }).nullable();
 const evidence = z.object({
@@ -28,9 +30,10 @@ const evidence = z.object({
 
 export interface RoomResponseView {
   response: { revision: string; model: ThermalZoneModel; trainingFrom: string | null; trainingTo: string | null;
-    warnings: string[]; fittedRuns: number | null; maximumRuns: number | null } | null;
+    warnings: string[]; fittedRuns: number | null; fittedTransitions: number | null } | null;
   /** Runs assessed against `response`, or legacy per-band assessments during rollout. */
   points: RoomRunPoint[];
+  observedRuns: number | null;
   assessed: 'shared' | 'legacy' | null;
   room: z.infer<typeof evidence>['room'];
 }
@@ -45,17 +48,27 @@ export function readRoomResponseView(data: unknown): RoomResponseView | null {
     trainingFrom: parsed.data.response.training_from ?? null, trainingTo: parsed.data.response.training_to ?? null,
     warnings: parsed.data.response.warnings ?? [],
     fittedRuns: parsed.data.response.run_calibration?.fitted_runs ?? null,
-    maximumRuns: parsed.data.response.run_calibration?.maximum_runs ?? null,
+    fittedTransitions: parsed.data.response.transition_calibration?.fitted_transitions ?? null,
   } : null;
   const shared = ledgers.find(ledger => ledger.scope_key === 'shared');
   const assessedAgainst = (shared?.evidence as { assessed_against?: unknown } | null | undefined)?.assessed_against;
+  if (published && published.fittedTransitions !== null) {
+    const ledger = z.object({ policy: roomTransitionEvidence.shape.policy, assessed_against: z.string(),
+      observed_runs: z.number().int().nonnegative(), runs: z.array(z.unknown()) }).safeParse(shared?.evidence);
+    if (ledger.success && ledger.data.assessed_against === published.revision) {
+      const count = ledger.data.observed_runs;
+      const points = readRoomAssessmentPage(ledger.data.runs, Math.min(count, ROOM_RUN_PAGE_SIZE));
+      if (points) return { response: published, points, assessed: 'shared', observedRuns: count, room };
+    }
+    return { response: published, points: [], assessed: null, observedRuns: null, room };
+  }
   if (published && shared && assessedAgainst === published.revision) {
-    return { response: published, points: roomRunPoints([shared]).points, assessed: 'shared', room };
+    return { response: published, points: roomRunPoints([shared]).points, assessed: 'shared', observedRuns: null, room };
   }
   // Rollout only: per-band assessments are shown as points without a line.
   const legacy = ledgers.filter(ledger => ledger.scope_key !== 'shared' && ledger.scope_key !== 'attempt');
   const points = roomRunPoints(legacy).points;
-  return { response: published, points, assessed: points.length ? 'legacy' : null, room };
+  return { response: published, points, assessed: points.length ? 'legacy' : null, observedRuns: null, room };
 }
 
 export interface RoomResponseLines {
@@ -82,7 +95,7 @@ const median = (values: number[]) => {
 /** Lines evaluated from the published dynamic model; algebraic responses have none. */
 export function roomResponseLines(view: RoomResponseView): RoomResponseLines | null {
   const model = view.response?.model;
-  if (!model || view.assessed !== 'shared' || isEquilibrium(model)) return null;
+  if (!model || (view.assessed !== 'shared' && view.response!.fittedTransitions === null) || isEquilibrium(model)) return null;
   const dynamic: DynamicThermalZoneModel = model;
   const gain = dynamic.gain_c_per_wh * 1000;
   if (!(gain > 0)) return null;
@@ -90,8 +103,10 @@ export function roomResponseLines(view: RoomResponseView): RoomResponseLines | n
   const excessScatter = credible.length > 1
     ? Math.sqrt(credible.reduce((sum, p) => sum + ((p.gain! - gain) / p.gainSe!) ** 2, 0) / (credible.length - 1)) : null;
   const cooldowns = view.points.filter(p => p.cooldown);
-  const roomC = median(cooldowns.map(p => p.cooldown!.room_c)) ?? 20;
-  const houseC = median(cooldowns.flatMap(p => p.cooldown!.house_c === null ? [] : [p.cooldown!.house_c])) ?? roomC;
+  // A fixed reference keeps the published line comparable as the diagnostic page changes.
+  const chronological = view.response!.fittedTransitions !== null;
+  const roomC = chronological ? 20 : median(cooldowns.map(p => p.cooldown!.room_c)) ?? 20;
+  const houseC = chronological ? 20 : median(cooldowns.flatMap(p => p.cooldown!.house_c === null ? [] : [p.cooldown!.house_c])) ?? roomC;
   const k = dynamic.cooling_constant_per_h, h = dynamic.house_coupling_per_h ?? 0, b = dynamic.background_gain_c_per_h;
   const at = (outdoorC: number) => k * (roomC - outdoorC) + h * (roomC - houseC) - b;
   const balanceC = k > 0 ? roomC + (h * (roomC - houseC) - b) / k : null;

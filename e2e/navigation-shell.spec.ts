@@ -505,9 +505,9 @@ test.describe('staff navigation shell', () => {
     // Independently generated runs and response; no household measurements.
     await mockComfortLink(context);
     const noise = (i: number) => { const v = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v) - .5; };
-    const dispositions = ['fitted', 'fitted', 'provisional', 'uninformative', 'fitted', 'suspect_change'] as const;
-    const runs = Array.from({ length: 24 }, (_, i) => {
-      const outdoor = -16 + i * 1.3 + noise(i), start = Date.UTC(2026, 0, 3 + i * 4, 1);
+    const dispositions = ['assessed', 'assessed', 'assessed', 'uninformative', 'assessed', 'suspect_change'] as const;
+    const runs = Array.from({ length: 58 }, (_, i) => {
+      const outdoor = -16 + (i % 24) * 1.3 + noise(i), start = Date.UTC(2026, 3, 30 - i, 1);
       const disposition = dispositions[i % dispositions.length];
       const se = disposition === 'uninformative' ? .0012 : .0003;
       return { id: String(start), from_ms: start, to_ms: start + 7 * 3_600_000, measured_wh: 1600 + 40 * i, transitions: 7,
@@ -515,33 +515,46 @@ test.describe('staff navigation shell', () => {
         change_size: disposition === 'suspect_change' ? .4 : null, change_phase: disposition === 'suspect_change' ? 'heating' : null,
         disposition, on_from_ms: start + 3_600_000, off_from_ms: start + 3 * 3_600_000, outdoor_c: outdoor, house_c: 20.2,
         room_start_c: 19.4, room_peak_c: 21.1, room_end_c: 19.8, cooldown: i % 7 === 6 ? null
-          : { hours: 2.5, c_per_h: .045 * (13 - outdoor), room_c: 20.4, outdoor_c: outdoor, house_c: 20.2, residual_c_per_h: noise(i + 80) * .08 } };
+          : { hours: 2.5, c_per_h: .045 * (20 - outdoor), room_c: 20.4, outdoor_c: outdoor, house_c: 20.2, residual_c_per_h: noise(i + 80) * .08 } };
     });
     const model = { response_family: 'finite', gain_c_per_wh: .002, cooling_constant_per_h: .045, house_coupling_per_h: .02,
-      background_gain_c_per_h: .3, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 32.5, time_constant_h: 15.4,
+      background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 32.5, time_constant_h: 15.4,
       heating_rate_c_per_h: 1, r2: .9, sample_count: 700, residual_std_c: .05, heat_lag_h: .5 };
-    let shared = true;
+    let shared = true, assessed = runs;
     await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => {
       expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio' });
       return route.fulfill({ json: shared ? {
         room: { trained: true, rejection_reason: null, last_fit_attempt: null, shared_attempt: { status: 'fitted', attempted_at: '2026-03-01T00:00:00Z' } },
         response: { revision: 'shared-revision', model, training_from: '2026-01-03T00:00:00Z', training_to: '2026-04-30T00:00:00Z',
-          warnings: [], run_calibration: { fitted_runs: 12, maximum_runs: 24 } },
-        ledgers: [{ scope_key: 'shared', created_at: '2026-03-01T00:00:00Z', evidence: { assessed_against: 'shared-revision', runs } }],
+          warnings: [], transition_calibration: { policy: 'shared_interval_transitions_v1', fitted_transitions: 700 } },
+        ledgers: [{ scope_key: 'shared', created_at: '2026-03-01T00:00:00Z', evidence: { assessed_against: 'shared-revision',
+          policy: 'shared_interval_transitions_v1', observed_runs: assessed.length, runs: assessed.slice(0, 50) } }],
       } : {
         room: { trained: true, rejection_reason: null, last_fit_attempt: null, shared_attempt: null }, response: null,
-        ledgers: [{ scope_key: '-15', created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(0, 12) } }],
+        ledgers: [{ scope_key: '-15', created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(0, 12).map(run => ({ ...run, disposition: 'fitted' })) } }],
       } });
     });
     await login(page);
     await page.goto(COMFORT_LINK);
     const panel = page.getByRole('region', { name: 'Valt rum' });
     await panel.getByRole('button', { name: 'Modell', exact: true }).click();
+    await context.route('**/rest/v1/rpc/get_energy_room_run_assessments', route => {
+      expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio',
+        p_revision: 'shared-revision', p_offset: 50, p_limit: 50 });
+      return route.fulfill({ json: runs.slice(50) });
+    });
     const heating = panel.getByRole('img', { name: 'Värmerespons per förlopp' });
     const cooling = panel.getByRole('img', { name: 'Avsvalning per förlopp' });
-    await expect(heating.locator('[data-run]')).toHaveCount(24);
-    await expect(cooling.locator('[data-run]')).toHaveCount(runs.filter(run => run.cooldown).length);
-    await expect(panel.getByTestId('fitted-heating-runs')).toHaveText('12 / 24');
+    await expect(heating.locator('[data-run]')).toHaveCount(50);
+    await expect(cooling.locator('[data-run]')).toHaveCount(runs.slice(0, 50).filter(run => run.cooldown).length);
+    await expect(panel.getByTestId('fitted-transitions')).toHaveText('700');
+    await expect(panel.getByTestId('assessed-heating-runs')).toHaveText('58');
+    await panel.getByRole('button', { name: 'Äldre förlopp' }).click();
+    await expect(heating.locator('[data-run]')).toHaveCount(8);
+    await expect(panel.getByText('Förlopp 51–58 av 58')).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Äldre förlopp' })).toBeDisabled();
+    await panel.getByRole('button', { name: 'Nyare förlopp' }).click();
+    await expect(heating.locator('[data-run]')).toHaveCount(50);
     await expect(panel.getByText('Planeraren använder den här enda responsen vid varje prognostiserad utetemperatur.')).toBeVisible();
     await expect(panel.getByText(/Modell: 2 °C\/kWh/)).toBeVisible();
     await expect(panel.getByText(/Svalnar inte utan värme över/)).toBeVisible();
@@ -563,6 +576,15 @@ test.describe('staff navigation shell', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await heating.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    // Eligible transitions can identify a model even without a complete on/off run.
+    assessed = [];
+    await page.reload();
+    await panel.getByRole('button', { name: 'Modell', exact: true }).click();
+    await expect(panel.getByTestId('assessed-heating-runs')).toHaveText('0');
+    for (const chart of [heating, cooling]) {
+      await expect(chart.locator('[data-run]')).toHaveCount(0);
+      await expect(chart.locator('.recharts-line-curve[stroke-dasharray="5 4"]')).toHaveAttribute('d', /^M.*L/);
+    }
     // A room still on its earlier band responses shows its points without a line.
     shared = false;
     await page.reload();

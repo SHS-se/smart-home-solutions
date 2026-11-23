@@ -16,7 +16,7 @@ const run = z.object({
   change_at_ms: num.nullable(),
   change_size: num.nullable(),
   change_phase: z.enum(['heating', 'cooldown']).nullable(),
-  disposition: z.enum(['fitted', 'provisional', 'older_response', 'suspect_change', 'uninformative']),
+  disposition: z.enum(['assessed', 'fitted', 'provisional', 'older_response', 'suspect_change', 'uninformative']),
   on_from_ms: num.optional(),
   off_from_ms: num.optional(),
   outdoor_c: num.nullable().optional(),
@@ -59,11 +59,38 @@ export interface RoomRunPoint {
 
 /** Runs whose gain is credible enough to shape the trend. */
 export const trendRun = (point: RoomRunPoint) =>
-  (point.disposition === 'fitted' || point.disposition === 'provisional') &&
+  (point.disposition === 'assessed' || point.disposition === 'fitted' || point.disposition === 'provisional') &&
   point.gain !== null && point.gainSe !== null && point.gainSe > 0 && point.outdoorC !== null;
 
 /** A run with an unexplained mid-run heat change cannot speak for its cooldown either. */
 export const trendCooldown = (point: RoomRunPoint) => point.cooldown !== null && point.disposition !== 'suspect_change';
+
+function runPoint(value: z.infer<typeof run>, scope: string): RoomRunPoint {
+  return {
+    id: value.id, scope, fromMs: value.from_ms, toMs: value.to_ms,
+    onMs: value.on_from_ms ?? null, offMs: value.off_from_ms ?? null,
+    energyKwh: value.measured_wh / 1000, transitions: value.transitions,
+    gain: value.gain === null ? null : value.gain * 1000,
+    gainSe: value.gain_se === null ? null : value.gain_se * 1000,
+    disposition: value.disposition,
+    change: value.change_at_ms !== null && value.change_size !== null && value.change_phase !== null
+      ? { atMs: value.change_at_ms, size: value.change_size, phase: value.change_phase } : null,
+    outdoorC: value.outdoor_c ?? null, houseC: value.house_c ?? null,
+    roomStartC: value.room_start_c ?? null, roomPeakC: value.room_peak_c ?? null, roomEndC: value.room_end_c ?? null,
+    cooldown: value.cooldown ?? null,
+  };
+}
+
+export const ROOM_RUN_PAGE_SIZE = 50;
+
+const assessedRun = run.extend({ disposition: z.enum(['assessed', 'suspect_change', 'uninformative']) });
+
+/** Revision-scoped pages have unique run identities and the exact advertised row count. */
+export function readRoomAssessmentPage(raw: unknown, count: number): RoomRunPoint[] | null {
+  const result = z.array(assessedRun).length(count).safeParse(raw);
+  if (!result.success || new Set(result.data.map(value => value.id)).size !== count) return null;
+  return result.data.map(value => runPoint(value, 'shared'));
+}
 
 /**
  * One point per heating run. A run appears in every scope whose window it
@@ -82,19 +109,7 @@ export function roomRunPoints(data: unknown): { points: RoomRunPoint[]; skipped:
       const r = run.safeParse(entry);
       if (!r.success) { skipped++; continue; }
       const value = r.data, scope = parsed.data.scope_key;
-      const point: RoomRunPoint = {
-        id: value.id, scope, fromMs: value.from_ms, toMs: value.to_ms,
-        onMs: value.on_from_ms ?? null, offMs: value.off_from_ms ?? null,
-        energyKwh: value.measured_wh / 1000, transitions: value.transitions,
-        gain: value.gain === null ? null : value.gain * 1000,
-        gainSe: value.gain_se === null ? null : value.gain_se * 1000,
-        disposition: value.disposition,
-        change: value.change_at_ms !== null && value.change_size !== null && value.change_phase !== null
-          ? { atMs: value.change_at_ms, size: value.change_size, phase: value.change_phase } : null,
-        outdoorC: value.outdoor_c ?? null, houseC: value.house_c ?? null,
-        roomStartC: value.room_start_c ?? null, roomPeakC: value.room_peak_c ?? null, roomEndC: value.room_end_c ?? null,
-        cooldown: value.cooldown ?? null,
-      };
+      const point = runPoint(value, scope);
       const rank = scope === 'general' ? 0
         : point.outdoorC !== null && String(heatingBand(point.outdoorC)) === scope ? 2 : 1;
       const existing = byId.get(point.id);

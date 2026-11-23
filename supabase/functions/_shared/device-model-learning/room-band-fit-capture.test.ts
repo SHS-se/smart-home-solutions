@@ -1,6 +1,6 @@
 import { assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import type { RoomMeanQuarter } from "../device-learning/room/mean-observations.ts";
-import { decodeRoomBandFitCapture, encodeRoomBandFitCapture } from "./room-band-fit-capture.ts";
+import { decodeRoomBandFitCapture, encodeRoomBandFitCapture, decodeRoomResponseFitCapture, encodeRoomResponseFitCapture } from "./room-band-fit-capture.ts";
 
 const start = Date.UTC(2025, 0, 1);
 const from = new Date(start - 500).toISOString();
@@ -44,4 +44,17 @@ Deno.test("room fit transport enforces interval flags even when the digest match
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   const sha256 = Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("");
   await assertRejects(() => decodeRoomBandFitCapture(base64, new Date(start).toISOString(), sha256), Error, "capture interval");
+});
+
+Deno.test("chronological numerical captures preserve fractional seams without merging unavailable observations", async () => {
+  const rows: RoomMeanQuarter[] = [
+    { ...basic, start_ms: start + 123, duration_s: 3600, heat_w: null },
+    { ...basic, start_ms: start + 3_600_123, duration_s: 900, room_c: null },
+    { ...basic, start_ms: start + 7_200_000, duration_s: 900, cooling: null },
+  ];
+  const capture = await encodeRoomResponseFitCapture(rows, from);
+  assertEquals(await decodeRoomResponseFitCapture(capture.base64, from, capture.sha256), rows);
+  assertEquals(await encodeRoomResponseFitCapture(await decodeRoomResponseFitCapture(capture.base64, from, capture.sha256), from), capture);
+  const empty = await encodeRoomResponseFitCapture([], from);
+  assertEquals(await decodeRoomResponseFitCapture(empty.base64, from, empty.sha256), []);
 });

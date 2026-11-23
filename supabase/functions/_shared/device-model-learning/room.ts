@@ -1,7 +1,6 @@
-import { learnRoomResponse, type LearnedRoomResponse, ROOM_RUN_POLICY } from "../device-learning/room/response-learning.ts";
-import { ROOM_RUN_CONDITIONS, type RoomRunEvidence } from "../device-learning/room/run-calibration.ts";
-import { harvestBandRuns, mergeHarvests, type HarvestedBandRuns } from "../device-learning/room/run-pool.ts";
-import { decodeRoomBandFitCapture, encodeRoomBandFitCapture } from "./room-band-fit-capture.ts";
+import { roomResponseTrainingLength, type LearnedRoomResponse, ROOM_TRANSITION_POLICY } from "../device-learning/room/response-learning.ts";
+import { ROOM_RUN_CONDITIONS, type RoomTransitionRunLedger } from "../device-learning/room/run-calibration.ts";
+import { decodeRoomEvidenceCapture, encodeRoomEvidenceCapture, qualifyRoomEvidenceBlocks, type DecodedRoomEvidenceBlock } from "./room-evidence-capture.ts";
 import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.ts";
@@ -72,43 +71,22 @@ export function nativeRoomReadWindows(from: string, to: string): [string, string
   return windows;
 }
 
-export interface HeatingFitWindow {
-  window_key: string;
-  band_c: number;
-  from_at: string;
-  to_at: string;
-  fingerprint: string;
-  evidence_updated_at: string;
+/** Source archives are independent of fitting policy and derived estimates. */
+export const ROOM_SOURCE_IMPLEMENTATION = "chronological_native_evidence_v1";
+export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEAN_IMPLEMENTATION}:${ROOM_TRANSITION_POLICY}:${ROOM_RUN_CONDITIONS}`;
+export const ROOM_SHARED_METADATA_VERSION = 2;
+
+export interface RoomEvidenceBasis {
+  sourceRevision: number;
+  fromAt: string;
+  toAt: string;
+  implementation: string;
 }
-
-// Revisit each completed band once to publish the selected response family
-// and evaluate equilibrium forcing in its own temperature coordinates.
-export const ROOM_WINDOW_IMPLEMENTATION = `${ROOM_MEAN_IMPLEMENTATION}:${ROOM_RUN_POLICY}:${ROOM_RUN_CONDITIONS}`;
-
-function roomWindowVisitTimes(value: unknown, binding: string): Map<string, number> {
-  const result = new Map<string, number>();
-  if (!value || typeof value !== "object" || Array.isArray(value) ||
-    !("binding" in value) || value.binding !== binding ||
-    !("implementation" in value) || value.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
-    !("windows" in value) || !value.windows || typeof value.windows !== "object" || Array.isArray(value.windows)) return result;
-  for (const [key, at] of Object.entries(value.windows)) {
-    if (typeof at === "string" && Number.isFinite(Date.parse(at))) result.set(key, Date.parse(at));
-  }
-  return result;
+export interface RoomTrainingView {
+  length: number;
+  /** Only training-only freshness decisions differing from the full view. */
+  temperatures: [index: number, roomC: number | null, houseC: number | null][];
 }
-
-function inputRevision(windows: HeatingFitWindow[]): string {
-  return JSON.stringify(windows.map(window => [window.window_key, window.from_at, window.to_at, window.fingerprint])
-    .sort((a, b) => a[0].localeCompare(b[0])));
-}
-
-/** Version of the shared capture metadata carried in private fit progress. */
-export const ROOM_SHARED_METADATA_VERSION = 1;
-export const SHARED_WINDOW_KEY = "shared";
-
-/** A harvested band's place in the pool; the SQL owner checks the exact set. */
-export interface PoolRef { window_key: string; sha256: string }
-
 export interface RoomSharedMetadata {
   version: typeof ROOM_SHARED_METADATA_VERSION;
   implementation: string;
@@ -118,263 +96,196 @@ export interface RoomSharedMetadata {
   binding: string;
   baseRevision: number;
   attemptedAt: string;
-  /** Capture origin: the earliest merged row start. */
   fromAt: string;
   historyTo: string;
-  pool: PoolRef[];
-  /** SQL completion reads its scope from window.window_key. */
-  window: { window_key: typeof SHARED_WINDOW_KEY; band_c: 0; from_at: string; to_at: string; fingerprint: string; evidence_updated_at: string };
+  evidence: RoomEvidenceBasis;
+  trainingView: RoomTrainingView;
   library: RoomHeatingBands;
   ratedPowerW: number | null;
   roomName: string;
   sourceFreshness: ProbeFreshnessReport | null;
 }
-
-export interface RoomRunHarvestWork {
-  window: HeatingFitWindow;
-  /** Capture origin for the harvested rows. */
-  fromAt: string;
-  harvest: HarvestedBandRuns;
-  ratedPowerW: number | null;
-  sourceFreshness: ProbeFreshnessReport | null;
-  /** Bookkeeping published after the pool entry is saved under the same fence. */
-  model: Record<string, unknown>;
+export interface RoomLearningOwner {
+  id: string;
+  home_id: string;
+  customer_id: string;
+  owner_key: string;
+  generation: number;
+  fence: number;
 }
-
+export interface RoomLearningClock { historyTo: number; wallNow: number }
 export type RoomHeatingPreparation =
   | { kind: "model"; model: Record<string, unknown> }
-  | { kind: "harvest"; work: RoomRunHarvestWork }
+  | { kind: "refreshed" }
+  | { kind: "superseded" }
   | { kind: "shared"; work: { metadata: RoomSharedMetadata; rows: RoomMeanQuarter[] } };
+interface EvidenceWork {
+  source_revision: number;
+  next: { from_at: string; to_at: string; solar_retry_at?: string | null; solar_after?: string | null } | null;
+}
+interface EvidenceBlock {
+  from_at: string; to_at: string; sha256: string; row_count: number; capture: string;
+}
+const sameEvidence = (a: RoomEvidenceBasis | undefined, b: RoomEvidenceBasis) => a !== undefined &&
+  a.sourceRevision === b.sourceRevision && a.fromAt === b.fromAt && a.toAt === b.toAt && a.implementation === b.implementation;
 
-export interface RoomLearningClock { historyTo: number; wallNow: number }
-
-/** A stored pool entry as the learner reads it back. */
-export interface RoomRunPoolEntry extends PoolRef {
-  band_c: number;
-  from_at: string;
-  harvested_at: string;
-  capture: string;
-  row_count: number;
-  observed_runs: number;
-  rated_power_w: number | null;
-  source_freshness: ProbeFreshnessReport | null;
+/** Restore the separately qualified chronological training prefix. Its sparse
+ * deltas describe source qualification, never corrections to measured history. */
+export function roomResponseEvidence(rows: RoomMeanQuarter[], view: RoomTrainingView) {
+  const trainingRows = rows.slice(0, view.length).map(row => ({ ...row }));
+  for (const [index, room_c, house_c] of view.temperatures) Object.assign(trainingRows[index], { room_c, house_c });
+  return { fullRows: rows, trainingRows };
 }
 
-const samePool = (a: readonly PoolRef[] | undefined, b: readonly PoolRef[]) =>
-  !!a && a.length === b.length && a.every((ref, i) => ref.window_key === b[i].window_key && ref.sha256 === b[i].sha256);
-
-export function poolRefs(entries: readonly PoolRef[]): PoolRef[] {
-  return entries.map(entry => ({ window_key: entry.window_key, sha256: entry.sha256 }))
-    .sort((a, b) => a.window_key < b.window_key ? -1 : a.window_key > b.window_key ? 1 : 0);
-}
-
-function sumFreshness(parts: readonly (ProbeFreshnessReport | null)[]): ProbeFreshnessReport | null {
-  let sum: ProbeFreshnessReport | null = null;
-  for (const part of parts) {
-    if (!part) continue;
-    if (!sum) { sum = structuredClone(part); continue; }
-    for (const scope of ["room", "house"] as const) for (const kind of ["inferred", "unavailable", "unverified"] as const) {
-      sum[scope][kind] += part[scope][kind];
-    }
-  }
-  return sum;
-}
-
-/** Offline and test callers compose one learner step from the same seams as
- * the worker: a harvest saves its pool entry, a shared capture fits in full. */
-export async function fitStoredRoomHeating(...args: Parameters<typeof prepareStoredRoomHeating>): Promise<Record<string, unknown>> {
-  const prepared = await prepareStoredRoomHeating(...args);
-  if (prepared.kind === "model") return prepared.model;
-  if (prepared.kind === "harvest") {
-    const { work } = prepared, [db] = args;
-    const capture = work.harvest.run_ids.length ? await encodeRoomBandFitCapture(work.harvest.rows, work.fromAt) : null;
-    const { error } = await db.rpc("save_energy_room_run_harvest", {
-      p_window_key: work.window.window_key, p_band_c: work.window.band_c, p_from_at: work.fromAt,
-      p_capture_base64: capture?.base64 ?? null, p_sha256: capture?.sha256 ?? null, p_row_count: capture?.row_count ?? 0,
-      p_run_ids: work.harvest.run_ids, p_observed_runs: work.harvest.observed_runs,
-      p_rated_power_w: work.ratedPowerW, p_source_freshness: work.sourceFreshness,
-    });
-    if (error) throw new Error(`save_energy_room_run_harvest: ${error.message}`);
-    return work.model;
-  }
-  const { metadata, rows } = prepared.work;
-  return finalizeStoredRoomResponse(metadata, rows, learnRoomResponse(rows, metadata.ratedPowerW)).model;
-}
-
-/**
- * One step of the room's shared-response learning. Each 5 °C window whose
- * evidence changed is harvested once: its newest runs enter the private run
- * pool. When no harvest is due and the pool changed, the merged pool is
- * captured for the bounded numerical fit. Bands never own coefficients.
- */
+/** One owner refreshes one dirty source extent, or captures the complete
+ * chronological archive. Uploads only mark source dirt. Every supported
+ * transition remains available, independently of complete heating events. */
 export async function prepareStoredRoomHeating(
   // deno-lint-ignore no-explicit-any
-  db: any, homeId: string, customerId: string, roomKey: string, context: RoomHeatingContext,
+  db: any, owner: RoomLearningOwner, context: RoomHeatingContext,
   previous: StoredDeviceModel | undefined, location: { latitude: number; longitude: number } | null, clock: RoomLearningClock,
-  windowVisits?: unknown,
 ): Promise<RoomHeatingPreparation> {
+  const { home_id: homeId, customer_id: customerId, owner_key: roomKey } = owner;
   const current = readRoomHeatingBands(previous?.heating_bands);
-  const now = clock.wallNow;
-  const attemptedAt = new Date(now).toISOString();
-  const historyTo = new Date(clock.historyTo).toISOString();
-  const floor = new Date(clock.historyTo - 400 * 86_400_000).toISOString();
-  const library: RoomHeatingBands = current?.binding === context.binding ? { ...current, since: context.observed_since &&
-    Date.parse(context.observed_since) < Date.parse(current.since) ? context.observed_since : current.since } : {
-    binding: context.binding, calibration_policy: ROOM_RUN_POLICY, since: context.observed_since ?? floor,
-    reference_revision: null, active: [], candidates: [], attempted: {},
-    ...(current?.reference_revision || current?.previous_reference_revision
-      ? { previous_reference_revision: (current.reference_revision ?? current.previous_reference_revision)! } : {}),
+  const historyTo = new Date(clock.historyTo).toISOString(), attemptedAt = new Date(clock.wallNow).toISOString();
+  const floorMs = clock.historyTo - 400 * 86_400_000;
+  const since = current?.binding === context.binding
+    ? new Date(Math.min(Date.parse(current.since), Date.parse(context.observed_since ?? current.since))).toISOString()
+    : context.observed_since ?? new Date(floorMs).toISOString();
+  const fromAt = new Date(Math.max(floorMs, Date.parse(since))).toISOString();
+  // Remove the retired window traversal state while retaining accepted revisions.
+  const { window_attempts: _attempts, window_last_attempted_at: _visits, window_solar_pending: _solar,
+    window_solar_retry_at: _retry, window_evidence_updated_at: _updates, window_solar_progress: _progress,
+    general_attempt: _general, general_solar_pending: _generalSolar, general_solar_retry_at: _generalRetry,
+    ...retained } = current?.binding === context.binding ? current : {
+      binding: context.binding, since, reference_revision: null, active: [], candidates: [], attempted: {},
+      ...(current?.reference_revision || current?.previous_reference_revision
+        ? { previous_reference_revision: (current.reference_revision ?? current.previous_reference_revision)! } : {}),
+    };
+  const library: RoomHeatingBands = { ...retained, since, calibration_policy: ROOM_TRANSITION_POLICY };
+  const bookkeeping = (): RoomHeatingPreparation => ({ kind: "model", model: {
+    home_id: homeId, customer_id: customerId, room_key: roomKey, last_attempted_at: attemptedAt,
+    heating_bands: { ...library, pending_windows: 0 },
+  } });
+  const scope = { p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: context.binding,
+    p_from_at: fromAt, p_to_at: historyTo, p_implementation: ROOM_SOURCE_IMPLEMENTATION };
+  const rpc = async <T>(name: string, args: Record<string, unknown>): Promise<T> => {
+    const { data, error } = await db.rpc(name, args);
+    if (error) throw new Error(`${name}: ${error.message}`);
+    return data as T;
   };
-  // A legacy library keeps its accepted responses until the shared one publishes.
-  library.calibration_policy = ROOM_RUN_POLICY;
-  delete library.general_attempt; delete library.general_solar_pending; delete library.general_solar_retry_at;
-  const pinnedFloor = new Date(Math.max(Date.parse(library.since), Date.parse(floor))).toISOString();
-  const readWindows = async (to = historyTo): Promise<HeatingFitWindow[]> => {
-    const { data, error } = await db.rpc("get_energy_room_heating_fit_windows", {
-      p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_from: pinnedFloor, p_to: to,
-    });
-    if (error) throw new Error(`get_energy_room_heating_fit_windows: ${error.message}`);
-    return data;
-  };
-  const windows = (await readWindows()).sort((a, b) =>
-    Date.parse(b.to_at) - Date.parse(a.to_at) || a.window_key.localeCompare(b.window_key));
-  const harvested = (window: HeatingFitWindow) =>
-    !!library.window_attempts?.[window.window_key]?.startsWith(`${ROOM_WINDOW_IMPLEMENTATION}:`) &&
-    !(Date.parse(window.evidence_updated_at) > Date.parse(library.window_evidence_updated_at?.[window.window_key] ?? "1970-01-01"));
-  const visits = roomWindowVisitTimes(windowVisits, context.binding);
-  const lastVisit = (key: string): number | undefined => {
-    const published = library.window_last_attempted_at?.[key];
-    const recorded = published !== undefined ? Date.parse(published)
-      : library.window_attempts?.[key] !== undefined ? 0 : undefined;
-    const captured = visits.get(key);
-    return captured === undefined ? recorded : recorded === undefined ? captured : Math.max(captured, recorded);
-  };
-  const solarReady = (retryAt?: string | null) => !(Date.parse(retryAt ?? "") > now);
-  const pending = windows.filter(window => !harvested(window) ||
-    (library.window_solar_pending?.[window.window_key] && solarReady(library.window_solar_retry_at?.[window.window_key])))
-    .sort((a, b) => {
-      const visitA = lastVisit(a.window_key), visitB = lastVisit(b.window_key);
-      const attemptedA = visitA !== undefined, attemptedB = visitB !== undefined;
-      // First visit every available seasonal window, then fair by last visit,
-      // so a live newest window cannot starve winter evidence.
-      return Number(attemptedA) - Number(attemptedB) || (attemptedA && attemptedB ? visitA - visitB : 0) ||
-        Date.parse(b.to_at) - Date.parse(a.to_at) || a.window_key.localeCompare(b.window_key);
-    });
-  if (!windows.length) {
-    // Keep the standard recent attempt and its explicit diagnostics when no
-    // heating window exists; absence of recent heating never erases a model.
-    const row = await fitStoredRoom(db, homeId, customerId, roomKey, location, clock, library.since, true, context.binding);
-    return { kind: "model", model: { ...row, heating_bands: { ...library, pending_windows: 0 } } };
-  }
-  const bookkeeping = (heating_bands: RoomHeatingBands) => ({
-    home_id: homeId, customer_id: customerId, room_key: roomKey, last_attempted_at: attemptedAt, heating_bands });
-  if (pending.length) {
-    let window = pending[0];
-    const previousProgress = library.window_solar_progress?.[window.window_key];
-    const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding,
-      location, window.from_at, window.to_at, now, previousProgress?.through_at, library.window_solar_retry_at?.[window.window_key]);
-    const nextProgress = { from_at: window.from_at, to_at: window.to_at, through_at: solar.through_at ?? window.to_at };
-    if (solar.patched) {
-      const refreshed = (await readWindows()).find(candidate => candidate.window_key === window.window_key &&
-        candidate.from_at === window.from_at && candidate.to_at === window.to_at);
-      if (refreshed) window = refreshed;
+  const readWork = async () => {
+    const work = await rpc<EvidenceWork>("get_energy_room_evidence_work", scope);
+    if (!work || !Number.isSafeInteger(work.source_revision) || work.source_revision < 0 ||
+      (work.next !== null && (!work.next || !Number.isFinite(Date.parse(work.next.from_at)) || !Number.isFinite(Date.parse(work.next.to_at))))) {
+      throw new Error("Invalid chronological room evidence work");
     }
-    const progressLibrary: RoomHeatingBands = { ...library,
-      window_last_attempted_at: { ...library.window_last_attempted_at, [window.window_key]: attemptedAt },
-      window_solar_pending: { ...library.window_solar_pending, [window.window_key]: solar.pending },
-      window_solar_retry_at: { ...library.window_solar_retry_at, [window.window_key]: solar.retry_at },
-      window_solar_progress: { ...library.window_solar_progress, [window.window_key]: nextProgress },
-      // The remaining harvests plus the shared fit that follows them.
-      pending_windows: pending.length - 1 + Number(solar.pending && solarReady(solar.retry_at)) + 1 };
-    // An archive outage may not block the first harvest: harvest once without
-    // the missing solar hours and retry at the daily cadence.
-    if (solar.pending && (!solar.unavailable || harvested(window))) return { kind: "model", model: bookkeeping(progressLibrary) };
-    const captured = await loadRoomObservations(db, homeId, customerId, roomKey, window.from_at, window.to_at, true);
-    const after = (await readWindows(window.to_at)).find(candidate => candidate.window_key === window.window_key);
-    if (!after || inputRevision([after]) !== inputRevision([window])) return { kind: "model", model: bookkeeping(
-      { ...progressLibrary, pending_windows: Math.max(1, progressLibrary.pending_windows ?? 1) }) };
-    const rows = captured.quarters.map(thermalQuarter).filter(row => row.start_ms >= Date.parse(library.since));
-    return { kind: "harvest", work: {
-      window, fromAt: window.from_at, harvest: harvestBandRuns(rows, window.band_c),
-      ratedPowerW: captured.quarters.at(-1)?.active_power_w ?? null,
-      sourceFreshness: captured.sourceFreshness ?? null,
-      model: bookkeeping({ ...progressLibrary,
-        window_attempts: { ...library.window_attempts, [window.window_key]: `${ROOM_WINDOW_IMPLEMENTATION}:${window.fingerprint}` },
-        window_evidence_updated_at: { ...library.window_evidence_updated_at, [window.window_key]: window.evidence_updated_at } }),
-    } };
+    return work;
+  };
+  if (Date.parse(fromAt) >= clock.historyTo) return bookkeeping();
+  let work = await readWork();
+  if (work.next) {
+    const range = work.next;
+    const solar = await repairNativeRoomSolar(db, homeId, customerId, roomKey, context.binding, location,
+      range.from_at, range.to_at, clock.wallNow, range.solar_after ?? undefined, range.solar_retry_at);
+    // Irradiance repair changes canonical source evidence. Capture its new clock
+    // before the history read and let the database fence concurrent corrections.
+    if (solar.patched) work = await readWork();
+    const readTo = new Date(Date.parse(range.to_at) + HOUR_MS).toISOString();
+    const rows = (await readRoomQuarters(db, homeId, customerId, roomKey,
+      new Date(Date.parse(range.from_at) - HOUR_MS).toISOString(), readTo, true))
+      .filter(row => Date.parse(row.start_ts) >= Date.parse(range.from_at) && Date.parse(row.start_ts) < Date.parse(range.to_at));
+    const capture = await encodeRoomEvidenceCapture(rows, range.from_at, range.to_at);
+    const saved = await rpc<boolean>("save_energy_room_evidence_block", {
+      p_job_id: owner.id, p_generation: owner.generation, p_fence: owner.fence, p_revision: previous?.model_revision ?? 0,
+      p_binding: context.binding, p_source_revision: work.source_revision,
+      p_from_at: range.from_at, p_to_at: range.to_at, p_implementation: ROOM_SOURCE_IMPLEMENTATION,
+      p_capture_base64: capture.base64, p_sha256: capture.sha256, p_row_count: capture.row_count,
+      p_solar_retry_at: solar.pending ? solar.retry_at : null,
+      p_solar_after: solar.pending ? solar.through_at ?? range.from_at : null,
+    });
+    return { kind: saved ? "refreshed" : "superseded" };
   }
-  const { data: stored, error } = await db.rpc("load_energy_room_run_pool", {
-    p_home_id: homeId, p_customer_id: customerId, p_room_key: roomKey, p_binding: context.binding,
+  const evidence: RoomEvidenceBasis = { sourceRevision: work.source_revision, fromAt, toAt: historyTo, implementation: ROOM_SOURCE_IMPLEMENTATION };
+  if (library.shared_attempt?.implementation === ROOM_RESPONSE_IMPLEMENTATION && sameEvidence(library.shared_attempt.evidence, evidence)) {
+    return bookkeeping();
+  }
+  const blocks = await rpc<EvidenceBlock[]>("load_energy_room_evidence_blocks", scope);
+  if (!Array.isArray(blocks)) throw new Error("Invalid chronological room evidence blocks");
+  const decoded: DecodedRoomEvidenceBlock[] = [];
+  // Consume the transport owners as we decode; qualification sorts the
+  // disjoint extents chronologically after reconstruction.
+  for (let block = blocks.pop(); block; block = blocks.pop()) {
+    const rows = await decodeRoomEvidenceCapture(block.capture, block.from_at, block.to_at, block.sha256);
+    if (rows.length !== block.row_count) throw new Error("Room evidence block row count mismatch");
+    decoded.push({ from_at: block.from_at, to_at: block.to_at, rows });
+  }
+  const qualified = qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, historyTo);
+  const rows = qualified.quarters.map(thermalQuarter);
+  const length = roomResponseTrainingLength(rows.map(row => row.duration_s ?? 900));
+  const trainingTo = length ? new Date(rows[length - 1].start_ms + roomIntervalSeconds(rows[length - 1]) * 1000).toISOString() : fromAt;
+  const training = length ? qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, trainingTo).quarters : [];
+  // Horizon clipping above owns complete intervals. Training follows the exact
+  // prefix even when an interval straddles the chosen endpoint elsewhere.
+  if (training.length !== length) throw new Error("Room evidence training prefix mismatch");
+  const ratedPowerW = qualified.quarters.at(-1)?.active_power_w ?? null;
+  const roomName = qualified.quarters.at(-1)?.room_name ?? (typeof previous?.room_name === "string" ? previous.room_name : roomKey);
+  const temperatures: RoomTrainingView["temperatures"] = [];
+  training.forEach((row, index) => {
+    if (row.room_temperature_c !== rows[index].room_c || row.house_temperature_c !== rows[index].house_c) {
+      temperatures.push([index, row.room_temperature_c, row.house_temperature_c]);
+    }
   });
-  if (error) throw new Error(`load_energy_room_run_pool: ${error.message}`);
-  // Harvested evidence outlives raw-history retention; rows older than the
-  // pinned 400-day floor are dropped when merged.
-  const entries = Array.isArray(stored) ? stored as RoomRunPoolEntry[] : [];
-  const pool = poolRefs(entries);
-  const attempt = library.shared_attempt;
-  if (attempt?.implementation === ROOM_WINDOW_IMPLEMENTATION && samePool(attempt.pool, pool)) {
-    return { kind: "model", model: bookkeeping({ ...library, pending_windows: 0 }) };
-  }
-  if (!entries.length) return { kind: "model", model: bookkeeping({ ...library, pending_windows: 0,
-    shared_attempt: { implementation: ROOM_WINDOW_IMPLEMENTATION, pool, attempted_at: attemptedAt, status: "unidentified" } }) };
-  const decoded = await Promise.all(entries.map(async entry => ({ harvested_at: entry.harvested_at,
-    rows: await decodeRoomBandFitCapture(entry.capture, entry.from_at, entry.sha256) })));
-  const rows = mergeHarvests(decoded).filter(row => row.start_ms >= Date.parse(pinnedFloor));
-  const fromAt = new Date(rows.length ? rows[0].start_ms : Date.parse(pinnedFloor)).toISOString();
-  const evidenceAt = windows.reduce((latest, window) => Date.parse(window.evidence_updated_at) > Date.parse(latest)
-    ? window.evidence_updated_at : latest, "1970-01-01T00:00:00.000Z");
-  const newest = [...entries].sort((a, b) => Date.parse(b.harvested_at) - Date.parse(a.harvested_at))[0];
+  // Numerical capture has no use for raw probe vectors or duplicate transport
+  // rows. Drop their owners before the checkpoint encoder allocates its buffer.
+  decoded.length = 0;
+  training.length = 0;
+  qualified.quarters.length = 0;
   return { kind: "shared", work: { rows, metadata: {
-    version: ROOM_SHARED_METADATA_VERSION, implementation: ROOM_WINDOW_IMPLEMENTATION,
+    version: ROOM_SHARED_METADATA_VERSION, implementation: ROOM_RESPONSE_IMPLEMENTATION,
     homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
-    attemptedAt, fromAt, historyTo, pool,
-    window: { window_key: SHARED_WINDOW_KEY, band_c: 0, from_at: fromAt, to_at: historyTo,
-      fingerprint: JSON.stringify(pool), evidence_updated_at: evidenceAt },
-    library: { ...library, pending_windows: 1 },
-    ratedPowerW: newest?.rated_power_w ?? null,
-    roomName: typeof previous?.room_name === "string" ? previous.room_name : roomKey,
-    sourceFreshness: sumFreshness(entries.map(entry => entry.source_freshness)),
+    attemptedAt, fromAt, historyTo, evidence, trainingView: { length, temperatures }, library,
+    ratedPowerW, roomName,
+    sourceFreshness: qualified.sourceFreshness,
   } } };
 }
 
-/** Scratch metadata is disposable; incompatible state must be captured again. */
+/** Scratch is disposable; incompatible or corrupt qualifications are captured again. */
 export function parseRoomSharedMetadata(value: unknown): RoomSharedMetadata | null {
   if (!value || typeof value !== "object") return null;
   const row = value as RoomSharedMetadata;
-  const date = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
-  if (row.version !== ROOM_SHARED_METADATA_VERSION || row.implementation !== ROOM_WINDOW_IMPLEMENTATION ||
-    ![row.homeId, row.customerId, row.roomKey, row.binding].every(value => typeof value === "string" && value.length > 0) ||
-    !Number.isSafeInteger(row.baseRevision) || row.baseRevision < 0 ||
-    !date(row.attemptedAt) || !date(row.fromAt) || !date(row.historyTo) ||
-    !Array.isArray(row.pool) || !row.pool.every(ref => ref && typeof ref.window_key === "string" && typeof ref.sha256 === "string") ||
-    row.window?.window_key !== SHARED_WINDOW_KEY ||
-    !(row.ratedPowerW === null || typeof row.ratedPowerW === "number" && Number.isFinite(row.ratedPowerW)) ||
-    typeof row.roomName !== "string") return null;
-  const parsed = readRoomHeatingBands(row.library);
-  if (!parsed || parsed.binding !== row.binding) return null;
-  if (row.sourceFreshness !== null) {
-    if (!row.sourceFreshness || ![row.sourceFreshness.room, row.sourceFreshness.house].every(part => part &&
-      [part.inferred, part.unavailable, part.unverified].every(value => Number.isSafeInteger(value) && value >= 0))) return null;
-  }
+  const date = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+  const finite = (v: unknown): v is number | null => v === null || typeof v === "number" && Number.isFinite(v);
+  if (row.version !== ROOM_SHARED_METADATA_VERSION || row.implementation !== ROOM_RESPONSE_IMPLEMENTATION ||
+    ![row.homeId, row.customerId, row.roomKey, row.binding].every(v => typeof v === "string" && v.length > 0) ||
+    !Number.isSafeInteger(row.baseRevision) || row.baseRevision < 0 || !date(row.attemptedAt) || !date(row.fromAt) || !date(row.historyTo) ||
+    !row.evidence || !Number.isSafeInteger(row.evidence.sourceRevision) || row.evidence.sourceRevision < 0 ||
+    row.evidence.fromAt !== row.fromAt || row.evidence.toAt !== row.historyTo || row.evidence.implementation !== ROOM_SOURCE_IMPLEMENTATION ||
+    !row.trainingView || !Number.isSafeInteger(row.trainingView.length) || row.trainingView.length < 0 ||
+    !Array.isArray(row.trainingView.temperatures) || !row.trainingView.temperatures.every((entry, index, all) =>
+      Array.isArray(entry) && entry.length === 3 && Number.isSafeInteger(entry[0]) && entry[0] >= 0 && entry[0] < row.trainingView.length &&
+      (index === 0 || entry[0] > all[index - 1][0]) && finite(entry[1]) && finite(entry[2])) ||
+    !finite(row.ratedPowerW) || typeof row.roomName !== "string") return null;
+  const library = readRoomHeatingBands(row.library);
+  if (!library || library.binding !== row.binding) return null;
+  if (row.sourceFreshness !== null && (!row.sourceFreshness || ![row.sourceFreshness.room, row.sourceFreshness.house].every(part =>
+    part && [part.inferred, part.unavailable, part.unverified].every(v => Number.isSafeInteger(v) && v >= 0)))) return null;
   return row;
 }
 
-/**
- * Publish the shared response. Success replaces the reference with the shared
- * response and empties the legacy bands; every ledger run was assessed against
- * the new revision. Failure keeps whatever response was accepted before.
- */
+/** A failed attempt retains the accepted response; only a complete numerical
+ * fit publishes a new shared model and its revision-scoped assessments. */
 export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: RoomMeanQuarter[],
-  fit: LearnedRoomResponse): { model: Record<string, unknown>; ledger: RoomRunEvidence | null } {
-  const { homeId, customerId, roomKey, attemptedAt, window, library, sourceFreshness, pool } = metadata;
+  fit: LearnedRoomResponse): { model: Record<string, unknown>; ledger: RoomTransitionRunLedger | null } {
+  const { homeId, customerId, roomKey, attemptedAt, library, sourceFreshness, evidence } = metadata;
   const learning = fit.result.learning_evidence;
   const attempt = { status: fit.result.ok ? "fitted" : "unidentified",
     issues: fit.result.ok ? fit.result.warnings ?? [] : [fit.result.reason], learning,
     ...(sourceFreshness ? { source_freshness: sourceFreshness } : {}) };
   const physical = fit.result.ok ? fit.result.model : null;
   const revision = physical ? crypto.randomUUID() : null;
-  const trainingFrom = fit.run_ledger?.oldest_run_at ?? window.from_at;
-  const trainingTo = fit.run_ledger?.newest_run_at ?? window.to_at;
+  const trainingFrom = rows.length ? new Date(rows[0].start_ms).toISOString() : metadata.fromAt;
+  const trainingTo = rows.length ? new Date(rows.at(-1)!.start_ms + roomIntervalSeconds(rows.at(-1)!)*1000).toISOString() : metadata.historyTo;
   const dynamic = physical && !isEquilibrium(physical) ? physical : null;
   const scalar = dynamic ? Object.fromEntries(Object.entries(dynamic).filter(([key]) => key !== "response_family")) : physical ? {
     gain_c_per_wh: null, cooling_constant_per_h: null, background_gain_c_per_h: null,
@@ -383,22 +294,21 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
     residual_std_c: physical.residual_std_c, heat_lag_h: physical.heat_lag_h ?? null,
     prediction_error_c: physical.prediction_error_c ?? null, solar_mean_w_per_m2: physical.solar_mean_w_per_m2 ?? null,
   } : {};
-  const sharedAttempt = { implementation: ROOM_WINDOW_IMPLEMENTATION, pool, attempted_at: attemptedAt,
+  const shared_attempt = { implementation: ROOM_RESPONSE_IMPLEMENTATION, evidence, attempted_at: attemptedAt,
     status: physical ? "fitted" as const : "unidentified" as const };
   const accepted = library.reference !== undefined || library.active.length > 0;
   const { diagnostics: _diagnostics, ...kept } = library;
   const heating_bands: RoomHeatingBands = physical && fit.result.ok
     ? { ...kept, reference: { model: physical, scope: { kind: "shared" }, training_from: trainingFrom, training_to: trainingTo,
       warnings: fit.result.warnings ?? [], learning_evidence: learning }, reference_revision: revision,
-      active: [], candidates: [], attempted: {}, shared_attempt: sharedAttempt, pending_windows: 0 }
-    : { ...library, shared_attempt: sharedAttempt, pending_windows: 0 };
+      active: [], candidates: [], attempted: {}, shared_attempt, pending_windows: 0 }
+    : { ...library, shared_attempt, pending_windows: 0 };
   const ledger = fit.run_ledger ? { ...fit.run_ledger, assessed_against: revision } : null;
   return { ledger, model: { home_id: homeId, customer_id: customerId, room_key: roomKey, room_name: metadata.roomName,
-    ...(!physical && !accepted ? { trained: false, rejection_reason: fit.result.ok ? "insufficient_heating_runs" : fit.result.reason,
-      sample_count: rows.length, training_from: window.from_at, training_to: window.to_at } : {}),
+    ...(!physical && !accepted ? { trained: false, rejection_reason: fit.result.ok ? "insufficient_samples" : fit.result.reason,
+      sample_count: rows.length, training_from: trainingFrom, training_to: trainingTo } : {}),
     ...(physical ? { ...scalar, trained: true, rejection_reason: null, sample_count: physical.sample_count,
-      fitted_at: attemptedAt, training_from: trainingFrom, training_to: trainingTo,
-      passive_heat: null, doorway_exchange: null } : {}),
+      fitted_at: attemptedAt, training_from: trainingFrom, training_to: trainingTo, passive_heat: null, doorway_exchange: null } : {}),
     last_attempted_at: attemptedAt, last_fit_attempt: attempt, heating_bands } };
 }
 

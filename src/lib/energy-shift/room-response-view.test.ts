@@ -74,3 +74,31 @@ Deno.test('ledger runs merge across scopes, prefer their own band and tolerate o
   assertEquals(points[1].outdoorC, null);
   assertEquals(skipped, 2);
 });
+
+Deno.test('chronological support and per-run diagnostics are separate, including response-only observations', () => {
+  const initial = evidence('current', 'current', []);
+  const response = { ...initial.response, run_calibration: null,
+    transition_calibration: { policy: 'shared_interval_transitions_v1', fitted_transitions: 10_001 } };
+  const capture = (observed: number, runs: unknown[], revision = 'current') => ({
+    ...initial, response, ledgers: [{ scope_key: 'shared', created_at: '2026-01-01T00:00:00Z', evidence: {
+      assessed_against: revision, policy: 'shared_interval_transitions_v1', observed_runs: observed, runs,
+    } }],
+  });
+  const empty = readRoomResponseView(capture(0, []))!;
+  assertEquals(empty.response?.fittedTransitions, 10_001);
+  assertEquals(empty.response?.fittedRuns, null);
+  assertEquals(empty.observedRuns, 0);
+  assertAlmostEquals(roomResponseLines(empty)!.cooling.at(0), .7, 1e-12);
+
+  const runs = Array.from({ length: 50 }, (_, i) => run(String(i), i, 2, 0, 'assessed'));
+  const firstPage = readRoomResponseView(capture(94, runs))!;
+  assertEquals(firstPage.observedRuns, 94);
+  assertEquals(firstPage.points.length, 50);
+  assertEquals(firstPage.points[0].disposition, 'assessed');
+  assertAlmostEquals(roomResponseLines(firstPage)!.cooling.at(0), roomResponseLines(empty)!.cooling.at(0), 1e-12);
+  const stale = readRoomResponseView(capture(94, runs, 'older'))!;
+  assertEquals(stale.points, []);
+  assertEquals(stale.observedRuns, null);
+  assertEquals(stale.assessed, null);
+  assertAlmostEquals(roomResponseLines(stale)!.heater.cPerKwh, 2, 1e-12);
+});

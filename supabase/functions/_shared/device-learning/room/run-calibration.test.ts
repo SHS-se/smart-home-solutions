@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { syntheticRoomPlant } from "./native-mean.fixture.ts";
-import { calibrateRoomRuns, describeHeatingRun, MAX_ROOM_HEATING_RUNS, recentRoomRunRows, roomHeatingRuns, RUN_COOLDOWN_WINDOW_H } from "./run-calibration.ts";
+import { assessRoomHeatingRuns, describeHeatingRun, roomHeatingRuns, RUN_COOLDOWN_WINDOW_H } from "./run-calibration.ts";
 import type { DynamicThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 const model: DynamicThermalZoneModel = { response_family: "finite", gain_c_per_wh: .002,
@@ -20,48 +20,47 @@ function plant(events = 16, durations: (900 | 3600)[] = [900]) {
   }).rows;
 }
 
-Deno.test("run calibration requires three events, not three quarters or fragments", () => {
-  const rows = plant(3), original = structuredClone(rows);
-  assertEquals(roomHeatingRuns(rows.slice(0, 32), () => true).length, 1);
-  assertEquals(calibrateRoomRuns(rows.slice(0, 64), model, () => true).evidence.fitted_runs, 0);
-  const fitted = calibrateRoomRuns(rows, model, () => true);
-  assertEquals(fitted.evidence.fitted_runs, 3);
-  for (const run of fitted.evidence.runs) assertAlmostEquals(run.gain!, .002, 1e-7);
-  assertEquals(rows, original);
-  assertEquals(roomHeatingRuns(rows.slice(3, 13), () => true), []);
+const assess = (rows: ReturnType<typeof plant>) => assessRoomHeatingRuns(rows, model, .01, model.background_gain_c_per_h);
+
+Deno.test("a single completed run has its own gain assessment and a capture-edge fragment has none", () => {
+  const rows = plant(1);
+  const assessment = assess(rows);
+  assertEquals(assessment.observed_runs, 1);
+  assertEquals(assessment.runs[0].disposition, "assessed");
+  assertAlmostEquals(assessment.runs[0].gain!, .002, 1e-7);
+  assertEquals(assess(rows.slice(3, 13)).runs, []);
 });
 
-Deno.test("run working evidence rolls to the newest twenty-four while preserving raw history", () => {
-  const rows = plant(30), oldRuns = roomHeatingRuns(rows, () => true), original = structuredClone(rows);
-  const fit = calibrateRoomRuns(rows, model, () => true);
-  assertEquals(fit.evidence.observed_runs, 30);
-  assertEquals(fit.evidence.retained_runs, MAX_ROOM_HEATING_RUNS);
-  assertEquals(fit.evidence.fitted_runs, MAX_ROOM_HEATING_RUNS);
-  assertEquals(fit.evidence.runs[0].id, oldRuns[30 - MAX_ROOM_HEATING_RUNS].id);
-  assert(recentRoomRunRows(rows, () => true).length < rows.length);
+Deno.test("the ledger describes each observed run throughout the chronological history", () => {
+  const rows = plant(30), events = roomHeatingRuns(rows), original = structuredClone(rows);
+  const ledger = assess(rows);
+  assertEquals(ledger.observed_runs, 30);
+  assertEquals(ledger.runs.map(run => run.id), events.map(run => run.id));
+  for (const run of ledger.runs) {
+    assertEquals(run.disposition, "assessed");
+    assertAlmostEquals(run.gain!, .002, 1e-7);
+  }
   assertEquals(rows, original);
 });
 
-Deno.test("native hourly runs retain their actual energy and cannot split at weather boundaries", () => {
-  const rows = plant(4, [3600]);
-  const all = roomHeatingRuns(rows, () => true), band = roomHeatingRuns(rows, c => c < -7);
+Deno.test("native hourly runs keep their measured energy across weather changes", () => {
+  const rows = plant(4, [3600]), all = roomHeatingRuns(rows);
   assertEquals(all.length, 4);
-  for (const run of all) assertEquals(run.measured_wh, 13 * 500);
-  assert(band.length <= all.length);
-  assert(band.every(run => all.some(other => other.id === run.id)));
-  const result = calibrateRoomRuns(rows, model, () => true);
-  assertEquals(result.evidence.fitted_runs, 4);
+  const changingWeather = rows.map((row, i) => ({ ...row, outdoor_c: i % 2 ? 6 : -12 }));
+  assertEquals(roomHeatingRuns(changingWeather), all);
+  const ledger = assess(changingWeather);
+  assertEquals(ledger.runs.map(run => run.measured_wh), Array(4).fill(13 * 500));
 });
 
 Deno.test("missing input is unknown and cannot manufacture an independent event", () => {
   const rows = plant(3);
   rows[7].heat_w = null;
-  const runs = roomHeatingRuns(rows, () => true);
+  const runs = roomHeatingRuns(rows);
   assertEquals(runs.length, 2);
-  assertEquals(calibrateRoomRuns(rows, model, () => true).evidence.fitted_runs, 0);
+  assertEquals(assess(rows).runs.map(run => run.id), runs.map(run => run.id));
 });
 
-Deno.test("unknown overlapping heat changes inside a run exclude that run and its cooldown", () => {
+Deno.test("a change in unmeasured heat is reported within the affected run while every completed event remains in the ledger", () => {
   const rows = plant(8);
   let warmth = 0;
   for (let i = 0; i < rows.length; i++) {
@@ -70,20 +69,16 @@ Deno.test("unknown overlapping heat changes inside a run exclude that run and it
     rows[i].room_c! += warmth * (1 - decay) / (.075 * hours) + input / .075 * (1 - (1 - decay) / (.075 * hours));
     warmth = warmth * decay + input / .075 * (1 - decay);
   }
-  const result = calibrateRoomRuns(rows, model, () => true);
-  const suspect = result.evidence.runs.find(run => run.disposition === "suspect_change");
-  assert(suspect);
-  assertEquals(result.evidence.fitted_runs, 7);
-  // A shared boundary mean can be context for the neighboring event. No
-  // scored contiguous transition may lie in the excluded run/tail.
-  assert(result.rows.every((row, i) => {
-    const next = result.rows[i + 1];
-    return !next || next.start_ms !== row.start_ms + row.duration_s! * 1000 ||
-      row.start_ms < suspect.from_ms || next.start_ms >= suspect.to_ms;
-  }));
+  const result = assess(rows);
+  assertEquals(result.observed_runs, 8);
+  const affected = result.runs[6];
+  assertEquals(affected.disposition, "suspect_change");
+  assert(affected.change_at_ms !== null && affected.change_at_ms >= affected.from_ms && affected.change_at_ms < affected.to_ms);
+  assert(affected.cooldown && affected.cooldown.hours >= 1);
+  assertEquals(result.runs.filter(run => run.disposition === "assessed").length, 7);
 });
 
-Deno.test("three recent coherent changed responses replace the old regime rather than being rejected", () => {
+Deno.test("a change in physical gain remains visible in the individual run assessments", () => {
   const rows = plant(10);
   let additional = 0, delivered = 0;
   for (let i = 0; i < rows.length; i++) {
@@ -105,10 +100,12 @@ Deno.test("three recent coherent changed responses replace the old regime rather
       rows[i].room_c! += sum / 600;
     }
   }
-  const result = calibrateRoomRuns(rows, model, () => true);
-  assertEquals(result.evidence.fitted_runs, 3);
-  for (const run of result.evidence.runs.filter(run => run.disposition === "fitted")) assertAlmostEquals(run.gain!, .003, 1e-7);
-  assertEquals(result.evidence.runs.filter(run => run.disposition === "older_response").length, 7);
+  const result = assess(rows);
+  assertEquals(result.observed_runs, 10);
+  for (const [index, run] of result.runs.entries()) {
+    assertAlmostEquals(run.gain!, index < 7 ? .002 : .003, 1e-7);
+    assertEquals(run.disposition, "assessed");
+  }
 });
 
 Deno.test("temperature and weather gaps skip transitions without splitting the measured heating event", () => {
@@ -116,26 +113,19 @@ Deno.test("temperature and weather gaps skip transitions without splitting the m
   rows[7].room_c = null;
   rows[39].outdoor_c = null;
   rows[73].house_c = null;
-  assertEquals(roomHeatingRuns(rows, () => true).length, 3);
-  assertEquals(calibrateRoomRuns(rows, model, () => true).evidence.fitted_runs, 3);
-});
-
-Deno.test("the serialized working event view is idempotent across band slicing, native durations and gaps", () => {
-  const rows = plant(16,[900,3600]);
-  rows[29].heat_w = null;
-  rows[147].room_c = null;
-  rows[204].outdoor_c = null;
-  for (const inBand of [(_c:number)=>true,(c:number)=>c < -7,(c:number)=>c >= -7]) {
-    const once = recentRoomRunRows(rows,inBand);
-    assertEquals(recentRoomRunRows(once,inBand),once,"resumed and recaptured numerical designs use identical event anchors");
+  assertEquals(roomHeatingRuns(rows).length, 3);
+  const partial = assess(rows), complete = assess(plant(3));
+  for (const [index, run] of partial.runs.entries()) {
+    assertEquals(run.id, complete.runs[index].id);
+    assertEquals(run.transitions, complete.runs[index].transitions - 2);
   }
 });
 
 Deno.test("each run records its observed outdoor temperature and cooldown", () => {
   const rows = plant(4);
-  const runs = roomHeatingRuns(rows, () => true);
-  const { evidence } = calibrateRoomRuns(rows, model, () => true);
-  for (const [index, run] of evidence.runs.entries()) {
+  const runs = roomHeatingRuns(rows);
+  const ledger = assess(rows);
+  for (const [index, run] of ledger.runs.entries()) {
     const window = rows.slice(runs[index].from, runs[index].end + 1);
     const outdoor = window.reduce((sum, row) => sum + row.outdoor_c!, 0) / window.length;
     assertAlmostEquals(run.outdoor_c!, outdoor, 1e-9);
@@ -149,7 +139,7 @@ Deno.test("each run records its observed outdoor temperature and cooldown", () =
 
 Deno.test("missing readings shorten a run description and never fill it", () => {
   const rows = plant(3);
-  const [run] = roomHeatingRuns(rows, () => true);
+  const [run] = roomHeatingRuns(rows);
   const complete = describeHeatingRun(rows, run, .5);
   // A hole in the middle of the cooldown leaves an estimate from what was seen.
   const holed = structuredClone(rows);

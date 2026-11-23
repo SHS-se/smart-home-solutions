@@ -1,4 +1,4 @@
-import { roomRunEvidence } from '@/lib/energy-shift/room-run-evidence';
+import { roomRunEvidence, roomTransitionEvidence } from '@/lib/energy-shift/room-run-evidence';
 import { z } from 'zod';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { THERMAL_REJECTION_EN, THERMAL_REJECTION_SV } from './plan/types';
@@ -59,22 +59,26 @@ export function LatestRoomSourceEvidence({ attempt }: { attempt: unknown }) {
   </details>;
 }
 
-const runAttempt = z.object({ learning: z.object({ run_calibration: roomRunEvidence }) });
+const runAttempt = z.object({ learning: z.object({
+  run_calibration: roomRunEvidence.optional(), transition_calibration: roomTransitionEvidence.optional(),
+}) });
 
 /** Latest attempt evidence is shown separately from the selected stored fit. */
 export function LatestRoomRunEvidence({ attempt }: { attempt: unknown }) {
   const { language, t } = useLanguage();
   const parsed = runAttempt.safeParse(attempt);
   if (!parsed.success) return null;
-  const run = parsed.data.learning.run_calibration;
+  const { run_calibration: run, transition_calibration: transitions } = parsed.data.learning;
+  if (!run && !transitions) return null;
   return <section className="space-y-1 border-t pt-3 text-xs" data-testid="latest-room-run-evidence">
     <h4 className="text-sm font-medium">{t('Senaste anpassningsförsök', 'Latest fitting attempt')}</h4>
-    <p>{run.fitted_runs.toLocaleString(language)} {t('jämförbara förlopp', 'comparable runs')}
+    {transitions && <p>{t('Anpassade övergångar', 'Fitted transitions')}{' · '}{transitions.fitted_transitions.toLocaleString(language)}</p>}
+    {!transitions && run && <p>{run.fitted_runs.toLocaleString(language)} {t('jämförbara förlopp', 'comparable runs')}
       {' · '}{run.suspect_runs.toLocaleString(language)} {t('misstänkta förlopp uteslutna', 'suspect runs excluded')}
-      {' · '}{run.provisional_runs.toLocaleString(language)} {t('preliminära förlopp', 'provisional runs')}</p>
-    <p className="text-muted-foreground">{t(
+      {' · '}{run.provisional_runs.toLocaleString(language)} {t('preliminära förlopp', 'provisional runs')}</p>}
+    {!transitions && <p className="text-muted-foreground">{t(
       'Det senaste försöket kan gälla ett annat temperaturintervall. Underlaget för vald publicerad modell visas ovan.',
       'The latest attempt may concern another temperature range. Evidence for the selected published model appears above.',
-    )}</p>
+    )}</p>}
   </section>;
 }

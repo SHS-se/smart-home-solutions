@@ -1,5 +1,4 @@
-/** Owns the bounded, recent evidence for a room response. Raw observations and
- * accepted revisions outlive this working set; neither is edited here. */
+/** Describes each completed heating event against the published room response. */
 import type { RoomMeanQuarter } from "./mean-observations.ts";
 import { roomIntervalHours, roomIntervalSeconds } from "./mean-evidence.ts";
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
@@ -9,9 +8,8 @@ import { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 import { roomMeanObservation } from "../../planner/models/room/observation.ts";
 import { isEquilibrium, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
-import { ROOM_RUN_POLICY, MIN_ROOM_HEATING_RUNS, MAX_ROOM_HEATING_RUNS } from "../../planner/models/room/run-evidence.ts";
-export { ROOM_RUN_POLICY, MIN_ROOM_HEATING_RUNS, MAX_ROOM_HEATING_RUNS } from "../../planner/models/room/run-evidence.ts";
-/** The proposed three-standard-error distinguishability criterion. */
+import { ROOM_TRANSITION_POLICY, type ROOM_RUN_POLICY, type MAX_ROOM_HEATING_RUNS } from "../../planner/models/room/run-evidence.ts";
+/** Within-run heater contrast needed to distinguish a gain from measurement noise. */
 const RESPONSE_STANDARD_ERRORS = 3;
 
 export interface HeatingRun {
@@ -87,14 +85,26 @@ export interface RoomRunEvidence {
   runs: HeatingRunAssessment[];
 }
 
+type AssessedHeatingRun = Omit<HeatingRunAssessment, "disposition" | "repeated_shape"> & {
+  disposition: "assessed" | "suspect_change" | "uninformative";
+};
+
+/** Run-level diagnostics for the published chronological response. A run
+ * belongs to this ledger even if its own heater contrast is unidentified. */
+export interface RoomTransitionRunLedger {
+  policy: typeof ROOM_TRANSITION_POLICY;
+  assessed_against?: string | null;
+  observed_runs: number;
+  runs: AssessedHeatingRun[];
+}
+
 const finite = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v);
 const known = (row: RoomMeanQuarter) => finite(row.heat_w) && row.heat_w >= 0 && roomHeatingDirectionKnown(row);
 const follows = (a: RoomMeanQuarter, b: RoomMeanQuarter) =>
   b.start_ms === a.start_ms + roomIntervalSeconds(a) * 1000;
 
-/** Run identity is established before weather slicing. Missing readings are
- * never OFF or a new event. Capture-edge fragments cannot supply a run vote. */
-export function roomHeatingRuns(rows: readonly RoomMeanQuarter[], inBand: (c: number) => boolean): HeatingRun[] {
+/** Only a measured off/on/off sequence identifies a complete heating event. */
+export function roomHeatingRuns(rows: readonly RoomMeanQuarter[]): HeatingRun[] {
   const runs: HeatingRun[] = [];
   let start = 0;
   while (start < rows.length) {
@@ -109,7 +119,6 @@ export function roomHeatingRuns(rows: readonly RoomMeanQuarter[], inBand: (c: nu
       if (off === stop) break;
       while (i < stop && rows[i].heat_w! <= HEATED_SAMPLE_MIN_W) i++;
       const end = i - 1;
-      if (!rows.slice(on, off).some(row => finite(row.outdoor_c) && inBand(row.outdoor_c))) { i--; continue; }
       const from = on - 1;
       runs.push({ id: String(rows[on].start_ms), from_ms: rows[from].start_ms,
         on_from_ms: rows[on].start_ms, off_from_ms: rows[off].start_ms,
@@ -123,21 +132,7 @@ export function roomHeatingRuns(rows: readonly RoomMeanQuarter[], inBand: (c: nu
   return runs;
 }
 
-/** A sparse numerical view retains measured context, with real gaps between
- * unrelated events. The observation solver estimates each unknown entry state. */
-export function recentRoomRunRows(rows: readonly RoomMeanQuarter[], inBand: (c: number) => boolean, count = MAX_ROOM_HEATING_RUNS): RoomMeanQuarter[] {
-  const runs = roomHeatingRuns(rows, inBand).slice(-count);
-  return rowsForRuns(rows, runs);
-}
-
-export function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun[]): RoomMeanQuarter[] {
-  const indices = new Set<number>();
-  for (const run of runs) for (let i = run.from; i <= run.end; i++) indices.add(i);
-  return [...indices].sort((a, b) => a - b).map(i => rows[i]);
-}
-
-/** Version of the descriptive run conditions stored in each ledger. Changing
- * it revisits every band once, so stored ledgers describe their runs. */
+/** Descriptive run conditions stored with an assessed response revision. */
 export const ROOM_RUN_CONDITIONS = "run_conditions_v2";
 
 /** The window after the heater stops in which cooling is compared across runs.
@@ -215,8 +210,7 @@ interface RunEquation { index: number; x: number[]; y: number; exposure: number 
 
 /** A run's heater contrast is conditional on boundary/solar response. Its
  * nuisance rate and unknown entry heater state are not future heat inputs. */
-function runEquations(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: ThermalZoneModel,
-  inBand: (c: number) => boolean): RunEquation[] {
+function runEquations(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: ThermalZoneModel): RunEquation[] {
   const lag = model.heat_lag_h ?? 0, equilibrium = isEquilibrium(model);
   const k = equilibrium ? 0 : model.cooling_constant_per_h + (model.house_coupling_per_h ?? 0);
   const sun = equilibrium ? model.solar_c_per_wm2 : model.solar_gain_c_per_h_per_wm2;
@@ -228,7 +222,6 @@ function runEquations(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: 
     const pair = equilibrium ? roomEquilibriumMeanPair(lag, roomIntervalHours(q), roomIntervalHours(next))
       : roomMeanPair(currentOp, roomMeanObservation(k, lag, roomIntervalHours(next)));
     if ([q, next].every(row => finite(row.room_c) && finite(row.outdoor_c) && finite(row.house_c)) &&
-      inBand(q.outdoor_c!) && inBand(next.outdoor_c!) &&
       (sun == null || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2)))) {
       const background = (row: RoomMeanQuarter) => equilibrium
         ? model.outdoor_share * row.outdoor_c! + (1 - model.outdoor_share) * row.house_c! + (sun ?? 0) * (row.solar_w_per_m2 ?? 0)
@@ -247,13 +240,13 @@ function runEquations(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: 
 }
 
 function runResponse(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: ThermalZoneModel,
-  inBand: (c: number) => boolean, noiseC: number, nuisanceOffset: number): HeatingRunAssessment {
-  const result: HeatingRunAssessment = { id: run.id, from_ms: run.from_ms, to_ms: run.to_ms,
+  noiseC: number, nuisanceOffset: number): AssessedHeatingRun {
+  const result: AssessedHeatingRun = { id: run.id, from_ms: run.from_ms, to_ms: run.to_ms,
     measured_wh: run.measured_wh, transitions: 0, gain: null, gain_se: null, nuisance: null, nuisance_se: null, balance_per_degree: null, balance_se_per_degree: null,
     change_at_ms: null, change_size: null, change_se: null, change_phase: null,
-    change_from_h: null, change_to_h: null, repeated_shape: false, disposition: "uninformative",
+    change_from_h: null, change_to_h: null, disposition: "uninformative",
     ...describeHeatingRun(rows, run, model.heat_lag_h ?? 0) };
-  const terms = runEquations(rows, run, model, inBand), matrix = terms.map(term => term.x);
+  const terms = runEquations(rows, run, model), matrix = terms.map(term => term.x);
   result.transitions = terms.length;
   if (result.cooldown) result.cooldown = { ...result.cooldown, residual_c_per_h: cooldownResidual(rows, run, model, terms) };
   const beta = leastSquares(matrix, terms.map(term => term.y));
@@ -280,9 +273,7 @@ function runResponse(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: T
   }, 0) / exposure;
   const gradient = Math.hypot(meanGradient("outdoor_c"), meanGradient("house_c"));
   if (!(gradient > 0)) return result;
-  // Compare the conditional heat balance at like boundary gradients, rather
-  // than forcing a renovated room to retain its old loss rate. The numerator
-  // is a normalized nuisance coefficient contrast, with matching units.
+  // Express the run’s conditional heat-balance difference per degree of boundary gradient.
   result.balance_per_degree = (beta[1] - nuisanceOffset) / gradient;
   result.balance_se_per_degree = result.nuisance_se / gradient;
   // A scanned step has amplitude and change-location parameters. The BIC
@@ -324,67 +315,14 @@ function runResponse(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: T
     }
   }
   result.disposition = result.change_at_ms !== null ? "suspect_change"
-    : beta[0] > RESPONSE_STANDARD_ERRORS * uncertainty ? "provisional" : "uninformative";
+    : beta[0] > RESPONSE_STANDARD_ERRORS * uncertainty ? "assessed" : "uninformative";
   return result;
 }
 
-/** Agreement concerns recent runs, not agreement with an incumbent model.
- * Three coherent new responses can replace an older, genuinely changed plant. */
-export function calibrateRoomRuns(rows: readonly RoomMeanQuarter[], model: ThermalZoneModel,
-  inBand: (c: number) => boolean, noiseC = 0, nuisanceOffset = isEquilibrium(model) ? model.offset_c : model.background_gain_c_per_h): { rows: RoomMeanQuarter[]; evidence: RoomRunEvidence } {
-  const observed = roomHeatingRuns(rows, inBand), retained = observed.slice(-MAX_ROOM_HEATING_RUNS);
-  const assessments = retained.map(run => runResponse(rows, run, model, inBand, noiseC, nuisanceOffset));
-  // A repeatable, phase-aligned shape seen in the other independent runs is
-  // evidence about the heater/observation shape, not evidence identifying an
-  // unknown source in this one run. Preserve the diagnostic and cross-check
-  // against at least two OTHER events; do not let a run certify itself.
-  for (const run of assessments.filter(run => run.disposition === "suspect_change")) {
-    const peers = assessments.filter(other => other !== run && other.change_at_ms !== null &&
-      other.change_phase === run.change_phase && other.change_from_h! <= run.change_to_h! &&
-      run.change_from_h! <= other.change_to_h! &&
-      Math.abs(other.change_size! - run.change_size!) <= RESPONSE_STANDARD_ERRORS * Math.hypot(other.change_se!, run.change_se!));
-    const differentClock = (a: HeatingRunAssessment, b: HeatingRunAssessment) => {
-      const widthA = a.change_to_h! - a.change_from_h!, widthB = b.change_to_h! - b.change_from_h!;
-      const midpointA = (a.change_at_ms! / 3_600_000 + widthA / 2) % 24;
-      const midpointB = (b.change_at_ms! / 3_600_000 + widthB / 2) % 24;
-      const difference = Math.abs(midpointA - midpointB);
-      return Math.min(difference, 24 - difference) > (widthA + widthB) / 2;
-    };
-    if (peers.some((a, i) => differentClock(run, a) && peers.slice(i + 1).some(b => differentClock(run, b) && differentClock(a, b)))) {
-
-      run.repeated_shape = true;
-      run.disposition = run.gain! > RESPONSE_STANDARD_ERRORS * run.gain_se! ? "provisional" : "uninformative";
-    }
-  }
-  const usable = assessments.filter(run => run.disposition === "provisional");
-  const compatible = (a: number, b: number, seA: number, seB: number) => Math.abs(a - b) <=
-    RESPONSE_STANDARD_ERRORS * Math.hypot(seA, seB) + Number.EPSILON * 64 * Math.max(Math.abs(a), Math.abs(b));
-  // A renovation may change losses while the heater's gain is unchanged. The
-  // conditional balance distinguishes that regime before the exact refit;
-  // its nuisance offset itself never becomes a future source of heat.
-  const agrees = (a: HeatingRunAssessment, b: HeatingRunAssessment) =>
-    compatible(a.gain!, b.gain!, a.gain_se!, b.gain_se!) &&
-    compatible(a.balance_per_degree!, b.balance_per_degree!, a.balance_se_per_degree!, b.balance_se_per_degree!);
-  let selected: HeatingRunAssessment[] = [];
-  for (const seed of [...usable].reverse()) {
-    const group: HeatingRunAssessment[] = [seed];
-    for (const run of [...usable].reverse()) if (run !== seed && group.every(other => agrees(run, other))) group.push(run);
-    if (group.length >= MIN_ROOM_HEATING_RUNS) { selected = group; break; }
-  }
-  const selectedIds = new Set(selected.map(run => run.id));
-  const firstSelected = Math.min(...selected.map(run => run.from_ms));
-  for (const run of usable) {
-    if (selectedIds.has(run.id)) run.disposition = "fitted";
-    else if (run.from_ms < firstSelected && selected.length) run.disposition = "older_response";
-  }
-  const selectedRuns = retained.filter(run => selectedIds.has(run.id));
-  return { rows: rowsForRuns(rows, selectedRuns), evidence: {
-    policy: ROOM_RUN_POLICY, minimum_runs: MIN_ROOM_HEATING_RUNS, maximum_runs: MAX_ROOM_HEATING_RUNS,
-    observed_runs: observed.length, retained_runs: retained.length, fitted_runs: selected.length,
-    suspect_runs: assessments.filter(run => run.disposition === "suspect_change").length,
-    provisional_runs: assessments.filter(run => run.disposition === "provisional").length,
-    oldest_run_at: selectedRuns.length ? new Date(selectedRuns[0].from_ms).toISOString() : null,
-    newest_run_at: selectedRuns.length ? new Date(selectedRuns.at(-1)!.to_ms).toISOString() : null,
-    runs: assessments,
-  } };
+/** Describe each complete event against one final response. Unknown heat and
+ * changes within an event remain diagnostics rather than membership votes. */
+export function assessRoomHeatingRuns(rows: readonly RoomMeanQuarter[], model: ThermalZoneModel,
+  noiseC: number, nuisanceOffset: number): RoomTransitionRunLedger {
+  const runs = roomHeatingRuns(rows).map(run => runResponse(rows, run, model, noiseC, nuisanceOffset));
+  return { policy: ROOM_TRANSITION_POLICY, observed_runs: runs.length, runs };
 }

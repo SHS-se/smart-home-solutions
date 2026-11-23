@@ -9,7 +9,7 @@
  * machine below. Samples run one after another in fresh processes: concurrent
  * samples would share CPU cores and caches and add the noise this removes.
  */
-import { cpuUsage } from "node:process";
+import { cpuUsage, memoryUsage, resourceUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
 import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import type { RoomPreparationProgress } from "../supabase/functions/_shared/rules-room-services.ts";
@@ -22,6 +22,7 @@ import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-p
 import { createDeviceLearningReplay } from "../supabase/functions/_shared/device-learning-replay.ts";
 import { handleDeviceLearning } from "../supabase/functions/_shared/device-learning-worker.ts";
 import { syntheticPoolLearningReplay } from "../tests/device-learning-cpu.fixture.ts";
+import { replayRoomCapture, ROOM_CAPTURE_NOW, syntheticRoomArchive } from "../tests/room-capture-cpu.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the
 // hosted two-second CPU ceiling for host differences and transport. The native
@@ -34,7 +35,7 @@ const PREPARATION_BUDGET_MS = 1000;
 const BASELINE_REFERENCE_MS = 340;
 const REFERENCE_ROUNDS = 400;
 
-type Sample = { cpu_ms: number; elapsed_ms: number; wasm_memory_bytes?: number };
+type Sample = { cpu_ms: number; elapsed_ms: number; wasm_memory_bytes?: number; max_rss_kib?: number };
 
 const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> => {
   const before = cpuUsage();
@@ -90,6 +91,41 @@ async function calibrationSample(): Promise<Sample> {
   assert(model.thermal_dynamics.recovery_evidence);
   assertEquals(model.last_fit_attempt.recovery_selection.selected, "recovering_source");
   return sample;
+}
+
+/** Complete chronological capture through the production worker. The caller
+ * supplies the serialized SQL archive from another process, outside its clock. */
+async function roomCaptureSample(profileMemory = false) {
+  const snapshot = () => {
+    const { rss, heapUsed, external, arrayBuffers } = memoryUsage();
+    return { rss, heapUsed, external, arrayBuffers, heapAndExternal: heapUsed + external };
+  };
+  const baseline = snapshot(), peaks = { ...baseline };
+  const observe = () => {
+    const usage = snapshot();
+    for (const name of Object.keys(peaks) as (keyof typeof peaks)[]) peaks[name] = Math.max(peaks[name], usage[name]);
+  };
+  const replay = replayRoomCapture(await new Response(Deno.stdin.readable).arrayBuffer(), profileMemory ? observe : undefined);
+  // Profiling is separate from gate samples. Timers observe async decode, and
+  // the RPC adapter observes transport boundaries. Synchronous intermediate
+  // allocations between observations can exceed these sampled peaks.
+  const timer = profileMemory ? setInterval(observe, 5) : undefined;
+  try {
+    const sample = await measure(async () => {
+      const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
+        method: "POST", headers: { "x-energy-learning-token": "synthetic" },
+        body: JSON.stringify({ job_id: "synthetic" }),
+      }), replay, () => ROOM_CAPTURE_NOW);
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), { checkpointed: true });
+    });
+    replay.check();
+    observe();
+    return { ...sample, max_rss_kib: resourceUsage().maxRSS,
+      ...(profileMemory ? { memory_bytes: { baseline, sampled_peak: peaks, post_capture: snapshot() } } : {}) };
+  } finally {
+    if (timer !== undefined) clearInterval(timer);
+  }
 }
 
 /** Cold preparation handler, including transport encoding, with nine rooms. */
@@ -172,12 +208,19 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration"): Promise<Sample> {
-  const { code, stdout } = await new Deno.Command(Deno.execPath(), {
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture",
+  input?: Uint8Array<ArrayBuffer>): Promise<Sample> {
+  const child = new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
     args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--no-code-cache", import.meta.filename!, `--${kind}`],
-    stdout: "piped", stderr: "inherit",
-  }).output();
+    stdin: input ? "piped" : "null", stdout: "piped", stderr: "inherit",
+  }).spawn();
+  if (input) {
+    const writer = child.stdin.getWriter();
+    await writer.write(input);
+    await writer.close();
+  }
+  const { code, stdout } = await child.output();
   const lines = new TextDecoder().decode(stdout).trim().split("\n");
   assertEquals(code, 0, lines.join("\n"));
   return JSON.parse(lines.at(-1)!);
@@ -201,7 +244,12 @@ async function cpuModel(): Promise<string> {
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
-if (Deno.args.includes("--plan")) {
+if (Deno.args.includes("--room-capture-fixture")) {
+  const bytes = await syntheticRoomArchive(Number(Deno.args[1]));
+  await new Blob([bytes]).stream().pipeTo(Deno.stdout.writable);
+} else if (Deno.args.includes("--room-capture")) {
+  console.log(JSON.stringify(await roomCaptureSample(Deno.args.includes("--profile-memory"))));
+} else if (Deno.args.includes("--plan")) {
   console.log(JSON.stringify(await planSample()));
 } else if (Deno.args.includes('--recovery')) {
   console.log(JSON.stringify(await planSample(true)));
@@ -222,7 +270,10 @@ if (Deno.args.includes("--plan")) {
 } else {
   console.log(JSON.stringify({ cpu_model: await cpuModel() }));
   const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [], roomTargets: number[] = [], calibrations: number[] = [];
-  const recoveries: number[] = [], varyingRoomTargets: number[] = [];
+  const recoveries: number[] = [], varyingRoomTargets: number[] = [], roomCaptures: number[] = [];
+  // An hour per source block exercises the cost of 9,600 independent digests
+  // and gzip frames across 400 days. Fixture bytes are never generated in a measured worker.
+  const archive = await syntheticRoomArchive(9600);
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -235,6 +286,8 @@ if (Deno.args.includes("--plan")) {
     const roomTarget = await coldSample("room-targets");
     const varyingRoomTarget = await coldSample("varying-room-targets");
     const calibration = await coldSample("calibration");
+    const roomCapture = await coldSample("room-capture", archive);
+    roomCaptures.push(roomCapture.cpu_ms);
     calibrations.push(calibration.cpu_ms);
     references.push(ref.cpu_ms);
     plans.push(plan.cpu_ms);
@@ -243,7 +296,8 @@ if (Deno.args.includes("--plan")) {
     varyingRooms.push(varying.cpu_ms);
     roomTargets.push(roomTarget.cpu_ms);
     varyingRoomTargets.push(varyingRoomTarget.cpu_ms);
-    console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
+    console.log(JSON.stringify({ run, room_capture_cpu_ms: roomCapture.cpu_ms, room_capture_rss_kib: roomCapture.max_rss_kib,
+      reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
       preparation_cpu_ms: preparation.cpu_ms, preparation_elapsed_ms: preparation.elapsed_ms,
       mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms, room_targets_cpu_ms: roomTarget.cpu_ms, varying_room_targets_cpu_ms: varyingRoomTarget.cpu_ms,
       preparation_wasm_memory_bytes: preparation.wasm_memory_bytes, mixed_room_wasm_memory_bytes: mixed.wasm_memory_bytes,
@@ -259,6 +313,9 @@ if (Deno.args.includes("--plan")) {
   const calibration = median(calibrations) * speed;
   console.log(JSON.stringify({ median_calibration_cpu_ms: median(calibrations), baseline_calibration_cpu_ms: calibration }));
   assert(calibration < PREPARATION_BUDGET_MS, `Held-out pool calibration used ${calibration.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
+  const roomCapture = median(roomCaptures) * speed;
+  console.log(JSON.stringify({ median_room_capture_cpu_ms: median(roomCaptures), baseline_room_capture_cpu_ms: roomCapture }));
+  assert(roomCapture < BUDGET_MS, `Cold chronological room capture used ${roomCapture.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
   const prepared = median(preparations) * speed;
   console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
   assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

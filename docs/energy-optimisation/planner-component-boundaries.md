@@ -457,18 +457,47 @@ quarter; the quarter's forecast outdoor temperature is an input to it, never a
 model selector. Rooms no longer select a response per 5 °C band, and there is
 no response switching or memory conversion between quarters.
 
-The 5 °C windows remain only as sampling strata. Each window whose evidence
-changed is harvested once, under the job fence, into a private run pool (its
-newest heating runs as sparse native rows). Harvested evidence outlives raw
-history retention and is pruned only when the room's heating source binding
-changes. When no harvest is due and the pool changed, the merged pool is
-captured and fitted with the existing bounded cells on up to 24 runs taken
-round-robin across strata. Completion publishes only over the exact pool that
-was captured; every run in the published ledger is reassessed against the
-published revision, so its per-run °C/kWh and cool-down residual are
-comparable across seasons. The response is stored in `heating_bands.reference`
-with scope `shared`; a successful publication empties the legacy bands, which
-the existing trigger archives.
+Room learning now captures chronological source evidence instead of outdoor-band
+windows or a 24-run working set. The fenced learning owner refreshes at most ten
+days of source-qualified native rows per request. Private compressed blocks keep
+probe/source facts and explicit missing measurements; an empty block records an
+empty range. Uploads journal material changes, including shared household probe
+inputs, rather than running regression before the evidence is qualified. Each archive
+checkpoint resumes the private job without revising the accepted model or
+invalidating planning captures. Ordinary
+retention is marked separately from a retraction and preserves the source side of
+an active archive seam.
+
+The complete pinned horizon supplies every eligible interval transition, including
+idle stretches and unfinished heating events. Freshness is evaluated over that
+horizon, and independently over the chronological training prefix. Training and
+full fits also choose their own solar coverage. The immutable numerical capture
+retains full-view observations and sparse training-only qualification differences;
+neither source estimates nor inferred nuisance heat become measured history.
+
+The existing interval-mean equations, continuous exchange profile, lag grid and
+ordered unexplained-heat HMM remain the statistical model. Their Gaussian physical
+regression already compresses a fixed feature basis before exchange is applied;
+a decay grid is unnecessary. Equal additive regression statistics can have
+different ordered HMM likelihoods, so sums alone cannot replace the source rows.
+A corrected heater reading also changes subsequent carried heat within its real
+contiguous segment. The new path makes acquisition incremental while preserving
+exact ordered replay; it does not claim a constant-time fit.
+
+One staged fit advances eighteen training/full cells under the existing numerical
+budget. Publication certifies identified transition support and positive residual
+degrees of freedom under `shared_interval_transitions_v1`. Complete runs are
+assessed against the final response for charts; their count, individual noise or
+agreement with peers cannot reject a valid aggregate response. Assessments are
+stored and paged by published revision, separately from the compact planning
+model. A shared response with no complete heating event can still be identified.
+
+Completion fences owner, binding, model revision and material changes to the
+captured source range. Appends beyond its pinned horizon belong to the next fit;
+corrections inside it discard disposable numerical scratch and retry without
+advancing that horizon. Successful publication replaces `heating_bands.reference`
+with scope `shared` and empties the old bands. Old accepted model records remain
+readable during rollout, but the retired band/run sampler does not run.
 
 During rollout a room without a shared response keeps its previously accepted
 response for the whole forecast (the recent general response, else the band
