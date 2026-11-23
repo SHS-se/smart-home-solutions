@@ -5,6 +5,7 @@ import { splitConsumption } from './consumption-series';
 import { orderConsumptionStack } from './consumption-stack-order';
 import { formatHomeDayMonthTime } from './home-time';
 import type { HotWaterQuarter } from './hot-water-gate';
+import type { RoomTemperatureSamples } from './room-temperature';
 import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 import { hasDeviceInstruction, type ChartInstructionSlot } from './plan-device-instruction';
 
@@ -45,8 +46,8 @@ export interface PlanPanelRow {
   cumulativeCostSek: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolTemperatureC?: number | null;
-  /** Room readings on the past side, driven rooms' forecasts on the future side. */
-  roomTemperatureC?: Record<string, number>;
+  /** Timestamped room evidence and captured forecasts, without changing their provenance. */
+  roomTemperatures?: RoomTemperatureSamples;
   /** Planned quarters: each driven room's comfort minimum, °C by room key. */
   roomComfortMinC?: Record<string, number>;
   /** The plan's hot-water decision, on planned quarters of a home that has one. */
@@ -101,7 +102,7 @@ export function projectPlanChart(input: {
       exportPriceSekPerKwh: prices.kind !== 'live' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
       importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),
       cumulativeCostSek: running, poolTemperatureC: row.poolC ?? null,
-      ...(row.roomC ? { roomTemperatureC: row.roomC } : {}),
+      ...(row.roomTemperatures ? { roomTemperatures: row.roomTemperatures } : {}),
       ...(row.roomComfortMinC ? { roomComfortMinC: row.roomComfortMinC } : {}),
       ...(hotWater ? { hotWater: row.measured ? null : hotWater.byStart.get(row.startMs) ?? null } : {}),
     };

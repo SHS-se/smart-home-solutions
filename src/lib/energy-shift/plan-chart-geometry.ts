@@ -132,6 +132,24 @@ export const midpointLinePath = (
   `${offset === 0 ? 'M' : 'L'}${fmt(x(run.start + offset + 0.5))},${fmt(y(value))}`,
 ).join('')).join('');
 
+/** A polyline through explicit instants. Null samples preserve missing intervals. */
+export const timestampedLinePath = (
+  points: readonly ({ atMs: number; value: number } | null)[],
+  x: Scale,
+  y: Scale,
+): string => {
+  let connected = false;
+  return points.map(point => {
+    if (point === null || !isDrawable(point.value) || !Number.isFinite(point.atMs)) {
+      connected = false;
+      return '';
+    }
+    const command = connected ? 'L' : 'M';
+    connected = true;
+    return `${command}${fmt(x(point.atMs))},${fmt(y(point.value))}`;
+  }).join('');
+};
+
 /**
  * The area between two levels drawn as midpoint lines, such as a store and
  * the level it would have had without an estimated withdrawal. Only quarters

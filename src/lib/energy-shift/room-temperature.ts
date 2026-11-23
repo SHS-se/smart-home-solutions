@@ -4,7 +4,7 @@ import {
   controlledRooms, type RoomPlan,
 } from '../../../supabase/functions/_shared/planner/controlled-rooms';
 
-/** One measured room reading: the temperature at the start of the quarter. */
+/** A native quarter mean, keyed by the beginning of its measurement interval. */
 export interface RoomSlotRow {
   start_ts: string;
   room_key: string;
@@ -34,41 +34,79 @@ export function chartedTemperatureRooms(
   return [...rooms.values()];
 }
 
+/** Forecast states are instants; recorded room temperatures are interval means. */
+export interface RoomTemperatureSample {
+  atMs: number;
+  temperatureC: number;
+  kind: 'interval_mean' | 'forecast';
+}
+
+export type RoomTemperatureSamples = Record<string, readonly RoomTemperatureSample[]>;
+
 export interface RoomTemperaturePlan {
   rooms: ChartRoom[];
-  /** °C at the start of each quarter, by quarter start. */
-  temperatureByStart: ReadonlyMap<number, Record<string, number>>;
+  /** Timestamped forecast segments owned by the quarter they describe. */
+  samplesByStart: ReadonlyMap<number, RoomTemperatureSamples>;
   /** Each planned quarter's comfort minimum, by quarter start. */
   comfortMinByStart: ReadonlyMap<number, Record<string, number>>;
 }
 
 const QUARTER_MS = 15 * 60_000;
 
-const put = (map: Map<number, Record<string, number>>, at: number, key: string, value: number) => {
-  if (!Number.isFinite(at) || !Number.isFinite(value)) return;
-  map.set(at, { ...map.get(at), [key]: value });
-};
-
 /**
- * The plan gives each quarter's temperature at its end, which is the next
- * quarter's start: the instant a measured reading is taken at. Shifting it a
- * quarter keeps the planned line on the same clock as the measured one.
+ * Preserve the plan's capture state and quarter-end states on their own clock.
+ * Each quarter owns its segment, including the final horizon endpoint. A window
+ * starting later can therefore show its published start without a live reading.
+ * Older stored plans have endpoints but no initial state; do not invent one.
  */
 export function plannedRoomTemperatures(plan: RoomPlan): RoomTemperaturePlan {
   const rooms = controlledRooms(plan);
   const starts = (plan.thermal_projection?.starts ?? []).map(start => Date.parse(start));
-  const temperatureByStart = new Map<number, Record<string, number>>();
+  const initialAt = Date.parse(plan.thermal_projection?.initial_at ?? '');
+  const samplesByStart = new Map<number, RoomTemperatureSamples>();
   const comfortMinByStart = new Map<number, Record<string, number>>();
   for (const room of rooms) starts.forEach((start, i) => {
-    put(temperatureByStart, start + QUARTER_MS, room.key, room.planned_temperature_c[i]);
-    put(comfortMinByStart, start, room.key, room.comfort_min_c[i]);
+    if (!Number.isFinite(start)) return;
+    const samples: RoomTemperatureSample[] = [];
+    const add = (atMs: number, temperatureC: number | undefined) => {
+      if (Number.isFinite(atMs) && temperatureC !== undefined && Number.isFinite(temperatureC)) {
+        samples.push({ atMs, temperatureC, kind: 'forecast' });
+      }
+    };
+    if (i === 0) add(initialAt, room.initial_temperature_c);
+    else if (starts[i - 1] + QUARTER_MS === start) add(start, room.planned_temperature_c[i - 1]);
+    add(start + QUARTER_MS, room.planned_temperature_c[i]);
+    if (samples.length) samplesByStart.set(start, { ...samplesByStart.get(start), [room.key]: samples });
+    const comfort = room.comfort_min_c[i];
+    if (Number.isFinite(comfort)) comfortMinByStart.set(start, { ...comfortMinByStart.get(start), [room.key]: comfort });
   });
   return {
     rooms: rooms.map(room => ({ key: room.key, name: room.name, deviceKeys: room.device_keys ?? [] })),
-    temperatureByStart, comfortMinByStart,
+    samplesByStart, comfortMinByStart,
   };
 }
 
 export const EMPTY_ROOM_PLAN: RoomTemperaturePlan = {
-  rooms: [], temperatureByStart: new Map(), comfortMinByStart: new Map(),
+  rooms: [], samplesByStart: new Map(), comfortMinByStart: new Map(),
 };
+
+/** Keep missing quarters and source boundaries visible; never bridge a hole. */
+export function roomTemperatureSeries(
+  rows: readonly { roomTemperatures?: RoomTemperatureSamples }[],
+  key: string,
+  kind: RoomTemperatureSample['kind'],
+): (RoomTemperatureSample | null)[] {
+  const points: (RoomTemperatureSample | null)[] = [];
+  for (const row of rows) {
+    const samples = row.roomTemperatures?.[key]?.filter(sample => sample.kind === kind) ?? [];
+    if (!samples.length) { points.push(null); continue; }
+    const previous = points.at(-1);
+    if (kind === 'forecast' && previous && previous.atMs !== samples[0].atMs) points.push(null);
+    for (const sample of samples) {
+      const previous = points.at(-1);
+      if (previous?.atMs === sample.atMs && previous.temperatureC === sample.temperatureC) continue;
+      points.push(sample);
+    }
+  }
+  return points;
+}

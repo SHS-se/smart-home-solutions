@@ -324,12 +324,33 @@ function aicc(fit: Candidate): number {
   return fit.n * Math.log(Math.max(Number.MIN_VALUE, fit.mse)) + 2 * parameters +
     (fit.n > parameters + 1 ? 2 * parameters * (parameters + 1) / (fit.n - parameters - 1) : Infinity);
 }
+type EvaluatedCandidate = { fit: Candidate; errors: Map<number, number> };
+/** Each selection population owns its common support. Descriptive algebraic
+ * evidence cannot remove observations from state-carrying forecast selection. */
+function selectCandidate(full: readonly Candidate[], evaluated: readonly EvaluatedCandidate[]): {
+  selected: Candidate | null; validation: Candidate | null; errors: number[];
+  criterion: "chronological_trajectory_mse" | "aicc";
+} {
+  const common = evaluated.length ? [...evaluated[0].errors.keys()].filter(i => evaluated.every(value => value.errors.has(i))) : [];
+  if (common.length) {
+    const error = (value: EvaluatedCandidate) => common.reduce((sum, i) => sum + value.errors.get(i)! ** 2, 0) / common.length;
+    const best = evaluated.reduce((a, b) => error(b) < error(a) ? b : a);
+    return { selected: full.find(fit => candidateKey(fit) === candidateKey(best.fit))!,
+      validation: best.fit, errors: common.map(i => best.errors.get(i)!), criterion: "chronological_trajectory_mse" as const };
+  }
+  return { selected: full.reduce<Candidate | null>((best, fit) => !best || aicc(fit) < aicc(best) ? fit : best, null),
+    validation: null, errors: [], criterion: "aicc" as const };
+}
 export interface MeasuredRoomLearningEvidence {
   method: "measured_run_native_mean_v1";
   implementation: typeof ROOM_MEASURED_POLICY;
   observation: "interval_mean";
   selection: "chronological_trajectory_mse";
+  selection_scope: "state_carrying";
   selected_lag_h: number | null;
+  /** Best description across all families, not a second executable response. */
+  descriptive_fit: { family: Family; lag_h: number; criterion: "chronological_trajectory_mse" | "aicc";
+    observations: number; trajectory_mae_c: number | null; trajectory_bias_c: number | null } | null;
   forecast_nuisance: { excluded: true; fitted_offset: number; projected_offset: number; unit: "C/h" | "C" };
   measured_runs: MeasuredRoomCalibration;
 }
@@ -347,21 +368,14 @@ export function finalizeMeasuredRoomResponse(prepared: PreparedMeasuredRoomRespo
   const validationView = { ...prepared.full, rows: [...prepared.training.rows, ...prepared.full.rows.slice(split)] };
   const possible = new Map(full.map(fit => [candidateKey(fit), fit]));
   const evaluated = training.filter(fit => possible.has(candidateKey(fit))).map(fit => ({ fit, errors: validationErrors(validationView, fit, split) }));
-  const common = evaluated.length ? [...evaluated[0].errors.keys()].filter(i => evaluated.every(value => value.errors.has(i))) : [];
-  let selected: Candidate | null = null, validation: Candidate | null = null;
-  if (common.length) {
-    const best = evaluated.reduce((a, b) => {
-      const error = (value: typeof a) => common.reduce((sum, i) => sum + value.errors.get(i)! ** 2, 0) / common.length;
-      return error(b) < error(a) ? b : a;
-    });
-    validation = best.fit; selected = possible.get(candidateKey(best.fit))!;
-  } else {
-    selected = full.reduce<Candidate | null>((best, fit) => !best || aicc(fit) < aicc(best) ? fit : best, null);
-  }
+  // Algebraic equilibrium identifies a balance, not room capacity. The same
+  // learner fits it as descriptive evidence but never invents a relaxation
+  // constant to turn that balance into a measured-state forecast.
+  const { selected, validation, errors } = selectCandidate(full.filter(fit => fit.family !== "equilibrium"),
+    evaluated.filter(value => value.fit.family !== "equilibrium"));
+  const descriptive = selectCandidate(full, evaluated);
   const model = selected ? responseModel(selected, prepared.ratedPowerW) : null;
   const assessed = assessMeasuredRuns(measureRoomRuns(prepared.full.rows), model);
-  const validationValues = validation ? validationErrors(validationView, validation, split) : new Map<number, number>();
-  const errors = common.map(i => validationValues.get(i)!);
   const projectedValues = validation ? [...validationErrors(validationView, validation, split, true).values()] : [];
   const projectedMetrics = {
     projected_trajectory_mae_c: projectedValues.length ? projectedValues.reduce((sum, x) => sum + Math.abs(x), 0) / projectedValues.length : null,
@@ -374,7 +388,11 @@ export function finalizeMeasuredRoomResponse(prepared: PreparedMeasuredRoomRespo
       trajectory_bias_c: errors.length ? errors.reduce((sum, x) => sum + x, 0) / errors.length : null } };
   const offset = selected ? selected.beta[selected.weather ? 2 : 1] : 0;
   const learning: MeasuredRoomLearningEvidence = { method: "measured_run_native_mean_v1", implementation: ROOM_MEASURED_POLICY,
-    observation: "interval_mean", selection: "chronological_trajectory_mse", selected_lag_h: selected?.lag ?? null,
+    observation: "interval_mean", selection: "chronological_trajectory_mse", selection_scope: "state_carrying", selected_lag_h: selected?.lag ?? null,
+    descriptive_fit: descriptive.selected ? { family: descriptive.selected.family, lag_h: descriptive.selected.lag,
+      criterion: descriptive.criterion, observations: descriptive.errors.length,
+      trajectory_mae_c: descriptive.errors.length ? descriptive.errors.reduce((sum, x) => sum + Math.abs(x), 0) / descriptive.errors.length : null,
+      trajectory_bias_c: descriptive.errors.length ? descriptive.errors.reduce((sum, x) => sum + x, 0) / descriptive.errors.length : null } : null,
     forecast_nuisance: { excluded: true, fitted_offset: offset, projected_offset: Math.min(0, offset), unit: selected?.family === "equilibrium" ? "C" : "C/h" },
     measured_runs: calibration };
   return { result: model ? { ok: true, model: excludeUncontrolledRoomHeat(model), learning_evidence: learning }

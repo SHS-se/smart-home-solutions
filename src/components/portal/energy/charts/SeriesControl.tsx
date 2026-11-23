@@ -6,7 +6,7 @@ export interface SeriesControlProps {
   id: EnergySeriesId; name: string; value?: string; colour: string;
   /** Keyed by a hatched swatch, for an estimate drawn as a hatched area. */
   hatched?: boolean;
-  right: number; width: number; y: number; anchorY?: number;
+  right: number; width: number; y: number; anchorY?: number; anchorX?: number;
   hidden: boolean; active: boolean;
   onPoint: (id: EnergySeriesId | null) => void;
   onFocusSeries: (id: EnergySeriesId | null) => void;
@@ -14,15 +14,15 @@ export interface SeriesControlProps {
 }
 
 /** Every panel uses the same compact, keyboard-operable key. */
-export default function SeriesControl({ id, name, value, colour, hatched = false, right, width, y, anchorY,
+export default function SeriesControl({ id, name, value, colour, hatched = false, right, width, y, anchorY, anchorX = right,
   hidden, active, onPoint, onFocusSeries, onToggle }: SeriesControlProps) {
   return <g data-series-control={id} data-room-label={id.startsWith('room:') ? id.slice(5) : undefined}
     onPointerEnter={() => onPoint(id)} onPointerLeave={() => onPoint(null)}>
     <title>{[name, value].filter(Boolean).join(' · ')}</title>
     {anchorY !== undefined && !hidden && <>
-      <polyline points={`${right},${anchorY} ${right + 5},${anchorY} ${right + 13},${y}`}
+      <polyline points={`${anchorX},${anchorY} ${right + 5},${anchorY} ${right + 13},${y}`}
         fill="none" stroke={colour} strokeWidth={1} strokeOpacity={0.7} />
-      <circle cx={right} cy={anchorY} r={2.5} fill={colour} />
+      <circle cx={anchorX} cy={anchorY} r={2.5} fill={colour} />
     </>}
     <foreignObject x={right + 16} y={y - 9} width={width - right - 24} height={18}>
       <button type="button" aria-label={name} aria-pressed={!hidden}

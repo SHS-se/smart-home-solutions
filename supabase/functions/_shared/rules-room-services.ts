@@ -1,3 +1,4 @@
+import { roomPlanClock } from "./planner/models/room/state.ts";
 import { heatingDraw } from "./planner/weather-heating.ts";
 import { heatingModelRuns, type HeatingModelSource, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
 import { roomResponseEvidenceLimited } from "./planner/room-response.ts";
@@ -100,7 +101,7 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
     const limitedFit = roomResponseEvidenceLimited(zone.model_warnings);
-    if (!limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
+    if (!limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && !isEquilibrium(zone.model) && temperature !== null &&
       outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
@@ -216,7 +217,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
     if (!isThermostat(m.thermostat)) throw new Error("Native thermostat evidence was not prepared");
     return { ...m.thermostat, power_w: m.active_power_w!,
       ...(m.weather_heating?.banded ? { reservation_w: m.active_power_w! } : {}),
-      sensor_offset_c: m.thermostat.current_temperature_c - zone.start_temperature_c! };
+      sensor_offset_c: m.thermostat.current_temperature_c - (zone.temperature_observation?.mean_c ?? zone.start_temperature_c!) };
   });
   const actuators = shared ? [...thermostats, ...relays.map(m => ({
     relay: true, power_w: m.active_power_w!, sensor_offset_c: 0, current_temperature_c: zone.start_temperature_c!,
@@ -226,8 +227,9 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
   const weather = members.some(member => member.weather_heating);
   const controlled = [...members, ...relays];
   const electricalUse = controlled.map(() => [] as HeatingModelSource[]);
+  const clock = roomPlanClock(snapshot);
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
-    const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
+    const hours = clock.hours[i];
     const steps = Math.ceil(hours * 60);
     // One response throughout; the quarter's outdoor temperature is its input.
     const physics = model;

@@ -3,6 +3,7 @@ import {
   linearScale,
   midpointBandPath,
   midpointLinePath,
+  timestampedLinePath,
   niceTicks,
   placeBandLabels,
   priceDomain,
@@ -196,4 +197,18 @@ Deno.test('a missing base or device band never hides another device', () => {
   assertEquals(stepBandPath(bands[1], x, y).split('M').length - 1, 1);
   assertEquals(stepBandPath(bands[3], x, y).split('M').length - 1, 1);
   assert(Number.isNaN(bands[2][1][1]));
+});
+
+Deno.test('timestamped room trajectories preserve capture, mean and endpoint positions without bridging gaps', () => {
+  const x = linearScale([0, 30 * 60_000], [0, 300]);
+  const y = linearScale([10, 30], [200, 0]);
+  assertEquals(timestampedLinePath([
+    { atMs: 7 * 60_000, value: 20 },
+    { atMs: 15 * 60_000, value: 21 },
+    { atMs: 30 * 60_000, value: 22 },
+  ], x, y), 'M70,100L150,90L300,80');
+  assertEquals(timestampedLinePath([
+    { atMs: 7.5 * 60_000, value: 20 }, null,
+    { atMs: 22.5 * 60_000, value: 22 },
+  ], x, y), 'M75,100M225,80');
 });

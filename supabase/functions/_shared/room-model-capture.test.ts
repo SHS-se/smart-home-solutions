@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { createClient } from "npm:@supabase/supabase-js@2.90.1";
+import { createClient } from "@supabase/supabase-js";
 import { cpuPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
 import { prepareRoomModels, captureRoomPlanningState, type RoomDeviceMapping } from "./room-model-capture.ts";
 import { prepareRoomServices } from "./rules-room-services.ts";
@@ -50,7 +50,7 @@ Deno.test("capture reads current temperatures and routines without selecting mod
       const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
       calls.push(endpoint);
       if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
-        prepared.rooms.map(room => ({ room_key: room.key, room_temperature_c: 19 }))));
+        prepared.rooms.map(room => ({ room_key: room.key, room_temperature_c: 19, start_ts: new Date(Math.floor(Date.parse(snapshot.captured_at) / 900_000) * 900_000 - 900_000).toISOString() }))));
       if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
         prepared.rooms.map(room => ({ room_key: room.key, weekday_modes: Array(96).fill("high-temp"),
           weekend_modes: Array(96).fill("high-temp"), off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 }))));
@@ -61,7 +61,8 @@ Deno.test("capture reads current temperatures and routines without selecting mod
   const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", prepared.snapshot, prepared.rooms);
   assertEquals(calls.sort(), ["energy_optimisation_comfort_schedules", "get_energy_latest_room_temperatures", "get_energy_room_planning_history"]);
   assertEquals(result.thermal_zones!.map(room => room.key), prepared.rooms.map(room => room.key));
-  assertEquals(result.thermal_zones!.every(room => room.start_temperature_c === 19), true);
+  assert(result.thermal_zones!.every(room => Number.isFinite(room.start_temperature_c)));
+  assert(result.thermal_zones!.filter(room => room.model).every(room => room.temperature_observation?.mean_c === 19));
   assertEquals(result.thermal_zones!.every(room => room.target_c.every(value => value === 21)), true);
   assertEquals(result.thermal_zones![0].model, prepared.rooms[0].model);
 });
@@ -78,7 +79,7 @@ Deno.test("room history identifies late observations and every older gap by room
       auth: { persistSession: false }, global: { fetch: (url, request) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
         if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
-          prepared.rooms.map(r => ({ room_key: r.key, room_temperature_c: 19 }))));
+          prepared.rooms.map(r => ({ room_key: r.key, room_temperature_c: 19, start_ts: new Date(Math.floor(Date.parse(snapshot.captured_at) / 900_000) * 900_000 - 900_000).toISOString() }))));
         if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
           prepared.rooms.map(r => ({ room_key: r.key, weekday_modes: Array(96).fill("high-temp"),
             weekend_modes: Array(96).fill("high-temp"), off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 }))));
@@ -104,7 +105,7 @@ Deno.test("room history identifies late observations and every older gap by room
   };
   const complete = await run([], []);
   const late = await run([], [95]);
-  assertEquals(late.warnings.map(warning => warning.code), ["room_heat_history_late"]);
+  assertEquals(late.warnings.map(warning => warning.code), ["room_heat_history_late", "room_state_boundary_late"]);
   assertEquals(actionablePlanningWarnings(late.warnings), []);
   assert(late.zone.start_stored_heat_c! < complete.zone.start_stored_heat_c!);
   const small = await run([40], [86, 87, 88, 89, 90, 91, 94, 95]);
@@ -154,7 +155,7 @@ Deno.test("monitored heat warms the native room projection without creating appl
       auth: { persistSession: false }, global: { fetch: (url) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1);
         if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
-          [{ room_key: key, room_temperature_c: 21 }]));
+          [{ room_key: key, room_temperature_c: 21, start_ts: new Date(Math.floor(Date.parse(snapshot.captured_at) / 900_000) * 900_000 - 900_000).toISOString() }]));
         if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
           [{ room_key: key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
             off_temperature_c: 15, low_temperature_c: 16, high_temperature_c: 17 }]));
@@ -289,7 +290,7 @@ Deno.test("room preparation uses connected probe evidence without requiring the 
     "http://localhost:54321", "synthetic-service", {
       auth: { persistSession: false }, global: { fetch: url => {
         switch (new URL(String(url)).pathname.split("/").at(-1)) {
-          case "get_energy_latest_room_temperatures": return Promise.resolve(Response.json([{ room_key: key, room_temperature_c: 19 }]));
+          case "get_energy_latest_room_temperatures": return Promise.resolve(Response.json([{ room_key: key, room_temperature_c: 19, start_ts: new Date(Math.floor(Date.parse(snapshot.captured_at) / 900_000) * 900_000 - 900_000).toISOString() }]));
           case "energy_optimisation_comfort_schedules": return Promise.resolve(Response.json([{ room_key: key,
             weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
             off_temperature_c: 16, low_temperature_c: 18, high_temperature_c: 21 }]));
@@ -320,7 +321,7 @@ Deno.test("history reconstructs stored heat with the one response and bounds mis
       auth: { persistSession: false }, global: { fetch: (url, request) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
         if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json([
-          { room_key: room.key, room_temperature_c: 19 },
+          { room_key: room.key, room_temperature_c: 19, start_ts: new Date(Math.floor(Date.parse(snapshot.captured_at) / 900_000) * 900_000 - 900_000).toISOString() },
         ]));
         if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json([
           { room_key: room.key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
@@ -425,4 +426,153 @@ Deno.test("uncontrolled positive heat is excluded only for the declared heating 
   assert(heating && heating.response_family !== "equilibrium");
   assertEquals(heating.background_gain_c_per_h,0);
   assertEquals(stored.background_gain_c_per_h,.3,"forecast compilation never rewrites the stored revision");
+});
+
+/** Synthetic RPC boundary fixture. Native means and energy are generated from
+ * explicit inputs below, independently of the state initializer. */
+function continuityCapture(lag = 0, background = -.1) {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const mapping = mappings[0], key = mapping.room!.key;
+  snapshot.slots = snapshot.slots.slice(0, 2);
+  snapshot.captured_at = snapshot.slots[0].start;
+  snapshot.device_models = snapshot.device_models.filter(device => device.key === mapping.key);
+  snapshot.device_models[0].forecast_w_by_slot = [200, 200];
+  snapshot.outdoor_temperature_c = [0, 0];
+  snapshot.house_temperature_c = [20, 20];
+  snapshot.solar_irradiance_w_per_m2 = [0, 0];
+  const prepared = prepareRoomModels(snapshot, [mapping], bundle);
+  const room = prepared.rooms[0];
+  room.model = { ...room.model!, response_family: "integrator", cooling_constant_per_h: 0,
+    house_coupling_per_h: 0, gain_c_per_wh: .001, heat_lag_h: lag,
+    background_gain_c_per_h: background, time_constant_h: null };
+  const calls: { endpoint: string; from?: number; to?: number }[] = [];
+  const quarter = 900_000, hour = 3_600_000;
+  const capture = (readingStart: number, mean: number, watts: number,
+    omitPower: number[] = [], siblings: typeof prepared.rooms = [room]) => {
+    calls.length = 0;
+    const db = createClient("http://localhost:54321", "synthetic-service", {
+      auth: { persistSession: false }, global: { fetch: (url, request) => {
+        const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
+        if (endpoint === "get_energy_latest_room_temperatures") {
+          calls.push({ endpoint });
+          return Promise.resolve(Response.json(siblings.map(candidate => ({ room_key: candidate.key,
+            room_temperature_c: mean, start_ts: new Date(readingStart).toISOString() }))));
+        }
+        if (endpoint === "energy_optimisation_comfort_schedules") {
+          calls.push({ endpoint });
+          return Promise.resolve(Response.json(siblings.map(candidate => ({ room_key: candidate.key,
+            weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
+            off_temperature_c: 10, low_temperature_c: 12, high_temperature_c: 15 }))));
+        }
+        if (endpoint === "get_energy_room_planning_history") {
+          const args = JSON.parse(String(request?.body)), from = Date.parse(args.p_from), to = Date.parse(args.p_to);
+          calls.push({ endpoint, from, to });
+          const starts = Array.from({ length: (to - from) / quarter }, (_, i) => from + i * quarter);
+          return Promise.resolve(Response.json(siblings.map(candidate => ({ room_key: candidate.key,
+            temperature_starts: starts, heater_quarters: starts.filter(start => !omitPower.includes(start)).map(start => [start, watts]),
+            outdoor_quarters: starts.map(start => [start, 0]) }))));
+        }
+        throw new Error(`Unexpected synthetic continuity dependency ${endpoint}`);
+      } },
+    });
+    return captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), siblings);
+  };
+  return { prepared, room, key, calls, capture, quarter, hour };
+}
+
+Deno.test("capture conditions the native mean then carries delayed heat through a partial quarter exactly once", async () => {
+  const f = continuityCapture(2, -.4), boundary = Date.parse(f.prepared.snapshot.captured_at);
+  f.prepared.snapshot.captured_at = new Date(boundary + .1 * f.hour).toISOString();
+  const lag = 2, heating = .8, q0 = heating * lag * -Math.expm1(-(24 - .25) / lag);
+  const mean = 20 + (heating - .4) * .25 / 2 + (q0 - heating * lag) * (1 - lag / .25 * -Math.expm1(-.25 / lag));
+  const qEnd = q0 * Math.exp(-.25 / lag) + heating * lag * -Math.expm1(-.25 / lag);
+  const endpoint = 20 + (heating - .4) * .25 + (q0 - heating * lag) * -Math.expm1(-.25 / lag);
+  const result = await f.capture(boundary - f.quarter, mean, 800);
+  const zone = result.thermal_zones![0];
+  const expected = endpoint + qEnd * -Math.expm1(-.1 / lag) - .4 * .1;
+  assertAlmostEquals(zone.start_temperature_c!, expected, 1e-11);
+  assertAlmostEquals(zone.start_stored_heat_c!, qEnd * Math.exp(-.1 / lag), 1e-11);
+  assertEquals(zone.temperature_observation, { start_ms: boundary - f.quarter, end_ms: boundary, mean_c: mean });
+  assert(result.planning_warnings!.some(w => w.code === "room_heat_history_late"));
+  const services = prepareRoomServices(result);
+  const firstEndpoint = expected + zone.start_stored_heat_c! * -Math.expm1(-.15 / lag) - .4 * .15;
+  assertAlmostEquals(services.temperature[f.key][0]!, firstEndpoint, 1e-9);
+  assertAlmostEquals(services.unplanned_temperature[f.key][0]!, firstEndpoint, 1e-9);
+});
+
+Deno.test("capture extends history beyond one day for an older native mean without rejecting its age", async () => {
+  const f = continuityCapture(), captured = Date.parse(f.prepared.snapshot.captured_at);
+  const start = captured - 36 * f.hour;
+  const result = await f.capture(start, 20, 500);
+  const reads = f.calls.filter(call => call.endpoint === "get_energy_room_planning_history");
+  assertEquals(reads.length, 2);
+  assertEquals(reads[0].from, captured - 24 * f.hour);
+  assertEquals(reads[1].from, start - 24 * f.hour);
+  assertEquals(reads[1].to, captured);
+  assertAlmostEquals(result.thermal_zones![0].start_temperature_c!, 20 + .4 * (36 - .125), 1e-11);
+  assert(result.thermal_zones![0].model);
+  assertEquals(result.thermal_zones![0].temperature_observation?.end_ms, start + f.quarter);
+});
+
+Deno.test("late measurements repair the next captured state without fitting or changing the accepted model", async () => {
+  const f = continuityCapture(), captured = Date.parse(f.prepared.snapshot.captured_at);
+  const modelBefore = structuredClone(f.room.model);
+  const readingStart = captured - 2 * f.quarter;
+  const missing = await f.capture(readingStart, 20, 500, [captured - f.quarter]);
+  assertAlmostEquals(missing.thermal_zones![0].start_temperature_c!, 20.025, 1e-12);
+  const repaired = await f.capture(captured - f.quarter, 20.1, 500);
+  assertAlmostEquals(repaired.thermal_zones![0].start_temperature_c!, 20.15, 1e-12);
+  assertEquals(f.room.model, modelBefore);
+  assertEquals(missing.thermal_zones![0].model, repaired.thermal_zones![0].model);
+  assert(f.calls.every(call => ["get_energy_latest_room_temperatures", "get_energy_room_planning_history", "energy_optimisation_comfort_schedules"].includes(call.endpoint)));
+  assert(!repaired.planning_warnings?.some(w => w.code === "room_heat_history_missing" || w.code === "room_heat_history_late"));
+});
+
+Deno.test("algebraic room evidence preserves comfort commands and demand without inventing a projection", async () => {
+  const f = continuityCapture(), captured = Date.parse(f.prepared.snapshot.captured_at);
+  f.room.model = { response_family: "equilibrium", heater_c_per_w: .002, outdoor_share: 1,
+    offset_c: 20, solar_c_per_wm2: null, r2: 1, sample_count: 1000, residual_std_c: .1 };
+  const result = await f.capture(captured - f.quarter, 19, 500);
+  const zone = result.thermal_zones![0];
+  assertEquals(zone.model, null);
+  assertEquals(zone.start_stored_heat_c, null);
+  const services = prepareRoomServices(result), device = f.room.device_keys[0];
+  assertEquals(services.commands[device].map(command => command.type), ["setpoint", "setpoint"]);
+  assertEquals(services.power[device], [200, 200]);
+  assertEquals(services.temperature[f.key], [null, null]);
+  assertEquals(services.unplanned_temperature[f.key], [null, null]);
+  assert(result.planning_warnings?.some(w => w.scope === f.key && w.code === "room_forecast_estimate"));
+});
+
+Deno.test("a malformed room state cannot stop a healthy sibling or either comfort service", async () => {
+  const f = continuityCapture(), captured = Date.parse(f.prepared.snapshot.captured_at);
+  const broken = { ...f.room, key: "synthetic-broken-room", name: "Synthetic malformed room",
+    device_keys: ["synthetic-broken-heater"], model: { ...f.room.model!, background_gain_c_per_h: NaN } };
+  const device = f.prepared.snapshot.device_models[0];
+  f.prepared.snapshot.device_models.push({ ...device, key: broken.device_keys[0] });
+  const result = await f.capture(captured - f.quarter, 20, 500, [], [f.room, broken]);
+  assert(result.thermal_zones!.find(zone => zone.key === f.key)!.model);
+  assertEquals(result.thermal_zones!.find(zone => zone.key === broken.key)!.model, null);
+  const services = prepareRoomServices(result);
+  assertEquals(services.commands[broken.device_keys[0]].length, 2);
+  assertEquals(services.commands[device.key].length, 2);
+  assert(result.planning_warnings?.some(w => w.scope === broken.key));
+});
+
+Deno.test("thermostat sensor calibration uses the raw mean instead of elapsed room cooling", async () => {
+  const f = continuityCapture(0, -2), captured = Date.parse(f.prepared.snapshot.captured_at);
+  const member = f.prepared.snapshot.device_models[0];
+  member.thermostat!.current_temperature_c = 20;
+  member.thermostat!.hvac_action = "idle";
+  const result = await f.capture(captured - 2 * f.hour, 20, 0);
+  assertAlmostEquals(result.thermal_zones![0].start_temperature_c!, 16.25, 1e-12);
+  // The thermometer and thermostat both measured 20 C, so their calibration
+  // offset is zero. The elapsed 3.75 C cooling must not become a sensor offset:
+  // the retained 18 C command now needs heat, rather than appearing satisfied.
+  const held = result.slots.map(() => ({ device_commands: { [member.key]: {
+    type: "setpoint" as const, target_c: 18, minimum_c: 5, maximum_c: 35,
+  } } }));
+  const services = prepareRoomServices(result, held);
+  for (const watts of services.power[member.key]) assertAlmostEquals(watts, 800, 1e-9);
+  assertAlmostEquals(services.temperature[f.key][0]!, 16.25 + (.8 - 2) * .25, 1e-9);
 });

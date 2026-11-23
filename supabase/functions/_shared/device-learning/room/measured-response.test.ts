@@ -62,7 +62,7 @@ Deno.test("missing later irradiance preserves solar candidate shape and known he
   assert(fit.result.learning_evidence.measured_runs.validation.trajectory_mae_c! < .001);
 });
 
-Deno.test("independent integrator and equilibrium observations publish readable family models", () => {
+Deno.test("independent integrator and equilibrium observations distinguish causal forecasts from descriptive balance", () => {
   const integral: RoomMeanQuarter[] = [], algebraic: RoomMeanQuarter[] = [];
   let temperature = 20, delivered = 0;
   for (let i = 0; i < 100; i++) {
@@ -77,8 +77,35 @@ Deno.test("independent integrator and equilibrium observations publish readable 
   }
   for (const [rows, family] of [[integral, "integrator"], [algebraic, "equilibrium"]] as const) {
     const fit = learnMeasuredRoomResponse(measuredSyntheticEvidence([...rows]), 500);
-    assert(fit.result.ok); assertEquals(fit.result.model.response_family, family);
-    assert(readThermalModel(JSON.parse(JSON.stringify(fit.result.model))));
-    if (family === "equilibrium") assertEquals(fit.result.learning_evidence.measured_runs.lines.reference_heating, null);
+    assertEquals(fit.result.learning_evidence.descriptive_fit?.family, family);
+    assertEquals(fit.result.learning_evidence.selection_scope, "state_carrying");
+    if (family === "integrator") {
+      assert(fit.result.ok); assertEquals(fit.result.model.response_family, family);
+    }
+    if (fit.result.ok) {
+      assert(fit.result.model.response_family !== "equilibrium");
+      assert(readThermalModel(JSON.parse(JSON.stringify(fit.result.model))));
+    }
   }
+});
+
+Deno.test("descriptive candidates cannot shrink causal holdout support or supply an invented dynamical response", () => {
+  const { rows } = syntheticMeasuredRoom(240, 0, 0, 900, .0005);
+  rows[200].solar_w_per_m2 = null;
+  const prepared = prepareMeasuredRoomResponse(measuredSyntheticEvidence(rows), 600);
+  const cells = Array.from({ length: ROOM_MEASURED_CELL_COUNT }, (_, i) => fitMeasuredRoomCell(prepared, i));
+  // These checkpoint candidates use different measured holdout support:
+  // no-solar dynamics can score the quarter missing irradiance, solar balance cannot.
+  const causal = cells.map(cell => ({ ...cell, fits: cell.fits.filter(fit => fit.family !== "equilibrium" && !fit.solar) }));
+  const descriptive = cells.map(cell => ({ ...cell, fits: cell.fits.filter(fit => fit.family === "equilibrium" && fit.solar) }));
+  const combinedCells = causal.map((cell, i) => ({ ...cell, fits: [...cell.fits, ...descriptive[i].fits] }));
+  const combined = finalizeMeasuredRoomResponse(prepared, combinedCells), alone = finalizeMeasuredRoomResponse(prepared, causal);
+  assert(combined.result.ok && alone.result.ok);
+  assertEquals(combined.result.model, alone.result.model);
+  assertEquals(combined.result.learning_evidence.measured_runs, alone.result.learning_evidence.measured_runs);
+  assert(combined.result.learning_evidence.measured_runs.validation.observations > combined.result.learning_evidence.descriptive_fit!.observations);
+  const algebraicOnly = finalizeMeasuredRoomResponse(prepared, descriptive);
+  assertEquals(algebraicOnly.result.ok, false);
+  assertEquals(algebraicOnly.result.learning_evidence.descriptive_fit?.family, "equilibrium");
+  assertEquals(algebraicOnly.result.learning_evidence.measured_runs.fitted_observations, 0);
 });

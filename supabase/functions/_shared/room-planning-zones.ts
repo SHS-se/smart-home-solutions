@@ -1,3 +1,4 @@
+import { roomPlanClock } from "./planner/models/room/state.ts";
 // Each room's planning input joins one captured model revision to current
 // equipment, comfort settings, measured temperature and retained heat. Forecast
 // caches supply weather and house forcing; they never choose a room model.
@@ -13,7 +14,7 @@ import {
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { OptimisationSnapshot, ThermalZonePlanningInput } from "./planner/planning-contracts.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
-import { storedHeat, usesHouse } from "./planner/models/room/thermal.ts";
+import { isEquilibrium, storedHeat, usesHouse } from "./planner/models/room/thermal.ts";
 import { roomResponseEvidenceLimited } from "./planner/room-response.ts";
 import { heatingWatts } from "./planner/weather-heating.ts";
 
@@ -22,6 +23,7 @@ export interface RoomEvidence {
   schedules: ReadonlyMap<string, unknown>;
   /** Latest measured room temperature. */
   temperature_c: ReadonlyMap<string, number>;
+  temperature_observation?: ReadonlyMap<string, { start_ms: number; end_ms: number; mean_c: number }>;
   /** Mean heater power per quarter over the last day, oldest first. */
   recent_heat_w: ReadonlyMap<string, readonly number[]>;
   stored_heat_c?: ReadonlyMap<string, number>;
@@ -56,7 +58,10 @@ export function roomPlanningZones(
     const routine = schedule as ZoneComfortSchedule;
     const start = evidence.temperature_c.get(room.key) ?? null;
     let model = room.model;
-    if (model && roomResponseEvidenceLimited(room.model_warnings)) {
+    if (model && isEquilibrium(model)) {
+      skipped.push({ key: room.key, message: `${room.name}: the algebraic response has no measured room storage; comfort commands use measured demand while a causal response is fitted` });
+      model = null;
+    } else if (model && roomResponseEvidenceLimited(room.model_warnings)) {
       skipped.push({ key: room.key, message: `${room.name}: too few measured heating observations to plan preheating; comfort commands use measured demand` });
       model = null;
     } else if (model && usesHouse(model) && !house) {
@@ -81,7 +86,7 @@ export function roomPlanningZones(
     if (model && start !== null && outdoor && room.rated_power_w > 0) {
       try {
         forecast = buildComfortForecast(starts, snapshot.timezone, routine, model, start, outdoor, room.rated_power_w,
-          lockout, snapshot.solar_irradiance_w_per_m2, { house_c: doorway ?? house, start_stored_heat_c: delivered, passive_heat_c_per_h: passive },
+          lockout, snapshot.solar_irradiance_w_per_m2, { house_c: doorway ?? house, start_stored_heat_c: delivered, passive_heat_c_per_h: passive, duration_hours: roomPlanClock(snapshot).hours },
           weatherPower);
       } catch (error) {
         usable = null;
@@ -96,6 +101,7 @@ export function roomPlanningZones(
     zones.push({ key: room.key, name: room.name, device_keys: room.device_keys, model: usable,
       ...(room.model_source ? { model_source: room.model_source } : {}),
       ...(room.model_warnings ? { model_warnings: room.model_warnings } : {}),
+      ...(evidence.temperature_observation?.has(room.key) ? { temperature_observation: evidence.temperature_observation.get(room.key)! } : {}),
       start_temperature_c: start, start_stored_heat_c: usable ? delivered : null, rated_power_w: room.rated_power_w,
       ...(usable && passive ? { passive_heat_c_per_h: passive } : {}),
       ...(usable && doorway ? { doorway_boundary_c: doorway } : {}),

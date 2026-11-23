@@ -1,3 +1,4 @@
+import { roomPlanClock } from "./planner/models/room/state.ts";
 import { PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { deviceMembers as group, allocateDevicePower as allocate, type DeviceMember } from './planner/device-power-allocation.ts';
 import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
@@ -747,11 +748,12 @@ export function assembleRulesPlan(solved: SolvedRulesInput, trace?: PlanningTrac
   const modelledRooms=(snapshot.thermal_zones??[]).filter(z=>input.rooms.temperature[z.key]?.every(finite)&&
     input.rooms.unplanned_temperature[z.key]?.every(finite));
   const thermalProjection: OptimisationPlan["thermal_projection"] = modelledRooms.length && snapshot.outdoor_temperature_c?.every(finite) ? {
-    source:"comfort_schedule_model",season:null,slot_minutes:15,starts:snapshot.slots.map(s=>s.start),
+    source:"comfort_schedule_model",season:null,slot_minutes:15,initial_at:new Date(roomPlanClock(snapshot).start_ms).toISOString(),starts:snapshot.slots.map(s=>s.start),
     outdoor_temperature_c:snapshot.outdoor_temperature_c as number[],
     planned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.room_power[z.key][i]))),
     unplanned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.unplanned_power[z.key][i]))),
     zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,device_keys:z.device_keys,...roomProjectionControl(snapshot, z.device_keys),priority:i+1,
+      initial_temperature_c:z.start_temperature_c!,observed_through:z.temperature_observation ? new Date(z.temperature_observation.end_ms).toISOString() : null,
       rated_power_w:z.rated_power_w,comfort_min_c:z.comfort_min_c,target_c:z.target_c,comfort_max_c:z.comfort_max_c,
       planned_temperature_c:input.rooms.temperature[z.key] as number[],unplanned_temperature_c:input.rooms.unplanned_temperature[z.key] as number[],
       planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:input.rooms.unplanned_power[z.key]}))} : undefined;

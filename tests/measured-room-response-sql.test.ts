@@ -6,12 +6,15 @@ import { claim, handBack, home, other, release, revision } from "./helpers/room-
 import type { MeasuredRoomAssessment, MeasuredRoomCalibration } from "../supabase/functions/_shared/planner/models/room/measured-evidence.ts";
 
 const migration = "supabase/migrations/20261123160000_measured_room_response.sql";
+const stateMigration = "supabase/migrations/20261123170000_state_carrying_room_forecasts.sql";
 const policy = "measured_room_runs_v1", method = "native_mean_onset_peak_v1";
-const archive = "chronological_native_evidence_v1", implementation = `${archive}:${policy}:${method}`;
+const archive = "chronological_native_evidence_v1", previousImplementation = `${archive}:${policy}:${method}`;
+const implementation = `${previousImplementation}:state_carrying_forecast_v1`;
 const binding = "synthetic-binding", from = "2001-01-01T00:00:00Z", to = "2001-01-02T00:00:00Z";
 async function database() {
   const db = await chronologicalRoomDatabase();
   await db.exec(await Deno.readTextFile(migration));
+  await db.exec(await Deno.readTextFile(stateMigration));
   await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()");
   return db;
 }
@@ -48,7 +51,7 @@ async function stage(db: PGlite, runs: MeasuredRoomAssessment[] = [], responseRe
   const learning={measured_runs:summary(runs)};
   const model={home_id:home,customer_id:home,room_key:"room",sample_count:100,last_attempted_at:new Date().toISOString(),
     last_fit_attempt:{learning},heating_bands:{binding,calibration_policy:policy,reference_revision:responseRevision,
-      reference:{scope:{kind:"shared"},model:{sample_count:100,gain_reference_outdoor_c:10,gain_outdoor_slope_per_c:0.1},learning_evidence:learning},
+      reference:{scope:{kind:"shared"},model:{response_family:"finite",sample_count:100,gain_reference_outdoor_c:10,gain_outdoor_slope_per_c:0.1},learning_evidence:learning},
       active:[],shared_attempt:{status:"fitted",implementation,evidence}}};
   const ledger={policy,assessed_against:responseRevision,observed_runs:runs.length,runs};
   const complete=async (patch:unknown=model, runLedger:unknown=ledger, fence=j.fence)=>(await db.query<{ok:boolean}>(
@@ -149,5 +152,39 @@ Deno.test("measured publication retains current policy, owner and model revision
     await db.query("UPDATE energy_optimisation_zone_models SET gain_c_per_wh=.006 WHERE home_id=$1",[home]);
     assertEquals(await next.complete(),false,"an altered base model vetoes publication");
     assertEquals((await db.query("SELECT 1 FROM private.energy_room_run_ledgers WHERE home_id=$1",[home])).rows.length,0);
+  } finally {await db.close();}
+});
+Deno.test("state-carrying rollout resets only numerical work and makes previous-method rooms due",async()=>{
+  const db=await database();try {
+    const fit=await stage(db,[run(0)]); assert(await fit.complete());
+    await release(db,fit.j);
+    await db.query("UPDATE energy_optimisation_zone_models SET heating_bands=jsonb_set(heating_bands,'{shared_attempt,implementation}',to_jsonb($2::text)) WHERE home_id=$1",[home,previousImplementation]);
+    const accepted=(await db.query("SELECT heating_bands->'reference' AS reference FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows;
+    assertEquals(await request(db),1,"previous numerical implementation is due immediately, independently of daily cadence");
+    const active=await stage(db,[run(1)],"next-accepted");
+    await db.query("UPDATE private.energy_room_fit_progress SET metadata=jsonb_set(metadata,'{capture,implementation}',to_jsonb($2::text)) WHERE job_id=$1",[active.j.id,previousImplementation]);
+    const archived=(await db.query("SELECT * FROM private.energy_room_evidence_blocks WHERE home_id=$1",[home])).rows;
+    await db.exec(await Deno.readTextFile(stateMigration));
+    assertEquals((await db.query("SELECT 1 FROM private.energy_room_fit_progress WHERE job_id=$1",[active.j.id])).rows,[]);
+    assertEquals((await db.query("SELECT * FROM private.energy_room_evidence_blocks WHERE home_id=$1",[home])).rows,archived);
+    assertEquals((await db.query("SELECT heating_bands->'reference' AS reference FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows,accepted);
+    assertEquals(await active.complete(),false,"rollout fences the old claimant without publishing its response");
+  } finally {await db.close();}
+});
+Deno.test("state-carrying publication refuses newly fitted algebraic forecasts but retains an existing algebraic reference exactly",async()=>{
+  const db=await database();try {
+    const fit=await stage(db,[run(0)]);
+    const algebraic=structuredClone(fit.model);
+    algebraic.heating_bands.reference.model.response_family="equilibrium";
+    await assertRejects(()=>fit.complete(algebraic),Error,"Invalid measured room support");
+    assert(await fit.complete());
+    await handBack(db,fit.j);
+    await db.query("UPDATE energy_optimisation_zone_models SET heating_bands=jsonb_set(heating_bands,'{reference,model,response_family}','\"equilibrium\"') WHERE home_id=$1",[home]);
+    const accepted=(await db.query<{reference:unknown}>("SELECT heating_bands->'reference' AS reference FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows[0].reference;
+    const next=await stage(db,[run(1)]);
+    const failed={...next.model,heating_bands:{...next.model.heating_bands,reference:accepted,
+      shared_attempt:{...next.model.heating_bands.shared_attempt,status:"unidentified"}}};
+    assert(await next.complete(failed));
+    assertEquals((await db.query<{reference:unknown}>("SELECT heating_bands->'reference' AS reference FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows[0].reference,accepted);
   } finally {await db.close();}
 });

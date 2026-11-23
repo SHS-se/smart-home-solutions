@@ -74,7 +74,7 @@ export function nativeRoomReadWindows(from: string, to: string): [string, string
 
 /** Source archives are independent of fitting policy and derived estimates. */
 export const ROOM_SOURCE_IMPLEMENTATION = "chronological_native_evidence_v1";
-export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEASURED_POLICY}:${ROOM_MEASUREMENT_METHOD}`;
+export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEASURED_POLICY}:${ROOM_MEASUREMENT_METHOD}:state_carrying_forecast_v1`;
 export const ROOM_SHARED_METADATA_VERSION = 2;
 
 export interface RoomEvidenceBasis {

@@ -216,7 +216,7 @@ export function buildComfortForecast(
   const transitions = starts.map((_start, index) => {
     const physics = context.model_by_quarter?.[index] ?? model;
     return roomTransition(physics, {
-      hours: SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
+      hours: context.duration_hours?.[index] ?? SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
       background_c_per_h: backgroundRateForSlot(physics, index, solarWPerM2, context.passive_heat_c_per_h),
     });
   });
@@ -271,7 +271,7 @@ export function buildComfortForecast(
       outdoorTemperatureC,
       power,
       solarWPerM2,
-      undefined,
+      context.duration_hours ? [...context.duration_hours] : undefined,
       context,
     ),
   };

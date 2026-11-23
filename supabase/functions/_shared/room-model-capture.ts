@@ -1,3 +1,4 @@
+import { estimateRoomState, roomPlanClock, type RoomStateReading } from "./planner/models/room/state.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "./room-doorway-probes.ts";
 import { doorwayBoundary, readRoomDoorwayModel, type RoomDoorwayModel } from "./planner/models/room/doorway-boundary.ts";
 import { heatingWatts, isWeatherHeatingBinding, readWeatherHeating } from "./planner/weather-heating.ts";
@@ -253,9 +254,10 @@ export async function captureRoomPlanningState(
   snapshot: OptimisationSnapshot, rooms: CapturedRoom[],
 ): Promise<OptimisationSnapshot> {
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
-  const recentEnd = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
+  const recentEnd = Math.floor(Date.parse(snapshot.captured_at) / SLOT_MS) * SLOT_MS;
   const quarters = recentQuarterStarts(recentEnd);
   const delayedRooms = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0);
+  const dynamicRooms = rooms.filter(room => room.model && !isEquilibrium(room.model));
   const captured = Date.parse(snapshot.captured_at);
   const passiveEnd = Math.floor(captured / SLOT_MS) * SLOT_MS;
   const passiveQuarters = recentQuarterStarts(passiveEnd);
@@ -270,11 +272,11 @@ export async function captureRoomPlanningState(
       .from("energy_optimisation_comfort_schedules")
       .select("room_key, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c")
       .eq("home_id", homeId),
-    // A delayed room starts with the heat its last hours already put on the way.
-    delayedRooms.length
+    // Every dynamic room needs the observation interval and elapsed inputs.
+    dynamicRooms.length
       ? supabase.rpc("get_energy_room_planning_history", {
         p_customer_id: customerId, p_home_id: homeId,
-        p_room_keys: delayedRooms.map(room => room.key),
+        p_room_keys: dynamicRooms.map(room => room.key),
         p_from: new Date(quarters[0]).toISOString(), p_to: new Date(recentEnd).toISOString(),
       })
       : Promise.resolve({ data: [], error: null }),
@@ -301,16 +303,37 @@ export async function captureRoomPlanningState(
     }
   }
   const temperature = new Map<string, number>();
+  const observations = new Map<string, RoomStateReading>();
   for (const row of latestResult.data ?? []) {
     const value = Number(row.room_temperature_c);
-    if (!temperature.has(row.room_key) && row.room_temperature_c !== null && Number.isFinite(value)) temperature.set(row.room_key, value);
+    if (!temperature.has(row.room_key) && row.room_temperature_c !== null && Number.isFinite(value)) {
+      temperature.set(row.room_key, value);
+      const start = Date.parse(row.start_ts);
+      if (Number.isFinite(start)) observations.set(row.room_key, { start_ms: start, end_ms: start + SLOT_MS, mean_c: value });
+    }
   }
   const schedules = new Map<string, unknown>((scheduleResult.data ?? []).map((row: Record<string, unknown>) => [row.room_key as string, {
     weekday_modes: row.weekday_modes, weekend_modes: row.weekend_modes,
     off_temperature_c: Number(row.off_temperature_c), low_temperature_c: Number(row.low_temperature_c),
     high_temperature_c: Number(row.high_temperature_c),
   }]));
-  const history = (recentResult.data ?? []) as RoomPlanningHistory[];
+  let history = (recentResult.data ?? []) as RoomPlanningHistory[];
+  // A stale thermometer is still evidence. Extend only when its observation is
+  // outside the normal read; age never disqualifies a room or means idle time.
+  const oldest = Math.min(quarters[0], ...dynamicRooms.flatMap(room => {
+    const reading = observations.get(room.key);
+    return reading && reading.start_ms < quarters[0] ? [reading.start_ms - RECENT_HEAT_QUARTERS * SLOT_MS] : [];
+  }));
+  if (oldest < quarters[0]) {
+    const extended = await supabase.rpc("get_energy_room_planning_history", {
+      p_customer_id: customerId, p_home_id: homeId, p_room_keys: dynamicRooms.map(room => room.key),
+      p_from: new Date(oldest).toISOString(), p_to: new Date(recentEnd).toISOString(),
+    });
+    if (!extended.error) history = extended.data ?? [];
+    else snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "room_evidence_unavailable", "rooms", "Some elapsed room inputs could not be read.",
+      "Room state estimates retain received inputs and exclude unobserved heater warmth.")]);
+  }
   const historyByRoom = new Map(history.map(row => [row.room_key, row]));
   const recent = new Map<string, number[]>();
   const stored = new Map<string, number>();
@@ -336,6 +359,47 @@ export async function captureRoomPlanningState(
     ], "The forecast counts measured heater energy and bounds remaining warmth where room or weather readings are missing.", snapshot.timezone);
     if (warning) historyWarnings.push(warning);
   }
+  const clock = roomPlanClock(snapshot);
+  const initializedRooms = rooms.map(room => {
+    if (!room.model || isEquilibrium(room.model)) return room;
+    const reading = observations.get(room.key);
+    const outdoor = snapshot.outdoor_temperature_c?.find((v): v is number => typeof v === "number" && Number.isFinite(v));
+    const house = snapshot.house_temperature_c?.find((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (!reading || outdoor === undefined || ((room.model.house_coupling_per_h ?? 0) > 0 && house === undefined)) {
+      return { ...room, model: null };
+    }
+    try {
+      const source = historyByRoom.get(room.key);
+      const power = new Map(source?.heater_quarters ?? []);
+      const weather = new Map(source?.outdoor_quarters ?? []);
+      const starts = [...new Set([...power.keys(), ...weather.keys()])].sort((a, b) => a - b);
+      const state = estimateRoomState(room.model, { reading,
+        intervals: starts.map(start => ({ start_ms: start, end_ms: start + SLOT_MS,
+          heater_w: power.get(start) ?? null, outdoor_c: weather.get(start) ?? null })),
+        fallback: { outdoor_c: outdoor, house_c: house ?? 0, solar_w_per_m2: 0 },
+      }, clock.start_ms);
+      temperature.set(room.key, state.temperature_c);
+      stored.set(room.key, state.stored_heat_c);
+      if (state.missing_power.length && !historyWarnings.some(w => w.scope === room.key && (w.code === "room_heat_history_missing" || w.code === "room_heat_history_late"))) {
+        const older = state.missing_power.some(span => span.start_ms < recentEnd - 2 * SLOT_MS);
+        historyWarnings.push(planningWarning(older ? "room_heat_history_missing" : "room_heat_history_late", room.key,
+          `${room.name}: the capture temperature is estimated from its latest measured interval.`,
+          "Received heater energy is retained; unreceived energy contributes no assumed warmth.",
+          { observed_through: new Date(state.observed_through).toISOString(), intervals: JSON.stringify(state.missing_power) }));
+      }
+      if (state.estimated_boundary.length) historyWarnings.push(planningWarning(state.estimated_boundary.some(span => span.start_ms < recentEnd - 2 * SLOT_MS) ? "room_state_boundary_estimate" : "room_state_boundary_late", room.key,
+        `${room.name}: elapsed room conditions are estimated.`,
+        "The capture state uses received outdoor history and available forecast boundaries; unmeasured solar heat receives no credit.",
+        { observed_through: new Date(state.observed_through).toISOString(), intervals: JSON.stringify(state.estimated_boundary) }));
+      return room;
+    } catch (error) {
+      historyWarnings.push(planningWarning("room_evidence_unavailable", room.key,
+        `${room.name}: the capture state could not be estimated from its room evidence.`,
+        "Comfort commands and measured electrical demand remain active.",
+        { reason: error instanceof Error ? error.message : String(error) }));
+      return { ...room, model: null };
+    }
+  });
   const passiveRates = new Map<string, number[]>();
   for (const room of passiveRooms) {
     const source = passiveSources?.get(room.key);
@@ -368,8 +432,8 @@ export async function captureRoomPlanningState(
         "The forecast estimates exchange from the available room and house temperatures."));
     }
   }
-  const { zones, warnings } = roomPlanningZones(snapshot, rooms, {
-    schedules, temperature_c: temperature, recent_heat_w: recent, stored_heat_c: stored, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
+  const { zones, warnings } = roomPlanningZones(snapshot, initializedRooms, {
+    schedules, temperature_c: temperature, temperature_observation: observations, recent_heat_w: recent, stored_heat_c: stored, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
   });
   // Silent degradation is worse than none, so what was skipped is said out loud.
   if (warnings.length > 0) {

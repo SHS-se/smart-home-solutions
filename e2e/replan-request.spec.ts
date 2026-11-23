@@ -1628,6 +1628,59 @@ test.describe('requesting a replan', () => {
     await panel.screenshot({ path: testInfo.outputPath('room-temperature.png') });
   });
 
+  test('room forecast starts at captured time and ends at horizon independently of later readings', async ({ page }) => {
+    // Independently generated synthetic room data, with a partial first quarter.
+    const start = Date.parse(CAPTURED_AT), quarter = 900_000;
+    const slots = PLAN.plans.priority.slots.slice(0, 2);
+    replan.publishedPlan = { ...PLAN,
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots } },
+      operating_scope: { ...PLAN.operating_scope, modes: { floor: 'controlling' }, device_owners: { floor: 'floor' }, external_demands: {} },
+      thermal_projection: { source: 'comfort_schedule_model', season: null, slot_minutes: 15,
+        initial_at: new Date(start + 7 * 60_000).toISOString(), starts: slots.map(slot => slot.start),
+        outdoor_temperature_c: [8, 8], planned_total_power_w: [0, 0], unplanned_total_power_w: [0, 0],
+        zones: [{ key: 'synthetic-room', name: 'Synthetic room', device_keys: ['floor'], control_type: 'setpoint',
+          load_type: 'duty_cycle', priority: 1, rated_power_w: 1000, initial_temperature_c: 20.9,
+          observed_through: CAPTURED_AT, comfort_min_c: [20, 20], target_c: [20, 20], comfort_max_c: [23, 23],
+          planned_temperature_c: [21.5, 22], unplanned_temperature_c: [20, 20], planned_power_w: [0, 0], unplanned_power_w: [0, 0] }] },
+    } as typeof PLAN;
+    replan.devices = [{ id: 'synthetic-floor', device_key: 'floor', name: 'Synthetic floor',
+      planning_role_override: 'controllable', mapping_summary: { room_key: 'synthetic-room' } }];
+    replan.roomHistory = [3, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * quarter).toISOString(),
+      room_key: 'synthetic-room', room_name: 'Synthetic room', room_temperature_c: 20.8 }));
+    await page.clock.setFixedTime(new Date(start + 8 * 60_000));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    const panel = page.locator('#plan-room-temperature');
+    const coordinates = () => panel.evaluate(element => {
+      const grid = element.querySelector('[data-chart-grid]')!;
+      const left = Number(grid.getAttribute('x1')), right = Number(grid.getAttribute('x2'));
+      const positions = (source: string) => [...element.querySelector(`[data-room-source="${source}"]`)!
+        .getAttribute('d')!.matchAll(/[ML]([\d.-]+),[\d.-]+/g)].map(match => (Number(match[1]) - left) / (right - left));
+      return { forecast: positions('forecast'), measured: positions('measured'),
+        measuredPath: element.querySelector('[data-room-source="measured"]')!.getAttribute('d'),
+        marker: (Number(element.querySelector('[data-room-label] circle')!.getAttribute('cx')) - left) / (right - left) };
+    });
+    await expect(panel).toBeVisible();
+    const first = await coordinates();
+    expect(first.forecast).toHaveLength(3);
+    expect(first.forecast[0]).toBeCloseTo((3 + 7 / 15) / 5, 4);
+    expect(first.forecast[1]).toBeCloseTo(4 / 5, 4);
+    expect(first.forecast[2]).toBeCloseTo(1, 4);
+    expect(first.measured[0]).toBeCloseTo(.5 / 5, 4);
+    expect(first.measured[1]).toBeCloseTo(2.5 / 5, 4);
+    expect(first.measuredPath).not.toContain('L'); // The missing middle mean remains a gap.
+    expect(first.marker).toBeCloseTo(1, 4);
+    await expect(panel.locator('[data-room-source="forecast"]')).toHaveAttribute('stroke-dasharray', '6 3');
+    replan.roomHistory.push({ start_ts: CAPTURED_AT, room_key: 'synthetic-room', room_name: 'Synthetic room', room_temperature_c: 21.3 });
+    await page.clock.setFixedTime(new Date(start + quarter));
+    await page.reload();
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    await expect(panel).toBeVisible();
+    const later = await coordinates();
+    expect(later.forecast).toEqual(first.forecast);
+    expect(later.measured).toHaveLength(3);
+  });
+
   for (const electricityHistory of [true, false]) {
     test(`measured room temperatures remain visible without forecasts ${electricityHistory ? 'with' : 'without'} electricity history`, async ({ page }, testInfo) => {
       const start = Date.parse(CAPTURED_AT);
@@ -1648,6 +1701,18 @@ test.describe('requesting a replan', () => {
       await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
       await expect(panel.locator('[data-room="bath"] path').first()).toHaveAttribute('d', '');
       await expect(panel.locator('[data-room="bath"] path').last()).not.toHaveAttribute('d', '');
+      await expect(panel.locator('[data-room="bath"] [data-room-source="forecast"]')).toHaveAttribute('d', '');
+      const historicalMarker = await panel.evaluate(element => {
+        const path = element.querySelector('[data-room-source="measured"]')!.getAttribute('d')!;
+        const points = [...path.matchAll(/[ML]([\d.-]+),([\d.-]+)/g)];
+        const last = points.at(-1)!;
+        const marker = element.querySelector('[data-room-label="bath"] circle')!;
+        return { actualX: Number(last[1]), markerX: Number(marker.getAttribute('cx')),
+          right: Number(element.querySelector('[data-chart-grid]')!.getAttribute('x2')) };
+      });
+      expect(historicalMarker.markerX).toBeCloseTo(historicalMarker.actualX, 3);
+      expect(historicalMarker.markerX).toBeLessThan(historicalMarker.right);
+
       const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
       await chart.focus();
       await chart.press('ArrowLeft');

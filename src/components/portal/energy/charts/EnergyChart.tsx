@@ -24,13 +24,15 @@ import React, { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   linearScale, midpointBandPath, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
-  stepAreaPath, stepBandPath, stepLinePath, type BandLabelPlacement, type Scale,
+  stepAreaPath, stepBandPath, stepLinePath, timestampedLinePath, type BandLabelPlacement, type Scale,
 } from '@/lib/energy-shift/plan-chart-geometry';
 import {
   PRICE_RAMP_STEPS, priceBands, priceGradientStops,
 } from '@/lib/energy-shift/price-bands';
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
+import { roomTemperatureSeries } from '@/lib/energy-shift/room-temperature';
+import { SLOT_MS } from '@/lib/energy-shift/energy-timeline';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { PLAN_COLOURS, hatchBackground } from './palette';
 import { scoreColour, signedPoints } from '../plan/quarter-score';
@@ -86,7 +88,7 @@ export interface EnergyStoreLines {
   poolC: readonly (number | null)[];
 }
 
-/** A measured or forecast room, drawn from `rows[].roomTemperatureC`. */
+/** A measured or forecast room, drawn from `rows[].roomTemperatures`. */
 export interface EnergyRoomLine {
   key: string;
   name: string;
@@ -291,6 +293,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
   const geometry = useMemo(() => {
     const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, right]);
+    const timeX = linearScale([rows[0]?.startMs ?? 0, (rows[0]?.startMs ?? 0) + Math.max(1, n) * SLOT_MS], [MARGIN_LEFT, right]);
 
     const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
@@ -306,11 +309,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     // Rooms get their own axis: on the pool's a degree of room air is a few pixels.
     const roomLines = rooms.map(room => ({
       ...room,
-      values: rows.map(row => row.roomTemperatureC?.[room.key] ?? null),
+      measured: roomTemperatureSeries(rows, room.key, 'interval_mean'),
+      forecast: roomTemperatureSeries(rows, room.key, 'forecast'),
       comfortMin: rows.map(row => row.roomComfortMinC?.[room.key] ?? null),
-    })).filter(room => room.values.some(value => value !== null));
-    const knownRoomC = roomLines.flatMap(room => [...room.values, ...room.comfortMin])
-      .filter((value): value is number => value !== null);
+    })).filter(room => [...room.measured, ...room.forecast].some(sample => sample !== null));
+    const knownRoomC = roomLines.flatMap(room => [
+      ...[...room.measured, ...room.forecast].flatMap(sample => sample ? [sample.temperatureC] : []),
+      ...room.comfortMin,
+    ]).filter((value): value is number => value !== null);
     const showRooms = knownRoomC.length > 0;
     const room: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0),
       height: showRooms ? Math.max(96, roomLines.length * 18 + 8) : 0 };
@@ -386,8 +392,10 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const roomY = linearScale([roomMin, roomMax], [room.top + room.height, room.top]);
     // The latest reading or plan value of each room, spread so labels never overlap.
     const roomEnds = roomLines.flatMap(line => {
-      const last = [...line.values].reverse().find((value): value is number => value !== null);
-      return last === undefined ? [] : [{ line, value: last, y: roomY(last), labelY: roomY(last) }];
+      const last = [...line.measured, ...line.forecast].reduce((latest, sample) =>
+        sample && (!latest || sample.atMs > latest.atMs) ? sample : latest, null);
+      return last === null ? [] : [{ line, value: last.temperatureC, x: timeX(last.atMs),
+        y: roomY(last.temperatureC), labelY: roomY(last.temperatureC) }];
     }).sort((a, b) => a.y - b.y);
     const roomPositions = placeSeriesLabels(roomEnds.map(end => end.y), room.top, room.height);
     roomEnds.forEach((end, index) => { end.labelY = roomPositions[index]; });
@@ -406,7 +414,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     costEnds.forEach((end, index) => { end.labelY = costPositions[index]; });
 
     return {
-      x, axisY, height: scoreStrip ? scoreStrip.top + scoreStrip.height + 10 : axisY + 42, scoreStrip,
+      x, timeX, axisY, height: scoreStrip ? scoreStrip.top + scoreStrip.height + 10 : axisY + 42, scoreStrip,
       price, priceY, priceMin, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, flows, supply, disposal, flowLabels,
@@ -418,7 +426,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden, right]);
 
   const {
-    x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
+    x, timeX, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice,
     flow, flowY, flowMin, flowMax, flows, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels, water, showWater,
@@ -498,8 +506,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     if (!next.delete(id)) next.add(id);
     return next;
   });
-  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, hatched = false) => (
-    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} hatched={hatched}
+  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, hatched = false, anchorX?: number) => (
+    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} anchorX={anchorX} hatched={hatched}
       right={right} width={viewWidth} hidden={hidden.has(id)} active={spotlight?.has(id) ?? false}
       onPoint={point} onFocusSeries={focus} onToggle={toggle} />
   );
@@ -829,7 +837,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             <g id="plan-room-temperature">
               <PanelHeading
                 title={t('Rumstemperatur', 'Room temperature')}
-                unit={t('°C · uppmätt före nu, planerad efter · streckat = komfort', '°C · measured before now, planned after · dashed = comfort')}
+                unit={t('°C · heldraget = uppmätt medel · streckat = prognos · prickat = komfort', '°C · solid = measured mean · dashed = forecast · dotted = comfort')}
                 y={room.top - 14}
               />
               <Gridlines right={right} ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
@@ -840,14 +848,15 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                     d={stepLinePath(line.comfortMin, x, roomY)} fill="none"
                     stroke={line.colour} strokeWidth={spotlight?.has(`room:${line.key}`) ? 1.5 : 1} strokeOpacity={0.7} strokeDasharray="2 3"
                   />
-                  <path
-                    d={midpointLinePath(line.values, x, roomY)} fill="none"
-                    stroke={line.colour} strokeWidth={spotlight?.has(`room:${line.key}`) ? 3 : 2} strokeLinejoin="round"
-                  />
+                  {(['forecast', 'measured'] as const).map(kind => <path key={kind} data-room-source={kind}
+                    d={timestampedLinePath(line[kind].map(sample => sample && ({ atMs: sample.atMs, value: sample.temperatureC })), timeX, roomY)}
+                    fill="none" stroke={line.colour} strokeDasharray={kind === 'forecast' ? '6 3' : undefined}
+                    strokeWidth={spotlight?.has(`room:${line.key}`) ? 3 : 2} strokeLinejoin="round"
+                  />)}
                 </g>
               ))}
               {roomEnds.map(end => control(`room:${end.line.key}`, end.line.name, end.line.colour,
-                end.labelY, `${end.value.toFixed(1)} °C`, end.y))}
+                end.labelY, `${end.value.toFixed(1)} °C`, end.y, false, end.x))}
             </g>
           )}
 
@@ -1063,6 +1072,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           realPrices={realPrices}
           storeLines={storeLines}
           rooms={rooms}
+          timeZone={homeTimeZone}
           auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
           left={pointer.left}
           top={pointer.top}
@@ -1095,12 +1105,13 @@ const PlanTooltip: React.FC<{
   storeLines?: EnergyStoreLines;
   rooms: readonly EnergyRoomLine[];
   auditDescriptions?: readonly string[];
+  timeZone: string;
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
   row, colours, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, storeLines,
-  rooms, left, top, bounds, auditDescriptions,
+  rooms, left, top, bounds, auditDescriptions, timeZone,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -1136,8 +1147,10 @@ const PlanTooltip: React.FC<{
   };
   const carUsage = hasEvBattery && row.evSoc !== null && row.evSocFromCharging !== undefined
     && row.evSocFromCharging - row.evSoc >= CAR_USAGE_SHOWN ? row.evSocFromCharging - row.evSoc : null;
+  const roomReadingCount = rooms.reduce((count, room) => count + (row.roomTemperatures?.[room.key]?.length ?? 0)
+    + (row.roomComfortMinC?.[room.key] === undefined ? 0 : 1), 0);
   const estimated = 174 + (row.estimatedEnergy ? 40 : 0)
-    + (running.length + (storeLines ? 3 : 0) + (carUsage === null ? 0 : 1) + rooms.length) * 16;
+    + (running.length + (storeLines ? 3 : 0) + (carUsage === null ? 0 : 1) + roomReadingCount) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1238,14 +1251,17 @@ const PlanTooltip: React.FC<{
       </div>
       </>}
       {rooms.map(room => {
-        const value = row.roomTemperatureC?.[room.key], comfort = row.roomComfortMinC?.[room.key];
-        return value === undefined && comfort === undefined ? null : (
-          <Reading
-            key={room.key}
-            name={room.name} colour={room.colour}
-            value={[value === undefined ? '—' : `${value.toFixed(1)} °C`,
-              ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`])].join(' · ')}
-          />
+        const samples = row.roomTemperatures?.[room.key] ?? [], comfort = row.roomComfortMinC?.[room.key];
+        const measured = samples.find(sample => sample.kind === 'interval_mean');
+        const forecast = samples.filter(sample => sample.kind === 'forecast');
+        const values = [
+          ...(measured ? [`${measured.temperatureC.toFixed(1)} °C · ${t('medel', 'mean')}`] : []),
+          ...forecast.map(sample => `${sample.temperatureC.toFixed(1)} °C · ${formatHomeTime(new Date(sample.atMs), timeZone)} ${t('plan', 'plan')}`),
+          ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`]),
+        ];
+        return values.length === 0 ? null : (
+          <Reading key={room.key} name={room.name} colour={room.colour}
+            value={<>{values.map((value, i) => <span key={i} className="block">{value}</span>)}</>} />
         );
       })}
     </div>
@@ -1258,7 +1274,7 @@ const PlanTooltip: React.FC<{
  * Colouring the label itself would put a 2:1 yellow on a light popover, which
  * is the one place the chart's palette cannot survive being text.
  */
-const Reading: React.FC<{ name: string; value: string; colour?: string; swatch?: string }> = ({
+const Reading: React.FC<{ name: string; value: React.ReactNode; colour?: string; swatch?: string }> = ({
   name, value, colour, swatch,
 }) => (
   <div className="flex items-baseline justify-between gap-3">

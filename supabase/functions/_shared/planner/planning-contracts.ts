@@ -285,7 +285,10 @@ export interface ThermalZonePlanningInput {
   model_warnings?: string[];
   /** Provenance of `model`, used unchanged at every quarter. */
   model_source?: import("./room-response.ts").RoomResponseSource;
+  /** Estimated instantaneous state at the immutable capture time. */
   start_temperature_c: number | null;
+  /** Native measured mean used to condition the capture state and calibrate sensors. */
+  temperature_observation?: { start_ms: number; end_ms: number; mean_c: number };
   /** Unreleased heater heat at the start, in temperature-equivalent °C. */
   start_stored_heat_c?: number | null;
   /** Remaining observed appliance heat, separate from heater power and base electricity. */
@@ -1093,8 +1096,11 @@ export type BatteryProjection = {
 /** Only modelled temperatures are published; unknown temperatures remain absent. */
 export interface ThermalPlanningProjection {
  source:"comfort_schedule_model"|"synthetic_season_fixture";season:"winter"|"spring"|"summer"|"autumn"|"ev_only"|null;slot_minutes:15;starts:string[];outdoor_temperature_c:number[];
+ /** Exact instant of the published initial state; absent on older stored plans. */
+ initial_at?:string;
  planned_total_power_w:number[];unplanned_total_power_w:number[];
  zones:{key:string;name:string;
+ initial_temperature_c?:number;observed_through?:string|null;
  /** The room's device models, whose owners' operating modes say whether it is controlled. */
  device_keys?:string[];control_type:"switch_schedule"|"setpoint"|"mixed";load_type:DeviceLoadType|"mixed";
  priority:number;rated_power_w:number;comfort_min_c:number[];target_c:number[];comfort_max_c:number[];

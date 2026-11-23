@@ -14,7 +14,7 @@
 import type { ActualEnergySlot, PlannedSlot } from './contracts';
 import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 import { homeDayBounds } from './home-time';
-import type { RoomSlotRow, RoomTemperaturePlan } from './room-temperature';
+import type { RoomSlotRow, RoomTemperaturePlan, RoomTemperatureSamples } from './room-temperature';
 
 /** Days either side of today, or the whole span. */
 export type DayWindow = -2 | -1 | 0 | 1 | 2 | 3 | 'upcoming' | 'all';
@@ -84,8 +84,8 @@ export interface TimelineRow {
   shadowExportSekPerKwh: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolC?: number | null;
-  /** Room readings on the past side, driven rooms' forecasts on the future side. */
-  roomC?: Record<string, number>;
+  /** Native interval means and immutable captured forecast states on their own clocks. */
+  roomTemperatures?: RoomTemperatureSamples;
   /** Planned quarters: each driven room's comfort minimum, °C by room key. */
   roomComfortMinC?: Record<string, number>;
 }
@@ -185,9 +185,14 @@ export const buildEnergyTimeline = ({
     if (Number.isFinite(startMs) && Number.isFinite(value)) roomByStart.set(startMs, { ...roomByStart.get(startMs), [slot.room_key]: value });
   }
   const rooms = (startMs: number) => {
-    const roomC = startMs < boundary ? roomByStart.get(startMs) : roomPlan?.temperatureByStart.get(startMs);
-    const roomComfortMinC = startMs < boundary ? undefined : roomPlan?.comfortMinByStart.get(startMs);
-    return { ...(roomC ? { roomC } : {}), ...(roomComfortMinC ? { roomComfortMinC } : {}) };
+    const roomTemperatures: RoomTemperatureSamples = { ...roomPlan?.samplesByStart.get(startMs) };
+    if (startMs < boundary) for (const [key, temperatureC] of Object.entries(roomByStart.get(startMs) ?? {})) {
+      roomTemperatures[key] = [{ atMs: startMs + SLOT_MS / 2, temperatureC, kind: 'interval_mean' },
+        ...(roomTemperatures[key] ?? [])];
+    }
+    const roomComfortMinC = roomPlan?.comfortMinByStart.get(startMs);
+    return { ...(Object.keys(roomTemperatures).length ? { roomTemperatures } : {}),
+      ...(roomComfortMinC ? { roomComfortMinC } : {}) };
   };
   const rows = new Map<number, TimelineRow>();
 
@@ -272,7 +277,7 @@ export const buildEnergyTimeline = ({
     });
   }
 
-  const starts = [...rows.keys(), ...[...roomByStart.keys()].filter(start => start < boundary)];
+  const starts = [...rows.keys(), ...(roomPlan?.samplesByStart.keys() ?? []), ...[...roomByStart.keys()].filter(start => start < boundary)];
   if (starts.length === 0) return [];
   const firstStart = Math.min(...starts), lastStart = Math.max(...starts);
 

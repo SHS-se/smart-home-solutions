@@ -236,6 +236,8 @@ export function passiveHeatRates(
 }
 
 export interface RoomProjectionContext {
+  /** Same capture-clipped durations used by the executable room planner. */
+  duration_hours?: readonly number[];
   house_c?: (number | null)[] | null;
   start_stored_heat_c?: number | null;
   passive_heat_c_per_h?: readonly number[];

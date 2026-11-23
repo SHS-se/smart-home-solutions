@@ -42,6 +42,9 @@ export interface ActualEnergySlot {
 export type ThermalFixtureSeason = 'winter' | 'spring' | 'summer' | 'autumn' | 'ev_only';
 
 export interface ThermalZoneProjection {
+  /** Captured initial forecast state; absent on older stored projections. */
+  initial_temperature_c?: number;
+  observed_through?: string | null;
   key: string;
   name: string;
   /** The room's device models; absent on plans made before rooms named them. */
@@ -61,6 +64,8 @@ export interface ThermalZoneProjection {
 
 /** The room-temperature consequence of the executable comfort-driven demand. */
 export interface ThermalProjection {
+  /** Exact initial forecast instant, including a partially elapsed first quarter. */
+  initial_at?: string;
   source: 'synthetic_season_fixture' | 'comfort_schedule_model';
   season: ThermalFixtureSeason | null;
   slot_minutes: 15;
