@@ -66,11 +66,17 @@ export interface RunCooldown {
   room_c: number;
   outdoor_c: number;
   house_c: number | null;
+  /** Observed minus model-predicted fall over the same tail transitions, °C/h,
+   * against the response this run was assessed with; positive when the room
+   * fell faster than that response predicts. Null for an algebraic response. */
+  residual_c_per_h?: number | null;
 }
 export interface RoomRunEvidence {
   policy: typeof ROOM_RUN_POLICY;
   minimum_runs: 3;
-  maximum_runs: 10;
+  maximum_runs: typeof MAX_ROOM_HEATING_RUNS;
+  /** Revision of the published response every run was assessed against. */
+  assessed_against?: string | null;
   observed_runs: number;
   retained_runs: number;
   fitted_runs: number;
@@ -124,7 +130,7 @@ export function recentRoomRunRows(rows: readonly RoomMeanQuarter[], inBand: (c: 
   return rowsForRuns(rows, runs);
 }
 
-function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun[]): RoomMeanQuarter[] {
+export function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun[]): RoomMeanQuarter[] {
   const indices = new Set<number>();
   for (const run of runs) for (let i = run.from; i <= run.end; i++) indices.add(i);
   return [...indices].sort((a, b) => a - b).map(i => rows[i]);
@@ -132,7 +138,7 @@ function rowsForRuns(rows: readonly RoomMeanQuarter[], runs: readonly HeatingRun
 
 /** Version of the descriptive run conditions stored in each ledger. Changing
  * it revisits every band once, so stored ledgers describe their runs. */
-export const ROOM_RUN_CONDITIONS = "run_conditions_v1";
+export const ROOM_RUN_CONDITIONS = "run_conditions_v2";
 
 /** The window after the heater stops in which cooling is compared across runs.
  * A fixed span keeps runs comparable; a long tail approaches equilibrium. */
@@ -149,16 +155,22 @@ function timeMean(rows: readonly RoomMeanQuarter[], value: (row: RoomMeanQuarter
   return hours > 0 ? sum / hours : null;
 }
 
-/** Describe only what was observed. Missing readings shorten the evidence;
- * they are never filled. A cooldown needs one hour of observed fall. */
-export function describeHeatingRun(rows: readonly RoomMeanQuarter[], run: HeatingRun, lagH: number) {
-  const window = rows.slice(run.from, run.end + 1);
-  const room = window.map(row => row.room_c).filter(finite);
+/** Tail intervals compared across runs: heater off, after its lag, within the window. */
+function cooldownTail(rows: readonly RoomMeanQuarter[], run: HeatingRun, lagH: number) {
   const midpointH = (row: RoomMeanQuarter) => (row.start_ms - run.off_from_ms) / 3_600_000 + roomIntervalHours(row) / 2;
   const settled = Math.max(0, lagH);
   const tail = rows.slice(run.off, run.end + 1).filter(row => known(row) && row.heat_w! <= HEATED_SAMPLE_MIN_W &&
     midpointH(row) >= settled && midpointH(row) <= settled + RUN_COOLDOWN_WINDOW_H &&
     finite(row.room_c) && finite(row.outdoor_c));
+  return { tail, midpointH };
+}
+
+/** Describe only what was observed. Missing readings shorten the evidence;
+ * they are never filled. A cooldown needs one hour of observed fall. */
+export function describeHeatingRun(rows: readonly RoomMeanQuarter[], run: HeatingRun, lagH: number) {
+  const window = rows.slice(run.from, run.end + 1);
+  const room = window.map(row => row.room_c).filter(finite);
+  const { tail, midpointH } = cooldownTail(rows, run, lagH);
   let cooldown: RunCooldown | null = null;
   if (tail.length >= 3) {
     const x = tail.map(midpointH), y = tail.map(row => row.room_c!);
@@ -178,6 +190,25 @@ export function describeHeatingRun(rows: readonly RoomMeanQuarter[], run: Heatin
     room_end_c: [...window].reverse().find(row => finite(row.room_c))?.room_c ?? null,
     cooldown,
   };
+}
+
+/** Observed minus predicted fall over the cool-down tail, using the same
+ * interval-mean algebra as the run's assessment and the response's own
+ * background. Unknown entry heater state is left out; after the lag it has
+ * decayed. Positive: the room fell faster than the response predicts. */
+function cooldownResidual(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: ThermalZoneModel,
+  terms: readonly RunEquation[]): number | null {
+  if (isEquilibrium(model)) return null;
+  const tail = new Set(cooldownTail(rows, run, model.heat_lag_h ?? 0).tail.map(row => row.start_ms));
+  let sum = 0, hours = 0;
+  for (const term of terms) {
+    const q = rows[term.index], next = rows[term.index + 1];
+    if (!tail.has(q.start_ms) || !tail.has(next.start_ms)) continue;
+    const predicted = model.gain_c_per_wh * term.x[0] + model.background_gain_c_per_h * term.x[1];
+    const h = roomIntervalHours(q);
+    sum -= term.y - predicted; hours += h;
+  }
+  return hours > 0 ? sum / hours : null;
 }
 
 interface RunEquation { index: number; x: number[]; y: number; exposure: number }
@@ -224,6 +255,7 @@ function runResponse(rows: readonly RoomMeanQuarter[], run: HeatingRun, model: T
     ...describeHeatingRun(rows, run, model.heat_lag_h ?? 0) };
   const terms = runEquations(rows, run, model, inBand), matrix = terms.map(term => term.x);
   result.transitions = terms.length;
+  if (result.cooldown) result.cooldown = { ...result.cooldown, residual_c_per_h: cooldownResidual(rows, run, model, terms) };
   const beta = leastSquares(matrix, terms.map(term => term.y));
   if (!beta || terms.length <= beta.length) return result;
   const residuals = terms.map(term => term.y - term.x.reduce((sum, value, j) => sum + value * beta[j], 0));

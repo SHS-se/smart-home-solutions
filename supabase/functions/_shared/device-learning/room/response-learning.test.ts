@@ -19,10 +19,10 @@ function plant(events = 8) {
 }
 
 Deno.test("the publication owner requires three runs and publishes no uncontrolled background", () => {
-  const short = learnRoomResponse(plant(2), () => true, 500);
+  const short = learnRoomResponse(plant(2), 500);
   assert(!short.result.ok);
   assertEquals(short.result.reason, "insufficient_heating_runs");
-  const fitted = learnRoomResponse(plant(3), () => true, 500);
+  const fitted = learnRoomResponse(plant(3), 500);
   assert(fitted.result.ok && fitted.result.model.response_family === "finite");
   assertEquals(fitted.run_ledger?.fitted_runs, 3);
   assertAlmostEquals(fitted.result.model.gain_c_per_wh, .002, .00001);
@@ -40,7 +40,7 @@ Deno.test("actual learning excludes overlapping unknown heat and its tail before
     rows[i].room_c! += warmth * share + input / .075 * (1 - share);
     warmth = warmth * decay + input / .075 * (1 - decay);
   }
-  const original = structuredClone(rows), result = learnRoomResponse(rows, () => true, 500);
+  const original = structuredClone(rows), result = learnRoomResponse(rows, 500);
   assert(result.result.ok && result.result.model.response_family === "finite");
   assertEquals(result.run_ledger?.fitted_runs, 7);
   assertEquals(result.run_ledger?.suspect_runs, 1);
@@ -51,7 +51,7 @@ Deno.test("actual learning excludes overlapping unknown heat and its tail before
 Deno.test("future held-out temperatures cannot change the training screening cells", () => {
   const rows = plant(), changed = structuredClone(rows);
   changed.slice(Math.floor(rows.length * 2 / 3)).forEach((row, i) => { row.room_c! += 2 * Math.sin(i / 4); });
-  const a = prepareRoomResponse(rows, () => true, 500), b = prepareRoomResponse(changed, () => true, 500);
+  const a = prepareRoomResponse(rows, 500), b = prepareRoomResponse(changed, 500);
   const firstCell = (prepared: typeof a) => {
     let state: RoomHeatFitState | null = null;
     for (;;) {
@@ -73,7 +73,7 @@ Deno.test("a recent physical heat-loss improvement is learned without averaging 
       watts: i % 32 >= 2 && i % 32 < 15 ? 500 : 0,
       solar: Math.max(0, 200 * Math.sin(i / 96 * 2 * Math.PI)) }),
   }).rows;
-  const fit = learnRoomResponse(rows, () => true, 500);
+  const fit = learnRoomResponse(rows, 500);
   assert(fit.result.ok && fit.result.model.response_family === "finite");
   assertEquals(fit.run_ledger!.fitted_runs, 3);
   assertAlmostEquals(fit.result.model.cooling_constant_per_h, .02, .001);
@@ -82,7 +82,7 @@ Deno.test("a recent physical heat-loss improvement is learned without averaging 
 });
 
 Deno.test("resumable calibration returns the same result through serialized bounded cells", () => {
-  const rows = plant(3), prepared = prepareRoomResponse(rows, () => true, 500);
+  const rows = plant(3), prepared = prepareRoomResponse(rows, 500);
   const cells: RoomBandFitCell[] = [];
   while (cells.length < ROOM_RESPONSE_CELL_COUNT) {
     let state: RoomHeatFitState | null = null;
@@ -132,24 +132,24 @@ function batched(prepared: ReturnType<typeof prepareRoomResponse>, budgetMs: num
 }
 
 Deno.test("batched response cells equal one cell per request through serialized interruptions and the stage crossing", () => {
-  const rows = plant(4), reference = oneCellPerRequest(prepareRoomResponse(rows, () => true, 500));
-  const expected = finalizeRoomResponse(prepareRoomResponse(rows, () => true, 500), readCells(reference.stored));
+  const rows = plant(4), reference = oneCellPerRequest(prepareRoomResponse(rows, 500));
+  const expected = finalizeRoomResponse(prepareRoomResponse(rows, 500), readCells(reference.stored));
   // A zero budget interrupts after every single microstep; an unbounded one
   // runs both stages in one request and therefore crosses cell eighteen.
   for (const budget of [0, 1e9]) {
-    const actual = batched(prepareRoomResponse(rows, () => true, 500), budget);
+    const actual = batched(prepareRoomResponse(rows, 500), budget);
     assertEquals(actual.stored, reference.stored, `budget ${budget} changes a fitted cell`);
-    assertEquals(finalizeRoomResponse(prepareRoomResponse(rows, () => true, 500), readCells(actual.stored)), expected);
+    assertEquals(finalizeRoomResponse(prepareRoomResponse(rows, 500), readCells(actual.stored)), expected);
     if (budget === 0) {
       assert(actual.batches.every(count => count <= 1), "a zero budget runs exactly one microstep");
       assert(actual.batches.length > ROOM_RESPONSE_CELL_COUNT, "the fixture exercises partial additional-heat state");
     } else assertEquals(actual.batches, [ROOM_RESPONSE_CELL_COUNT], "cheap cells share one commit");
   }
   // Resume inside stage one from a persisted prefix and cross into stage two.
-  const resumed = batched(prepareRoomResponse(rows, () => true, 500), 1e9, reference.stored.slice(0, 17));
+  const resumed = batched(prepareRoomResponse(rows, 500), 1e9, reference.stored.slice(0, 17));
   assertEquals(resumed.batches, [ROOM_RESPONSE_CELL_COUNT - 17]);
   assertEquals(resumed.stored, reference.stored);
-  assertThrows(() => advanceRoomResponseCells(prepareRoomResponse(rows, () => true, 500), readCells(reference.stored), null, 1e9),
+  assertThrows(() => advanceRoomResponseCells(prepareRoomResponse(rows, 500), readCells(reference.stored), null, 1e9),
     Error, "already complete");
 });
 
@@ -157,7 +157,7 @@ Deno.test("partial solar coverage keeps one observation design across both calib
   const rows = plant(6);
   rows.slice(0, 32).forEach(row => { row.solar_w_per_m2 = null; });
   rows[71].room_c = null;
-  const fit = learnRoomResponse(rows, () => true, 500);
+  const fit = learnRoomResponse(rows, 500);
   assert(fit.result.ok, JSON.stringify(fit));
   assert(fit.run_ledger!.fitted_runs >= 3);
 });
@@ -172,7 +172,7 @@ Deno.test("a declining room response also replaces the old plant after three coh
       watts: i % 32 >= 2 && i % 32 < 15 ? 500 : 0,
       solar: Math.max(0, 200 * Math.sin(i / 96 * 2 * Math.PI)) }),
   }).rows;
-  const fit = learnRoomResponse(rows, () => true, 500);
+  const fit = learnRoomResponse(rows, 500);
   assert(fit.result.ok && fit.result.model.response_family === "finite", JSON.stringify(fit));
   assertEquals(fit.run_ledger!.fitted_runs, 3);
   assertAlmostEquals(fit.result.model.cooling_constant_per_h, .035, .001);

@@ -327,11 +327,9 @@ Deno.test("a sparse fit cannot turn a brief comfort target into full-power prehe
   assert(zone.model && "gain_c_per_wh" in zone.model);
   zone.target_c = zone.target_c.map((_, i) => i === COMFORT_FROM ? COMFORT : SETBACK);
   zone.comfort_min_c = zone.target_c;
-  zone.heating_bands = { reference_revision: null, by_quarter: zone.target_c.map(() => 0), active: [{
-    revision: "synthetic-weak-heater", band_c: 0, observed_min_c: 0, observed_max_c: 3,
-    training_from: "2025-01-01", training_to: "2025-02-01",
-    model: { ...zone.model, gain_c_per_wh: .00003 }, warnings: ["insufficient_heating"],
-  }] };
+  zone.model = { ...zone.model, gain_c_per_wh: .00003 };
+  zone.model_warnings = ["insufficient_heating"];
+  zone.model_source = { kind: "shared", revision: "synthetic-weak-heater" };
   const accepted = { type: "room_relay", room_key: zone.key, target_c: SETBACK + 1 } as const;
   const result = prepareRoomServices(snapshot, [{ device_commands: { [relay.key]: accepted } }], undefined, prices(nightTariff));
 

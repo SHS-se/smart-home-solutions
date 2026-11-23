@@ -1,11 +1,13 @@
-/** One policy owner for general and weather-band responses. Screening and
- * final fitting use independent training partitions and bounded worker cells. */
+/** One policy owner for the shared room response, fitted across every outdoor
+ * temperature. Screening and final fitting use independent training
+ * partitions and bounded worker cells. */
 import {
   advanceIndependentRoomBandCell, finalizeIndependentRoomBand, parseRoomBandFitCells,
   prepareIndependentRoomBand, roomTransitionNoiseReference, ROOM_BAND_FIT_CELL_COUNT, ROOM_MEAN_LEARNING_METHOD, ROOM_EXCHANGE_FAMILY,
   type PreparedIndependentRoomBand, type RoomBandFitCell, type RoomHeatFitState, type RoomMeanQuarter,
 } from "./mean-observations.ts";
-import { calibrateRoomRuns, recentRoomRunRows, roomHeatingRuns, ROOM_RUN_POLICY, type RoomRunEvidence } from "./run-calibration.ts";
+import { calibrateRoomRuns, recentRoomRunRows, roomHeatingRuns, ROOM_RUN_POLICY, MAX_ROOM_HEATING_RUNS, type RoomRunEvidence } from "./run-calibration.ts";
+import { ALL_OUTDOOR, seasonalRunRows } from "./run-pool.ts";
 
 export const ROOM_RESPONSE_CELL_COUNT = ROOM_BAND_FIT_CELL_COUNT * 2;
 export interface PreparedRoomResponse {
@@ -16,11 +18,13 @@ export interface PreparedRoomResponse {
   observedRunCount: number;
 }
 
-export function prepareRoomResponse(rows: RoomMeanQuarter[], outdoor: (c: number) => boolean, ratedPowerW: number | null,
-  observedRunCount = roomHeatingRuns(rows, outdoor).length) {
-  const workingRows = recentRoomRunRows(rows, outdoor);
-  return { workingRows, source: prepareIndependentRoomBand(workingRows, outdoor, ratedPowerW), outdoor, ratedPowerW,
-    observedRunCount };
+/** The working view is the seasonally balanced run set: one shared response
+ * sees every outdoor stratum, never a single band. */
+export function prepareRoomResponse(rows: RoomMeanQuarter[], ratedPowerW: number | null,
+  observedRunCount = roomHeatingRuns(rows, ALL_OUTDOOR).length): PreparedRoomResponse {
+  const workingRows = seasonalRunRows(rows);
+  return { workingRows, source: prepareIndependentRoomBand(workingRows, ALL_OUTDOOR, ratedPowerW), outdoor: ALL_OUTDOOR,
+    ratedPowerW, observedRunCount };
 }
 
 function fullOnly(cells: readonly RoomBandFitCell[], partition: "training" | "full"): RoomBandFitCell[] {
@@ -143,9 +147,17 @@ export function finalizeRoomResponse(prepared: PreparedRoomResponse, cells: read
       result: { ok: false, reason: "response_unresolved", sample_count: fit.result.model.sample_count,
         learning_evidence: { ...fit.result.learning_evidence!, run_calibration: { ...compactRunEvidence(ledger), fitted_runs: 0, provisional_runs: ledger.provisional_runs + ledger.fitted_runs, oldest_run_at: null, newest_run_at: null } } },
     };
-    const verifiedById = new Map(verified.runs.map(run => [run.id, run]));
-    ledger = { ...ledger, oldest_run_at: verified.oldest_run_at, newest_run_at: verified.newest_run_at,
-      runs: ledger.runs.map(run => verifiedById.get(run.id) ?? run) };
+    // Every retained run is reassessed against the final response, so all
+    // points share one loss model. The verified support stays the fitted set.
+    const fittedIds = new Set(ids(verified));
+    const all = calibrateRoomRuns(prepared.workingRows, fit.result.model, prepared.outdoor, noise,
+      fit.result.learning_evidence?.forecast_nuisance?.fitted_offset).evidence;
+    const runs = all.runs.map(run => fittedIds.has(run.id) ? { ...run, disposition: "fitted" as const }
+      : run.disposition === "fitted" ? { ...run, disposition: "provisional" as const } : run);
+    const count = (d: string) => runs.filter(run => run.disposition === d).length;
+    ledger = { ...ledger, runs, retained_runs: runs.length, fitted_runs: count("fitted"),
+      provisional_runs: count("provisional"), suspect_runs: count("suspect_change"),
+      oldest_run_at: verified.oldest_run_at, newest_run_at: verified.newest_run_at };
   }
   if (!ledger || ledger.fitted_runs < 3 || !fit.result.ok) return {
     ...fit, run_ledger: ledger,
@@ -166,10 +178,10 @@ export function compactRunEvidence(evidence: RoomRunEvidence) {
 }
 
 /** Offline replay uses the same cells, not a separate fitting algorithm. */
-export function learnRoomResponse(rows: RoomMeanQuarter[], outdoor: (c: number) => boolean, ratedPowerW: number | null): LearnedRoomResponse {
-  const prepared = prepareRoomResponse(rows, outdoor, ratedPowerW), cells: RoomBandFitCell[] = [];
+export function learnRoomResponse(rows: RoomMeanQuarter[], ratedPowerW: number | null): LearnedRoomResponse {
+  const prepared = prepareRoomResponse(rows, ratedPowerW), cells: RoomBandFitCell[] = [];
   if (prepared.observedRunCount < 3) {
-    const ledger: RoomRunEvidence = { policy: ROOM_RUN_POLICY, minimum_runs: 3, maximum_runs: 10,
+    const ledger: RoomRunEvidence = { policy: ROOM_RUN_POLICY, minimum_runs: 3, maximum_runs: MAX_ROOM_HEATING_RUNS,
       observed_runs: prepared.observedRunCount, retained_runs: 0, fitted_runs: 0, suspect_runs: 0, provisional_runs: 0,
       oldest_run_at: null, newest_run_at: null, runs: [] };
     return { minC: null, maxC: null, run_ledger: ledger, result: { ok: false, reason: "insufficient_heating_runs",

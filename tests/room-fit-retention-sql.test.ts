@@ -1,7 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
 import { assert, assertEquals } from "@std/assert";
-import { ROOM_FIT_CAPTURE_VERSION } from "../supabase/functions/_shared/device-model-learning/room-band-run.ts";
-import { ROOM_FIT_METADATA_VERSION } from "../supabase/functions/_shared/device-model-learning/room.ts";
+/** Band captures (envelope 2) re-read raw history at completion and need retention holds; shared
+ * captures (envelope 3) carry their merged rows and need none. */
+const ROOM_FIT_CAPTURE_VERSION = 2;
+/** Band capture metadata (version 1) inside envelope 2. */
+const ROOM_FIT_METADATA_VERSION = 1;
 
 const home = "10000000-0000-4000-8000-000000000001", otherHome = "10000000-0000-4000-8000-000000000002";
 const customer = "20000000-0000-4000-8000-000000000001", otherCustomer = "20000000-0000-4000-8000-000000000002";

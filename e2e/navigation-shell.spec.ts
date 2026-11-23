@@ -454,7 +454,7 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading')).toHaveCount(0);
   });
 
-  for (const kind of ['room', 'device'] as const) {
+  for (const kind of ['device'] as const) {
     test(`${kind} heating Model labels use fixed five-degree bands with separate observed coverage`, async ({ page, context }) => {
       // Independently generated model metadata; no household measurements.
       await mockComfortLink(context);
@@ -501,10 +501,9 @@ test.describe('staff navigation shell', () => {
     });
   }
 
-  test('room Model plots every heating run by outdoor temperature with a trend and run details', async ({ page, context }, testInfo) => {
-    // Independently generated runs; no household measurements.
+  test('room Model draws the one shared response through every heating run and explains each run', async ({ page, context }, testInfo) => {
+    // Independently generated runs and response; no household measurements.
     await mockComfortLink(context);
-    await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => route.fulfill({ json: { room: null, connections: [] } }));
     const noise = (i: number) => { const v = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v) - .5; };
     const dispositions = ['fitted', 'fitted', 'provisional', 'uninformative', 'fitted', 'suspect_change'] as const;
     const runs = Array.from({ length: 24 }, (_, i) => {
@@ -516,15 +515,23 @@ test.describe('staff navigation shell', () => {
         change_size: disposition === 'suspect_change' ? .4 : null, change_phase: disposition === 'suspect_change' ? 'heating' : null,
         disposition, on_from_ms: start + 3_600_000, off_from_ms: start + 3 * 3_600_000, outdoor_c: outdoor, house_c: 20.2,
         room_start_c: 19.4, room_peak_c: 21.1, room_end_c: 19.8, cooldown: i % 7 === 6 ? null
-          : { hours: 2.5, c_per_h: .045 * (13 - outdoor) + noise(i + 80) * .08, room_c: 20.4, outdoor_c: outdoor, house_c: 20.2 } };
+          : { hours: 2.5, c_per_h: .045 * (13 - outdoor), room_c: 20.4, outdoor_c: outdoor, house_c: 20.2, residual_c_per_h: noise(i + 80) * .08 } };
     });
-    await context.route('**/rest/v1/rpc/get_energy_room_run_evidence', route => {
+    const model = { response_family: 'finite', gain_c_per_wh: .002, cooling_constant_per_h: .045, house_coupling_per_h: .02,
+      background_gain_c_per_h: .3, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 32.5, time_constant_h: 15.4,
+      heating_rate_c_per_h: 1, r2: .9, sample_count: 700, residual_std_c: .05, heat_lag_h: .5 };
+    let shared = true;
+    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => {
       expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio' });
-      return route.fulfill({ json: [
-        { scope_key: 'general', model_revision: 3, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(-10) } },
-        { scope_key: '-15', model_revision: 2, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(0, 12) } },
-        { scope_key: '-5', model_revision: 2, created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(12) } },
-      ] });
+      return route.fulfill({ json: shared ? {
+        room: { trained: true, rejection_reason: null, last_fit_attempt: null, shared_attempt: { status: 'fitted', attempted_at: '2026-03-01T00:00:00Z' } },
+        response: { revision: 'shared-revision', model, training_from: '2026-01-03T00:00:00Z', training_to: '2026-04-30T00:00:00Z',
+          warnings: [], run_calibration: { fitted_runs: 12, maximum_runs: 24 } },
+        ledgers: [{ scope_key: 'shared', created_at: '2026-03-01T00:00:00Z', evidence: { assessed_against: 'shared-revision', runs } }],
+      } : {
+        room: { trained: true, rejection_reason: null, last_fit_attempt: null, shared_attempt: null }, response: null,
+        ledgers: [{ scope_key: '-15', created_at: '2026-03-01T00:00:00Z', evidence: { runs: runs.slice(0, 12) } }],
+      } });
     });
     await login(page);
     await page.goto(COMFORT_LINK);
@@ -534,13 +541,21 @@ test.describe('staff navigation shell', () => {
     const cooling = panel.getByRole('img', { name: 'Avsvalning per förlopp' });
     await expect(heating.locator('[data-run]')).toHaveCount(24);
     await expect(cooling.locator('[data-run]')).toHaveCount(runs.filter(run => run.cooldown).length);
-    await expect(panel.getByText(/Trend: platt/)).toBeVisible();
-    await expect(panel.getByText(/svalnar inte utan värme över/)).toBeVisible();
+    await expect(panel.getByTestId('fitted-heating-runs')).toHaveText('12 / 24');
+    await expect(panel.getByText('Planeraren använder den här enda responsen vid varje prognostiserad utetemperatur.')).toBeVisible();
+    await expect(panel.getByText(/Modell: 2 °C\/kWh/)).toBeVisible();
+    await expect(panel.getByText(/Svalnar inte utan värme över/)).toBeVisible();
     await expect(panel.getByText('Effekt som håller rummets temperatur (uppskattning)')).toBeVisible();
+    // The band selector, band summary and warm-up scenario are gone.
+    await expect(panel.getByLabel('Utomhustemperaturintervall', { exact: true })).toHaveCount(0);
+    await expect(panel.getByText('Uppskattad uppvärmning och avsvalning')).toHaveCount(0);
+    // The model line: solid over the measured runs, dashed beyond them.
+    await expect(heating.locator('.recharts-line-curve')).toHaveCount(2);
     await heating.locator(`[data-run="${runs[5].id}"]`).click();
     const detail = panel.getByTestId('room-run-detail');
     await expect(detail).toContainText('2026');
     await expect(detail).toContainText(/annan källa/);
+    await expect(detail).toContainText('Rummets gemensamma modell');
     await expect(cooling.locator(`[data-run="${runs[5].id}"][aria-pressed="true"]`)).toHaveCount(1);
     await page.screenshot({ path: testInfo.outputPath('room-run-charts.png'), fullPage: true });
     await detail.getByRole('button', { name: 'Stäng' }).click();
@@ -548,6 +563,13 @@ test.describe('staff navigation shell', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await heating.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    // A room still on its earlier band responses shows its points without a line.
+    shared = false;
+    await page.reload();
+    await panel.getByRole('button', { name: 'Modell', exact: true }).click();
+    await expect(panel.getByText(/gemensamma modell lärs fortfarande in/)).toBeVisible();
+    await expect(heating.locator('[data-run]')).toHaveCount(12);
+    await expect(heating.locator('.recharts-line-curve')).toHaveCount(0);
   });
 
   test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {

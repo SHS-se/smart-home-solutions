@@ -1,6 +1,6 @@
 import { captureDeviceModels } from "./device-model-store.ts";
 import { fitStoredRoom } from "./device-model-learning/room.ts";
-import { roomLearningClock, runRoomHeatingLearning } from "./device-model-learning/room-band-run.ts";
+import { roomLearningClock, runRoomHeatingLearning } from "./device-model-learning/room-response-run.ts";
 import { fitStoredPool } from "./device-model-learning/pool.ts";
 import { fitStoredWeatherHeating } from "./device-model-learning/weather-heating.ts";
 import { fitStoredDevice } from "./device-model-learning/device.ts";

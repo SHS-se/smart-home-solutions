@@ -45,14 +45,20 @@ export interface RoomHeatingBands {
   general_solar_pending?: boolean;
   general_solar_retry_at?: string | null;
   pending_windows?: number;
+  /** The latest shared-response attempt over the exact harvested run pool. */
+  shared_attempt?: { implementation: string; pool: { window_key: string; sha256: string }[]; attempted_at: string;
+    status: "fitted" | "unidentified" };
   diagnostics?: Record<string, unknown>;
 }
 
 export interface RoomHeatingReference {
   model: ThermalZoneModel;
+  training_from?: string;
   training_to?: string;
   warnings?: string[];
-  scope?: { kind: "general" } | { kind: "band"; band_c: number };
+  /** `shared`: one response fitted across every outdoor temperature. `general`
+   * and `band` are legacy responses kept only until the shared one publishes. */
+  scope?: { kind: "shared" } | { kind: "general" } | { kind: "band"; band_c: number };
   learning_evidence?: unknown;
   passive_heat?: unknown;
   doorway_exchange?: unknown;
@@ -82,9 +88,12 @@ export function roomHeatingEvidenceLimited(basis: RoomHeatingBasis | undefined, 
   return basis.by_quarter.some(index => limited(index < 0 ? referenceWarnings : basis.active[index]?.warnings));
 }
 
+/** Thermal sources are a room's one response (see planner/room-response.ts);
+ * `band` remains for device electrical draw and legacy rollout responses. */
 export type HeatingModelSource =
-  | { kind: "band"; band_c: number; revision: string; extrapolated?: true }
+  | { kind: "shared"; revision: string }
   | { kind: "general"; revision: string | number | null }
+  | { kind: "band"; band_c: number; revision: string; extrapolated?: true }
   | { kind: "weather_curve"; revision: string | number | null; anchors_c: number[] }
   | { kind: "running_power"; watts: number; revision?: string; binding?: string }
   | { kind: "empirical" };

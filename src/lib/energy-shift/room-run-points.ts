@@ -3,7 +3,8 @@ import { heatingBand } from '../../../supabase/functions/_shared/planner/heating
 
 /** Display reading of the stored run ledgers; fitting stays in the learner. */
 const num = z.number().finite();
-const cooldown = z.object({ hours: num, c_per_h: num, room_c: num, outdoor_c: num, house_c: num.nullable() });
+const cooldown = z.object({ hours: num, c_per_h: num, room_c: num, outdoor_c: num, house_c: num.nullable(),
+  residual_c_per_h: num.nullable().optional() });
 const run = z.object({
   id: z.string(),
   from_ms: num,

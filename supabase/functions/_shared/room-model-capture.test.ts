@@ -216,21 +216,17 @@ Deno.test("weather draw is pinned only for the matching device in Verification",
   assertEquals(read(prepareRoomModels(snapshot, mappings, bundle).snapshot), undefined);
 });
 
-Deno.test("a forecast crosses heating bands and publishes the actual thermal and electrical revisions", () => {
+Deno.test("one shared response plans every forecast temperature and records its revision", () => {
   const { snapshot, mappings, bundle } = syntheticCapture();
   const [mapping] = mappings;
   const key = mapping.room!.key;
   const fitted = bundle.rooms.find(room => room.room_key === key)!;
   const reference = readThermalModel(fitted)!;
-  const fit = (band: number, revision: string, outdoor: number, gain: number) => ({
-    revision, band_c: band, observed_min_c: outdoor, observed_max_c: outdoor,
-    training_from: "2025-01-01", training_to: "2025-01-08",
-    model: { ...reference, gain_c_per_wh: gain * (band < 0 ? .5 : 2),
-      heat_lag_h: band < 0 ? .5 : 2, house_coupling_per_h: .03 },
-  });
-  fitted.heating_bands = { binding: "synthetic-configuration", since: "2025-01-01", reference_revision: "general",
-    reference: { model: reference }, attempted: {}, candidates: [],
-    active: [fit(-10, "cold", -7, reference.gain_c_per_wh), fit(5, "mild", 6, reference.gain_c_per_wh)] };
+  fitted.heating_bands = { binding: "synthetic-configuration", calibration_policy: "seasonal_independent_runs_v1",
+    since: "2025-01-01", reference_revision: "shared-1",
+    reference: { model: { ...reference, house_coupling_per_h: .03 }, scope: { kind: "shared" },
+      learning_evidence: { run_calibration: { policy: "seasonal_independent_runs_v1", fitted_runs: 5 } } },
+    attempted: {}, candidates: [], active: [] };
   fitted.background_gain_c_per_h = reference.background_gain_c_per_h + .5;
   bundle.roomHeating = { [key]: { binding: "synthetic-configuration", observed_since: "2025-01-01" } };
   snapshot.slots = snapshot.slots.slice(0, 3);
@@ -249,18 +245,16 @@ Deno.test("a forecast crosses heating bands and publishes the actual thermal and
       training_from: "2025-01-01", training_to: "2025-01-08" }],
   } }];
   const prepared = prepareRoomModels(snapshot, [mapping], bundle);
-  assertEquals(prepared.rooms[0].model?.background_gain_c_per_h, reference.background_gain_c_per_h);
+  assertEquals(prepared.rooms[0].model_source, { kind: "shared", revision: "shared-1" });
+  assert(!prepared.snapshot.planning_warnings?.some(warning => warning.code === "room_heating_response_learning"));
   const evidence = roomPlanningZones(prepared.snapshot, prepared.rooms, { schedules: new Map([[key, {
     weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
     off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21,
   }]]), temperature_c: new Map([[key, 19]]), recent_heat_w: new Map() });
   const result = prepareRoomServices({ ...prepared.snapshot, thermal_zones: evidence.zones });
   const used = result.heating_model_use?.[key];
-  assertEquals(used?.thermal.map(run => run.source), [
-    { kind: "band", band_c: -10, revision: "cold" },
-    { kind: "band", band_c: 5, revision: "mild" },
-    { kind: "general", revision: "general" },
-  ]);
+  assertEquals(used?.thermal, [{ from: 0, through: 2, source: { kind: "shared", revision: "shared-1" } }]);
+  // Device electrical draw keeps its own weather bands.
   assertEquals(used?.electrical[device.key], [
     { from: 0, through: 0, source: { kind: "band", band_c: -10, revision: "draw-cold" } },
     { from: 1, through: 2, source: { kind: "running_power", watts: device.active_power_w!,
@@ -269,8 +263,8 @@ Deno.test("a forecast crosses heating bands and publishes the actual thermal and
   assertEquals(result.power[device.key].length, 3);
   bundle.roomHeating[key].binding = "new heater";
   const replacement = prepareRoomModels(snapshot, [mapping], bundle);
-  assert(replacement.rooms[0].model);
-  assertEquals(replacement.rooms[0].heating_bands, { reference_revision: "general", active: [] });
+  assert(replacement.rooms[0].model, "the previous response stays in service while the new setup is measured");
+  assertEquals(replacement.rooms[0].model_source, undefined);
 });
 
 Deno.test("room preparation uses connected probe evidence without requiring the neighbour to be planned", async () => {
@@ -316,18 +310,12 @@ Deno.test("room preparation uses connected probe evidence without requiring the 
   assert(shifted.temperature[key].some((thermal, index) => thermal !== baseline.temperature[key][index]));
 });
 
-Deno.test("history reconstructs stored heat with historical bands and bounds missing weather", async () => {
+Deno.test("history reconstructs stored heat with the one response and bounds missing readings", async () => {
   const { snapshot, mappings, bundle } = syntheticCapture();
   const prepared = prepareRoomModels(snapshot, mappings, bundle);
   const room = prepared.rooms.find(candidate => candidate.model)!;
-  room.model = { ...room.model!, heat_lag_h: 0 };
-  const band = (band_c: number, lag: number, gain: number) => ({
-    band_c, revision: `synthetic-${band_c}`, observed_min_c: band_c, observed_max_c: band_c + 4,
-    training_from: "2025-01-01", training_to: "2025-02-01",
-    model: { ...room.model!, heat_lag_h: lag, gain_c_per_wh: gain },
-  });
-  room.heating_bands = { reference_revision: "general", active: [band(-10, 2, .002), band(5, .5, .001)] };
-  const run = async (missing: number[], unsupported: number[] = [], missingEnergy: number[] = []) => {
+  room.model = { ...room.model!, heat_lag_h: 2, gain_c_per_wh: .002 } as typeof room.model;
+  const run = async (missing: number[], missingEnergy: number[] = []) => {
     const db = createClient("http://localhost:54321", "synthetic-service", {
       auth: { persistSession: false }, global: { fetch: (url, request) => {
         const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
@@ -341,9 +329,10 @@ Deno.test("history reconstructs stored heat with historical bands and bounds mis
         if (endpoint === "get_energy_room_planning_history") {
           const { p_from } = JSON.parse(String(request?.body));
           const starts = Array.from({ length: 96 }, (_, i) => Date.parse(p_from) + i * 900_000);
-          return Promise.resolve(Response.json([{ room_key: room.key, temperature_starts: starts,
+          return Promise.resolve(Response.json([{ room_key: room.key,
+            temperature_starts: starts.filter((_start, i) => !missing.includes(i)),
             heater_quarters: starts.flatMap((start, i) => missingEnergy.includes(i) ? [] : [[start, 800]]),
-            outdoor_quarters: starts.flatMap((start, i) => missing.includes(i) ? [] : [[start, unsupported.includes(i) ? 20 : i < 94 ? -7 : 6]]),
+            outdoor_quarters: starts.map(start => [start, -7]),
           }]));
         }
         throw new Error(`Unexpected synthetic capture dependency ${endpoint}`);
@@ -352,48 +341,30 @@ Deno.test("history reconstructs stored heat with historical bands and bounds mis
     return await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), [room]);
   };
   let expected = 0;
-  for (let i = 0; i < 96; i++) {
-    const lag = i < 94 ? 2 : .5, gain = i < 94 ? .002 : .001;
-    expected = Math.exp(-.25 / lag) * expected + gain * lag * -Math.expm1(-.25 / lag) * 800;
-  }
+  for (let i = 0; i < 96; i++) expected = Math.exp(-.25 / 2) * expected + .002 * 2 * -Math.expm1(-.25 / 2) * 800;
   const complete = await run([]);
   assertAlmostEquals(complete.thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
+  // The newest quarter arriving late is a routine note and a lower bound.
   const late = await run([95]);
   assert(late.thermal_zones![0].start_stored_heat_c! < expected);
   assert(late.planning_warnings!.some(warning => warning.code === "room_heat_history_late"));
+  // A hole in the middle keeps the room and never overstates its stored heat.
   const hole = await run([40]);
   assert(hole.thermal_zones![0].model);
   assert(hole.thermal_zones![0].start_stored_heat_c! <= expected);
+  // No readings at all, or an unavailable heater counter, stores nothing and says so.
   const absent = await run(Array.from({ length: 96 }, (_, i) => i));
   assertEquals(absent.thermal_zones![0].start_stored_heat_c, 0);
   assert(absent.planning_warnings!.some(warning => warning.code === "room_heat_history_missing"));
-  assertAlmostEquals((await run([])).thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
-
-  // No general model: all forecast intervals remain covered, but historical
-  // temperatures outside accepted bands cannot be treated as another band.
-  room.model = null;
-  room.heating_bands.reference_revision = null;
-  prepared.snapshot.outdoor_temperature_c = prepared.snapshot.slots.map(() => -7);
-  const bandOnly = await run([]);
-  assert(bandOnly.thermal_zones![0].model);
-  assertAlmostEquals(bandOnly.thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
-  const lastMissing = await run([95]);
-  assert(lastMissing.thermal_zones![0].model);
-  assertEquals(lastMissing.thermal_zones![0].start_stored_heat_c, 0);
-  assert(lastMissing.planning_warnings!.some(warning => warning.code === "room_heat_history_late"));
-  const outside = await run([], [95]);
-  assertEquals(outside.thermal_zones![0].start_stored_heat_c, 0);
-  assert(outside.planning_warnings!.some(warning => warning.scope === room.key));
-  const middle = await run([40]);
-  assert(middle.thermal_zones![0].start_stored_heat_c! > 0);
-  assert(middle.thermal_zones![0].start_stored_heat_c! <= expected);
-  const noEnergy = await run([], [], Array.from({ length: 96 }, (_, i) => i));
+  const noEnergy = await run([], Array.from({ length: 96 }, (_, i) => i));
   assert(noEnergy.thermal_zones![0].model);
   assertEquals(noEnergy.thermal_zones![0].start_stored_heat_c, 0);
   assert(noEnergy.planning_warnings!.some(warning => warning.code === "room_heat_history_missing"));
+  // A later complete capture repairs the estimate with no relearning.
+  assertAlmostEquals((await run([])).thermal_zones![0].start_stored_heat_c!, expected, 1e-12);
 });
 
-Deno.test("untrained general response retains independent bands and records each planned revision", () => {
+Deno.test("a band-only room keeps one previously accepted band for the whole forecast until its shared response publishes", () => {
   const { snapshot, mappings, bundle } = syntheticCapture();
   const [mapping] = mappings;
   const key = mapping.room!.key;
@@ -412,9 +383,8 @@ Deno.test("untrained general response retains independent bands and records each
   snapshot.device_models = snapshot.device_models.filter(device => device.key === mapping.key);
   snapshot.device_models[0].forecast_w_by_slot = [600, 600, 600];
   const prepared = prepareRoomModels(snapshot, [mapping], bundle);
-  assertEquals(prepared.rooms[0].model, null, "untrained stale coefficients are not a general response");
-  assertEquals(prepared.rooms[0].heating_bands?.active.length, 2);
-  assertEquals(prepared.rooms[0].heating_bands?.reference_revision, null);
+  assertEquals(prepared.rooms[0].model_source, { kind: "band", band_c: -10, revision: "synthetic--10" });
+  assert(prepared.snapshot.planning_warnings?.some(warning => warning.code === "room_heating_response_learning"));
   const evidence = roomPlanningZones(prepared.snapshot, prepared.rooms, { schedules: new Map([[key, {
     weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
     off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21,
@@ -422,71 +392,9 @@ Deno.test("untrained general response retains independent bands and records each
   const result = prepareRoomServices({ ...prepared.snapshot, thermal_zones: evidence.zones });
   assertEquals(result.heating_model_use?.[key]?.thermal.map(run => run.source), [
     { kind: "band", band_c: -10, revision: "synthetic--10" },
-    { kind: "band", band_c: 5, revision: "synthetic-5" },
-    { kind: "band", band_c: -10, revision: "synthetic--10" },
   ]);
   bundle.roomHeating[key].binding = "changed-source";
-  assertEquals(prepareRoomModels(snapshot, [mapping], bundle).rooms[0].heating_bands?.active, []);
-});
-
-Deno.test("mixed response-family history carries measured heater memory into the first forecast band", async () => {
-  const { snapshot, mappings, bundle } = syntheticCapture();
-  const prepared = prepareRoomModels(snapshot, mappings, bundle);
-  const room = prepared.rooms.find(candidate => candidate.model)!;
-  const dynamic = { response_family: "integrator" as const, gain_c_per_wh: .002, heat_lag_h: 2,
-    cooling_constant_per_h: 0, house_coupling_per_h: 0, background_gain_c_per_h: 0,
-    thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 0, time_constant_h: null,
-    heating_rate_c_per_h: null, r2: 1, sample_count: 240, residual_std_c: .01 };
-  const algebraic = { response_family: "equilibrium" as const, heater_c_per_w: .01, heat_lag_h: .5,
-    outdoor_share: .2, offset_c: 3, solar_c_per_wm2: null, r2: 1, sample_count: 240, residual_std_c: .01 };
-  room.model = dynamic;
-  room.heating_bands = { reference_revision: "synthetic-general", active: [
-    { band_c: -10, revision: "synthetic-integrator", observed_min_c: -10, observed_max_c: -6,
-      training_from: "2025-01-01", training_to: "2025-02-01", model: dynamic },
-    { band_c: 5, revision: "synthetic-equilibrium", observed_min_c: 5, observed_max_c: 9,
-      training_from: "2025-01-01", training_to: "2025-02-01", model: algebraic },
-  ] };
-  const run = (forecastC: number, missing: number[] = []) => {
-    const source = structuredClone(prepared.snapshot);
-    source.outdoor_temperature_c = source.slots.map(() => forecastC);
-    const db = createClient("http://localhost:54321", "synthetic-service", {
-      auth: { persistSession: false }, global: { fetch: (url, request) => {
-        switch (new URL(String(url)).pathname.split("/").at(-1)) {
-          case "get_energy_latest_room_temperatures": return Promise.resolve(Response.json([
-            { room_key: room.key, room_temperature_c: 19 },
-          ]));
-          case "energy_optimisation_comfort_schedules": return Promise.resolve(Response.json([
-            { room_key: room.key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
-              off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21 },
-          ]));
-          case "get_energy_room_planning_history": {
-            const { p_from } = JSON.parse(String(request?.body));
-            const starts = Array.from({ length: 96 }, (_, i) => Date.parse(p_from) + i * 900_000);
-            return Promise.resolve(Response.json([{ room_key: room.key, temperature_starts: starts,
-              heater_quarters: starts.flatMap((start, i) => missing.includes(i) ? [] : [[start, 800]]),
-              outdoor_quarters: starts.map((start, i) => [start, i < 94 ? -7 : 6]),
-            }]));
-          }
-          default: throw new Error("Unexpected synthetic mixed-family capture endpoint");
-        }
-      } },
-    });
-    return captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", source, [room]);
-  };
-  // 23.5 hours through the dynamic reservoir, followed by half an hour through
-  // the algebraic reservoir. The coordinate changes, not measured delivered watts.
-  const deliveredCold = 800 * (1 - Math.exp(-23.5 / 2));
-  const delivered = 800 + (deliveredCold - 800) * Math.exp(-.5 / .5);
-  const cold = await run(-7), mild = await run(6);
-  assertAlmostEquals(cold.thermal_zones![0].start_stored_heat_c!, .002 * 2 * delivered, 1e-11);
-  assertAlmostEquals(mild.thermal_zones![0].start_stored_heat_c!, .01 * delivered, 1e-11);
-  for (const missing of [[95], [70], Array.from({ length: 96 }, (_, i) => i)]) {
-    const incomplete = await run(6, missing);
-    assertEquals(incomplete.thermal_zones!.length, 1);
-    const heat = incomplete.thermal_zones![0].start_stored_heat_c!;
-    assert(Number.isFinite(heat) && heat >= 0 && heat < .01 * delivered);
-    assertEquals(incomplete.thermal_zones![0].model, room.model);
-  }
+  assertEquals(prepareRoomModels(snapshot, [mapping], bundle).rooms[0].model, null, "untrained stale coefficients are not a response");
 });
 
 Deno.test("uncontrolled positive heat is excluded only for the declared heating context", () => {
@@ -498,7 +406,7 @@ Deno.test("uncontrolled positive heat is excluded only for the declared heating 
     since: "2025-01-01", reference_revision: null, active: [], candidates: [], attempted: {} };
   const ordinaryResult = prepareRoomModels(snapshot,mappings,bundle);
   const ordinary = ordinaryResult.rooms[0].model;
-  assert(!ordinaryResult.snapshot.planning_warnings?.some(warning => warning.code === "room_heating_band_estimated"));
+  assert(!ordinaryResult.snapshot.planning_warnings?.some(warning => warning.code === "room_heating_response_learning"));
   assert(ordinary && ordinary.response_family !== "equilibrium");
   assertEquals(ordinary.background_gain_c_per_h,.3,"other categories retain their existing model treatment");
   bundle.roomHeating = { [key]: { binding: "synthetic-binding", observed_since: "2025-01-01T00:00:00Z" } };

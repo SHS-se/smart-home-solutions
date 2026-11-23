@@ -1032,52 +1032,34 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('estimated-counter-interval.png') });
   });
 
-  test('room Model recomputes its heating cycle and directional doorway effects when the outdoor temperature changes', async ({ page, context }) => {
-    // Synthetic coefficients and room names exercise the published fit contract.
+  test('room Model shows the shared response with its fit warnings and source-reporting checks', async ({ page, context }) => {
+    // Synthetic coefficients and room names exercise the published response contract.
     const key = 'synthetic-studio';
-    let generalAvailable = true;
     let sourceEvidenceAvailable = true;
-    const fit = {
-      trained: true, rejection_reason: null, sample_count: 812,
-      gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
-      background_gain_c_per_h: .1, thermal_capacity_wh_per_c: 1000, heat_loss_w_per_c: 200, time_constant_h: 5,
-      heating_rate_c_per_h: 1.4, heat_lag_h: .45, r2: .8, residual_std_c: .1,
-    };
+    const model = { response_family: 'finite', gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
+      background_gain_c_per_h: .1, thermal_capacity_wh_per_c: 1000, heat_loss_w_per_c: 200, time_constant_h: 7,
+      heating_rate_c_per_h: 1.4, heat_lag_h: .45, r2: .8, sample_count: 427, residual_std_c: .1 };
     await context.route('**/rest/v1/energy_optimisation_comfort_schedules?**', route => route.fulfill({ json: [{
       id: key, room_key: key, room_name: 'Test studio', source: 'portal',
       weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('high-temp'),
       off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21, updated_at: CAPTURED_AT,
     }] }));
-    await context.route('**/rest/v1/rpc/get_energy_room_model_scenario', route => {
+    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => {
       expect(route.request().postDataJSON()).toEqual({ p_home_id: HOME_ID, p_room_key: key });
-      return route.fulfill({ json: { room: { ...fit, trained: generalAvailable,
-        last_attempted_at: '2026-11-18T12:00:00Z',
-        last_fit_attempt: sourceEvidenceAvailable ? { source_freshness: {
-          room: { inferred: 31, unavailable: 2, unverified: 1 },
-          house: { inferred: 17, unavailable: 4, unverified: 3 },
-        } } : null,
-        temperature_bands: [{
-        revision: '11111111-1111-4111-8111-111111111111', band_c: -10, observed_min_c: -9, observed_max_c: -6,
-        training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z',
-        model: { ...fit, sample_count: 427, time_constant_h: 7 }, warnings: ['insufficient_heating', 'poor_fit'],
-      }, {
-        revision: '22222222-2222-4222-8222-222222222222', band_c: 0, observed_min_c: 0, observed_max_c: 4,
-        training_from: '2025-02-02T00:00:00Z', training_to: '2025-02-14T00:00:00Z',
-        model: { ...fit, response_family: 'integrator', cooling_constant_per_h: 0, house_coupling_per_h: 0,
-          heat_loss_w_per_c: 0, time_constant_h: null },
-      }, {
-        revision: '33333333-3333-4333-8333-333333333333', band_c: 10, observed_min_c: 10, observed_max_c: 14,
-        training_from: '2025-03-02T00:00:00Z', training_to: '2025-03-14T00:00:00Z',
-        model: { response_family: 'equilibrium', heater_c_per_w: .004, outdoor_share: .2, offset_c: 1,
-          solar_c_per_wm2: null, heat_lag_h: 1, sample_count: 400, r2: .8, residual_std_c: .1 },
-      }] }, connections: [
-        { key: 'synthetic-corridor', name: 'Test corridor', model: fit, doorway: { weight: .065, usual: -1 } },
-        { key: 'synthetic-landing', name: 'Test landing', model: null, doorway: null },
-      ] } });
+      return route.fulfill({ json: {
+        room: { trained: true, rejection_reason: null, last_attempted_at: '2026-11-18T12:00:00Z',
+          last_fit_attempt: sourceEvidenceAvailable ? { source_freshness: {
+            room: { inferred: 31, unavailable: 2, unverified: 1 },
+            house: { inferred: 17, unavailable: 4, unverified: 3 },
+          } } : null, shared_attempt: null },
+        response: { revision: 'shared-synthetic', model, training_from: '2025-01-02T00:00:00Z', training_to: '2025-01-14T00:00:00Z',
+          warnings: ['insufficient_heating', 'poor_fit'], run_calibration: { fitted_runs: 3, maximum_runs: 24 } },
+        ledgers: [{ scope_key: 'shared', created_at: '2025-01-14T00:00:00Z', evidence: { assessed_against: 'shared-synthetic', runs: [] } }],
+      } });
     });
     await page.goto(`/portal/energy-modeling?tab=comfort&room=${key}`);
     await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
-    await expect(page.getByText('427', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('fitted-heating-runs')).toHaveText('3 / 24');
     await expect(page.getByText('7 h', { exact: true })).toBeVisible();
     await expect(page.getByText(/2025-01-02.*2025-01-14/)).toBeVisible();
     const fitWarnings = page.getByTestId('room-fit-warnings');
@@ -1085,63 +1067,17 @@ test.describe('requesting a replan', () => {
     await expect(fitWarnings).toContainText(/förklarade inte|does not closely match/i);
     const sourceEvidence = page.getByTestId('room-source-evidence');
     await sourceEvidence.locator('summary').click();
-    await expect(sourceEvidence).toContainText(/annat temperaturintervall|different temperature range/i);
     await expect(sourceEvidence.getByTestId('source-evidence-room').locator('dd')).toHaveText(['31', '2', '1']);
     await expect(sourceEvidence.getByTestId('source-evidence-house').locator('dd')).toHaveText(['17', '4', '3']);
     await expect(sourceEvidence).toContainText(/inte ett bekräftat givarfel|not a confirmed sensor fault/i);
-    await expect(sourceEvidence).toContainText(/inte timmar|not hours/i);
-
-    await page.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i }).selectOption('general');
-    await expect(fitWarnings).toHaveCount(0);
-    const cycle = page.getByRole('img', { name: /uppskattad uppvärmning och avsvalning|warm-up and cool-down/i });
-    const doorway = page.getByRole('img', { name: /uppskattad påverkan på anslutna rum|estimated effect on connected rooms/i });
-    await expect(cycle.locator('.recharts-line-curve')).toHaveCount(2);
-    await expect(doorway.locator('.recharts-line-curve')).toHaveCount(1);
-    await expect(page.getByLabel(/värmarens effekt|heater power/i)).toHaveValue('1.4');
-    const summary = page.locator('p[aria-live="polite"]').filter({ hasText: /efter 6 h|after 6 h/ });
-    const corridor = page.getByRole('listitem').filter({ hasText: /^Test corridor ·/ });
-    const selectedCurve = cycle.locator('.recharts-line-curve').first();
-    const initialCurve = (await selectedCurve.getAttribute('d'))!;
-    const initialImpact = await corridor.innerText();
-    await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
-    await expect(summary).toContainText('12 °C');
-    await expect(selectedCurve).not.toHaveAttribute('d', initialCurve);
-    await expect(corridor).not.toHaveText(initialImpact);
-    await expect(page.getByRole('listitem').filter({ hasText: 'Test landing' }))
-      .toContainText(/ingen inlärd påverkan|no learned effect/i);
-    await page.setViewportSize({ width: 390, height: 844 });
-    expect(await cycle.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    expect(await doorway.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    // Independently fitted bands remain inspectable without a general model.
-    generalAvailable = false;
+    await expect(page.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i })).toHaveCount(0);
     sourceEvidenceAvailable = false;
     await page.reload();
     await page.getByRole('button', { name: /^(Modell|Model)$/ }).click();
-    await expect(page.getByText('427', { exact: true })).toBeVisible();
-    await expect(page.getByText('7 h', { exact: true })).toBeVisible();
-    await expect(page.locator('option[value="general"]')).toHaveCount(0);
-    await expect(fitWarnings).toBeVisible();
     await sourceEvidence.locator('summary').click();
     await expect(sourceEvidence).toContainText(/status är okänd|status is unknown/i);
-    await expect(sourceEvidence.locator('dd')).toHaveCount(0);
-    expect(await sourceEvidence.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-
-    await page.getByLabel(/^(Ute|Outdoors) \(°C\)$/).fill('12');
-    await expect(page.getByText(/utanför observerat intervall|outside observed range/i)).toBeVisible();
-    await expect(page.getByText('7 h', { exact: true })).toBeVisible();
-    const bandControl = page.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i });
-    await bandControl.selectOption('22222222-2222-4222-8222-222222222222');
-    await expect(page.getByText(/integrerande respons|integrator response/i)).toBeVisible();
-    await expect(page.getByText(/obegränsad i modellen|unbounded in this model/i)).toBeVisible();
-    await expect(page.getByText('1 °C/kWh', { exact: true })).toBeVisible();
-    await bandControl.selectOption('33333333-3333-4333-8333-333333333333');
-    await expect(page.getByText(/jämviktsrespons|equilibrium response/i)).toBeVisible();
-    await expect(page.getByText('4 °C/kW', { exact: true })).toBeVisible();
-    await expect(page.getByText(/ingen dynamisk tidskonstant|no dynamic time constant/i)).toBeVisible();
-    await page.getByLabel(/värmarens effekt|heater power/i).fill('1');
-    await expect(cycle).toBeVisible();
-    await expect(summary).not.toContainText(/NaN|Infinity/);
-
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
 
   test('device Model shows the learned outdoor bands and their heating evidence', async ({ page, context }) => {

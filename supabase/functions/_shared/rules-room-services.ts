@@ -1,9 +1,10 @@
 import { heatingDraw } from "./planner/weather-heating.ts";
-import { heatingModelRuns, roomHeatingEvidenceLimited, type HeatingModelSource, type RoomHeatingBand, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
+import { heatingModelRuns, type HeatingModelSource, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
+import { roomResponseEvidenceLimited } from "./planner/room-response.ts";
 import { PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
-import { backgroundRateForSlot, heaterResponse, isEquilibrium, roomMemoryScale, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
+import { backgroundRateForSlot, heaterResponse, isEquilibrium, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { heatingMask, isThermostat, nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
@@ -98,7 +99,7 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
     const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
-    const limitedFit = roomHeatingEvidenceLimited(zone.heating_bands, zone.model_warnings);
+    const limitedFit = roomResponseEvidenceLimited(zone.model_warnings);
     if (!limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
       outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
@@ -161,11 +162,11 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
       limitedFit ? `${zone.name}: too few measured heating observations to plan preheating.`
         : `${zone.name}: the thermal or native thermostat forecast has incomplete evidence.`,
       "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
-    if (zone.heating_bands) {
-      const basis = zone.heating_bands;
+    if (zone.model_source) {
+      const source = zone.model_source;
       const empirical: RoomHeatingModelUse["thermal"] = [{ from: 0, through: n - 1, source: { kind: "empirical" } }];
       const baseline = !limitedFit && zone.model && outdoorKnown ? {
-        thermal: heatingModelRuns(basis.by_quarter.map((index, i) => thermalSource(basis.active[index], basis.reference_revision, basis.extrapolated_by_quarter?.[i]))),
+        thermal: [{ from: 0, through: n - 1, source }],
         electrical: Object.fromEntries(members.map(member => [member.key, heatingModelRuns(
           snapshot.outdoor_temperature_c!.map(c => electricalSource(member,
             member.weather_heating ? heatingDraw(member.weather_heating, c) : null)))])),
@@ -183,11 +184,6 @@ export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomP
 type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];
 type Member = OptimisationSnapshot["device_models"][number];
 type Retained = Array<{ device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number> }>;
-
-function thermalSource(band: RoomHeatingBand | undefined, referenceRevision: string | number | null, extrapolated = false): HeatingModelSource {
-  return band ? { kind: "band", band_c: band.band_c, revision: band.revision, ...(extrapolated ? { extrapolated: true as const } : {}) }
-    : { kind: "general", revision: referenceRevision };
-}
 
 function electricalSource(member: Member, draw: ReturnType<typeof heatingDraw>): HeatingModelSource {
   const point = draw?.band;
@@ -228,40 +224,28 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
     entity_id: m.key, hvac_action: m.relay_on ? "heating" as const : "idle" as const,
   }))] : thermostats;
   const weather = members.some(member => member.weather_heating);
-  const thermalUse: HeatingModelSource[] = [];
   const controlled = [...members, ...relays];
   const electricalUse = controlled.map(() => [] as HeatingModelSource[]);
-  let previousPhysics = zone.heating_bands?.active[zone.heating_bands.by_quarter[0]]?.model ?? model;
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
     const steps = Math.ceil(hours * 60);
-    const band = zone.heating_bands?.active[zone.heating_bands.by_quarter[i]];
-    const physics = band?.model ?? model;
+    // One response throughout; the quarter's outdoor temperature is its input.
+    const physics = model;
     const conditions = { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!, house_c: (zone.doorway_boundary_c ?? snapshot.house_temperature_c)?.[i],
       background_c_per_h: backgroundRateForSlot(physics, i, snapshot.solar_irradiance_w_per_m2, zone.passive_heat_c_per_h) };
     const maximum_w = Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i]));
-    const runningPower = weather || zone.heating_bands ? controlled.map(member => {
+    const runningPower = weather || zone.model_source ? controlled.map(member => {
       const profile = member.weather_heating;
       return profile ? heatingDraw(profile, conditions.outdoor_c) : null;
     }) : undefined;
-    if (zone.heating_bands && runningPower) {
-      thermalUse.push(thermalSource(band, zone.heating_bands.reference_revision, zone.heating_bands.extrapolated_by_quarter?.[i]));
+    if (zone.model_source && runningPower) {
       for (const [j, member] of controlled.entries()) {
         electricalUse[j].push(electricalSource(member, runningPower[j]));
       }
     }
     const thermostatPower = weather ? actuators.map((actuator, j) => runningPower?.[j]?.watts ?? actuator.power_w) : undefined;
-    const memoryScale = hours > 0 ? roomMemoryScale(previousPhysics, physics) : 1;
-    if (hours > 0) previousPhysics = physics;
     const transition = roomTransition(physics, conditions);
-    // The whole-quarter envelope includes the boundary conversion. Minute
-    // projection receives it separately and applies it once, never per minute.
-    if (memoryScale !== 1) {
-      transition.stored_heat_release *= memoryScale;
-      transition.carry *= memoryScale;
-    }
     return { hours, steps, transition,
-      ...(memoryScale !== 1 ? { memory_scale: memoryScale } : {}),
       ...(thermostatPower ? { thermostat_power_w: thermostatPower } : {}),
       step: roomTransition(physics, { ...conditions, hours: steps ? hours / steps : 0 }),
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
@@ -286,8 +270,8 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
       import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1, surplus_w: surplus[i] };
   });
-  if (zone.heating_bands) (result.heating_model_use ??= {})[zone.key] = {
-    thermal: heatingModelRuns(thermalUse),
+  if (zone.model_source) (result.heating_model_use ??= {})[zone.key] = {
+    thermal: [{ from: 0, through: n - 1, source: zone.model_source }],
     electrical: Object.fromEntries(controlled.map((member, i) => [member.key, heatingModelRuns(electricalUse[i])])),
   };
   const plan = planRoomHeating(zone.start_temperature_c!, actuators, quarters, zone.start_stored_heat_c ?? 0, trace);

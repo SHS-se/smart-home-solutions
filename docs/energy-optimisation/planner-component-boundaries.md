@@ -448,6 +448,34 @@ interval ends; identity/ACK facts and durable accepted copies survive. Migration
 uses exact current or provable historical server references. Missing accepted
 provenance remains explicit and never becomes an implicit release of holds.
 
+## One shared room response (23 November 2026)
+
+A room has one published response, fitted across every outdoor temperature:
+a constant heater gain (°C per kWh delivered) and one loss model whose cooling
+falls as it gets warmer outside. The planner uses that response at every
+quarter; the quarter's forecast outdoor temperature is an input to it, never a
+model selector. Rooms no longer select a response per 5 °C band, and there is
+no response switching or memory conversion between quarters.
+
+The 5 °C windows remain only as sampling strata. Each window whose evidence
+changed is harvested once, under the job fence, into a private run pool (its
+newest heating runs as sparse native rows). Harvested evidence outlives raw
+history retention and is pruned only when the room's heating source binding
+changes. When no harvest is due and the pool changed, the merged pool is
+captured and fitted with the existing bounded cells on up to 24 runs taken
+round-robin across strata. Completion publishes only over the exact pool that
+was captured; every run in the published ledger is reassessed against the
+published revision, so its per-run °C/kWh and cool-down residual are
+comparable across seasons. The response is stored in `heating_bands.reference`
+with scope `shared`; a successful publication empties the legacy bands, which
+the existing trigger archives.
+
+During rollout a room without a shared response keeps its previously accepted
+response for the whole forecast (the recent general response, else the band
+covering the median forecast temperature) with a routine learning note. A
+failed shared attempt keeps the accepted response. Device electrical draw keeps
+its own weather bands.
+
 ## Independently fitted room response families
 
 The 19 November 2026 requirement publishes the response selected by the learner:

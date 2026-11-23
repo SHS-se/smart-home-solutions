@@ -5,7 +5,6 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { HEAT_LAG_GRID_H } from "../supabase/functions/_shared/device-learning/room/fit.ts";
 import { parseRoomBandFitCells, ROOM_BAND_FIT_CELL_COUNT } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
 
-import { finalizeStoredRoomBand, ROOM_WINDOW_IMPLEMENTATION, type RoomBandMetadata } from "../supabase/functions/_shared/device-model-learning/room.ts";
 import { syntheticRoomPlant } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
 
 const home = "11111111-1111-4111-8111-111111111111";
@@ -617,14 +616,16 @@ Deno.test("independent band publication preserves the general model SQL domain a
     }
     const rows = syntheticRoomPlant([3600],240).rows;
     const from = new Date(rows[0].start_ms).toISOString(), to = new Date(rows.at(-1)!.start_ms+3_600_000).toISOString();
-    const library = { binding:"synthetic-binding", since:from, reference_revision:null, active:[], candidates:[], attempted:{} };
-    const work: RoomBandMetadata = { version:1, implementation:ROOM_WINDOW_IMPLEMENTATION, homeId:home, customerId:home, roomKey:"room",
-      binding:library.binding, baseRevision:revision, attemptedAt:to, pinnedFloor:from,
-      window:{window_key:"-10",band_c:-10,from_at:from,to_at:to,fingerprint:"synthetic-observations",evidence_updated_at:to},
-      library, progressLibrary:library, reference:null, ratedPowerW:500,lastAt:new Date(rows.at(-1)!.start_ms).toISOString(), sourceFreshness:null };
-    const fit = learnRoomResponse(rows, () => true, 500);
-    assert(fit.result.ok, "independent synthetic plant produces an accepted finite band");
-    const model = finalizeStoredRoomBand(work,rows,fit);
+    const fit = learnRoomResponse(rows, 500);
+    assert(fit.result.ok, "independent synthetic plant produces an accepted finite response");
+    // A legacy band-only publication, as the band learner wrote it before the
+    // shared response; the SQL owner still accepts it during rollout.
+    const band = { revision: crypto.randomUUID(), band_c: -10, observed_min_c: -8, observed_max_c: -6,
+      training_from: from, training_to: to, fitted_at: to, model: fit.result.model };
+    const model = { home_id: home, customer_id: home, room_key: "room", last_attempted_at: to,
+      last_fit_attempt: { status: "general_unidentified", issues: ["general_unidentified"] },
+      heating_bands: { binding: "synthetic-binding", since: from, reference_revision: null, active: [band], candidates: [], attempted: {},
+        diagnostics: { "-10": { status: "fitted", issues: [] } } } };
     assertEquals((await db.query<{ ok: boolean }>("SELECT complete_energy_room_fit($1,$2,$3,$4,18,$5::jsonb) AS ok",
       [j.id,j.generation,j.fence,revision,JSON.stringify(model)])).rows[0].ok,true);
     await release(db,j);

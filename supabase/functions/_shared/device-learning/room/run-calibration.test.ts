@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { syntheticRoomPlant } from "./native-mean.fixture.ts";
-import { calibrateRoomRuns, describeHeatingRun, recentRoomRunRows, roomHeatingRuns, RUN_COOLDOWN_WINDOW_H } from "./run-calibration.ts";
+import { calibrateRoomRuns, describeHeatingRun, MAX_ROOM_HEATING_RUNS, recentRoomRunRows, roomHeatingRuns, RUN_COOLDOWN_WINDOW_H } from "./run-calibration.ts";
 import type { DynamicThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 const model: DynamicThermalZoneModel = { response_family: "finite", gain_c_per_wh: .002,
@@ -31,13 +31,13 @@ Deno.test("run calibration requires three events, not three quarters or fragment
   assertEquals(roomHeatingRuns(rows.slice(3, 13), () => true), []);
 });
 
-Deno.test("run working evidence rolls to the newest ten while preserving raw history", () => {
-  const rows = plant(), oldRuns = roomHeatingRuns(rows, () => true), original = structuredClone(rows);
+Deno.test("run working evidence rolls to the newest twenty-four while preserving raw history", () => {
+  const rows = plant(30), oldRuns = roomHeatingRuns(rows, () => true), original = structuredClone(rows);
   const fit = calibrateRoomRuns(rows, model, () => true);
-  assertEquals(fit.evidence.observed_runs, 16);
-  assertEquals(fit.evidence.retained_runs, 10);
-  assertEquals(fit.evidence.fitted_runs, 10);
-  assertEquals(fit.evidence.runs[0].id, oldRuns[6].id);
+  assertEquals(fit.evidence.observed_runs, 30);
+  assertEquals(fit.evidence.retained_runs, MAX_ROOM_HEATING_RUNS);
+  assertEquals(fit.evidence.fitted_runs, MAX_ROOM_HEATING_RUNS);
+  assertEquals(fit.evidence.runs[0].id, oldRuns[30 - MAX_ROOM_HEATING_RUNS].id);
   assert(recentRoomRunRows(rows, () => true).length < rows.length);
   assertEquals(rows, original);
 });

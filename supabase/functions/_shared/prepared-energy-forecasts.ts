@@ -20,7 +20,8 @@ export interface PreparedRoom {
   device_keys: string[];
   model: ThermalZoneModel | null;
   model_warnings?: string[];
-  heating_bands?: Pick<import("./planner/heating-bands.ts").RoomHeatingBasis, "reference_revision" | "active">;
+  /** The one response used at every quarter, and where it came from. */
+  model_source?: import("./planner/room-response.ts").RoomResponseSource;
   passive_heat?: PassiveRoomHeat;
   rated_power_w: number;
   maximum_power_w_by_slot: number[];
