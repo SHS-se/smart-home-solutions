@@ -79,7 +79,9 @@ function heating(rows: readonly RoomMeanQuarter[], run: HeatingRun): MeasuredHea
 /** A cooling point can exist even when the onset temperature was unavailable.
  * It still needs known OFF identities and its preceding measured run energy. */
 function cooling(rows: readonly RoomMeanQuarter[], run: HeatingRun, peakEnd: number): MeasuredCoolingPoint | null {
-  const from = peakEnd + 3_600_000, to = from + 3 * 3_600_000;
+  // A room may peak while the heater is still on. Both events must precede
+  // the settling interval before measuring an off-phase fall rate.
+  const from = Math.max(peakEnd, rows[run.off].start_ms) + 3_600_000, to = from + 3 * 3_600_000;
   const tail = rows.slice(run.off, run.end + 1).filter(row => midpoint(row) >= from && midpoint(row) <= to &&
     known(row) && row.heat_w! <= HEATED_SAMPLE_MIN_W && finite(row.room_c) && finite(row.outdoor_c));
   if (tail.length < 3) return null;

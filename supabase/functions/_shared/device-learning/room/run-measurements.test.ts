@@ -68,3 +68,12 @@ Deno.test("rising final means are censored peaks and off-phase warming stays sig
   const measured = measureRoomRuns(rows)[0];
   assert(measured.heating); assertAlmostEquals(measured.cooling!.c_per_h, -.1);
 });
+
+Deno.test("a peak before switch-off cannot start the cooling window before the off-phase settling time", () => {
+  const rows = hourlyRun();
+  rows.forEach((row, i) => { row.room_c = i === 0 ? 20 : 24 - i * .2; });
+  const point = measureRoomRuns(rows)[0].cooling!;
+  assertEquals(point.from_ms, 4.5 * 3_600_000);
+  assertEquals(point.to_ms, 6.5 * 3_600_000);
+  assertAlmostEquals(point.c_per_h, .2);
+});
