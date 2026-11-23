@@ -1566,12 +1566,15 @@ test.describe('requesting a replan', () => {
       capabilities: { ...PLAN.capabilities, ev: true }, ev_battery: evBattery,
       device_models: [
         { ...device, key: 'pool_heater', name: 'Pool heater' },
-        { ...device, key: 'floor', name: 'Bathroom heater', planning_service: undefined },
+        { ...device, key: 'floor', name: 'Bathroom heater', category: 'heating', control_type: 'setpoint', planning_service: undefined },
         { ...device, key: 'car', name: 'Car charging', category: 'ev_charging', planning_service: undefined },
       ],
       plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({ ...slot,
         ev_soc: .6, load_w: slot.load_w + 1400,
         device_loads_w: { ...slot.device_loads_w, pool_heater: 500, floor: 300, car: 600 },
+        device_commands: { ...slot.device_commands,
+          floor: { type: 'setpoint', target_c: 22, minimum_c: 5, maximum_c: 30 },
+          car: { type: 'variable_power', value: 5, unit: 'A' } },
       })) } },
       operating_scope: { ...PLAN.operating_scope, modes: { ...PLAN.operating_scope?.modes, floor: 'controlling', hall: 'monitoring' },
         device_owners: { ...PLAN.operating_scope?.device_owners, floor: 'floor', hall: 'hall' }, external_demands: {} },
@@ -2224,7 +2227,7 @@ test.describe('requesting a replan', () => {
       };
     };
     const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
-    const baseReading = () => page.getByRole('tooltip').getByText(/^(Baslast|Base load)$/).locator('..');
+    const baseReading = () => page.getByRole('tooltip').getByText(/^(Baslast|Base load)$/).locator('xpath=ancestor::div[1]');
     publish(false);
     await page.goto('/portal/energy-modeling?tab=plan');
     for (const model of models) await expect(chart.locator(`[data-band="${model.key}"]`)).toHaveCount(0);
