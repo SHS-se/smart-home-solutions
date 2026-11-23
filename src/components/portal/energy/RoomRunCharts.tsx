@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { roomRunPoints, trendCooldown, trendRun, type RoomRunDisposition, type RoomRunPoint } from '@/lib/energy-shift/room-run-points';
-import { fitTrend, trendAt, trendSlopeAt, trendZero, type Trend } from '@/lib/energy-shift/room-run-trend';
+import { fitTrend, trendAt, trendZero, type Trend } from '@/lib/energy-shift/room-run-trend';
 import { MIN_ROOM_HEATING_RUNS } from '../../../../supabase/functions/_shared/planner/models/room/run-evidence';
 
 const ACCENT = 'hsl(var(--primary))';
@@ -243,15 +243,17 @@ export default function RoomRunCharts({ homeId, roomId }: { homeId: string; room
       <section className="min-w-0 space-y-1">
         <h5 className="font-medium">{heaterTitle}</h5>
         <p className="text-xs text-muted-foreground">{t(
-          'Temperaturökning per tillförd kWh, med värmeförluster räknade separat. Fysiken förväntar sig en platt linje.',
-          'Temperature rise per kWh delivered, with heat losses counted separately. Physics expects a flat line.',
+          'Temperaturökning per tillförd kWh, med värmeförluster räknade separat. Den beror på rummets värmekapacitet och inte på utetemperaturen, så linjen är platt.',
+          'Temperature rise per kWh delivered, with heat losses counted separately. It depends on the room’s heat capacity, not the outdoor temperature, so the line is flat.',
         )}</p>
         <RunScatter label={heaterTitle} unit="°C/kWh" dots={view.heaterDots} trend={view.heaterTrend}
           xDomain={view.xDomain} yDomain={view.yHeat} selected={selected} onSelect={select} />
         <p className="text-xs tabular-nums" aria-live="polite">{view.heaterTrend ? t(
-          `Trend: ${shape(view.heaterTrend)} · ${format(trendAt(view.heaterTrend, 0).y, 2)} °C/kWh vid 0 °C · ${view.heaterTrend.n} förlopp`,
-          `Trend: ${shape(view.heaterTrend)} · ${format(trendAt(view.heaterTrend, 0).y, 2)} °C/kWh at 0 °C · ${view.heaterTrend.n} runs`,
-        ) + (view.heaterTrend.degree > 0 ? ` · ${format(trendSlopeAt(view.heaterTrend, 0), 3)} °C/kWh ${t('per °C', 'per °C')}` : '')
+          `Trend: ${shape(view.heaterTrend)} · ${format(trendAt(view.heaterTrend, 0).y, 2)} °C/kWh · ${view.heaterTrend.n} förlopp`,
+          `Trend: ${shape(view.heaterTrend)} · ${format(trendAt(view.heaterTrend, 0).y, 2)} °C/kWh · ${view.heaterTrend.n} runs`,
+        ) + (view.heaterTrend.excessScatter !== undefined && view.heaterTrend.excessScatter >= 2 ? ` · ${t(
+          `förloppen spretar ${format(view.heaterTrend.excessScatter)} gånger mer än sin egen osäkerhet`,
+          `runs scatter ${format(view.heaterTrend.excessScatter)}× more than their own uncertainty`)}` : '')
           : t(`Minst ${MIN_ROOM_HEATING_RUNS} trovärdiga förlopp behövs för en trend.`, `At least ${MIN_ROOM_HEATING_RUNS} credible runs are needed for a trend.`)}
           {view.offScale > 0 && ` · ${view.offScale} ${t('utanför skalan', 'off scale')}`}</p>
       </section>

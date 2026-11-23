@@ -20,6 +20,10 @@ export interface Trend {
   maxX: number;
   /** The straight fit broke the shape physics allows, so the trend is flat. */
   constrained?: true;
+  /** For runs with stated uncertainties: their spread around the trend in
+   * units of those uncertainties. About 1 is honest noise; much more means the
+   * runs disagree for a reason their own error bars do not cover. */
+  excessScatter?: number;
 }
 
 /** A curve needs this many more points than it has coefficients. */
@@ -71,14 +75,15 @@ function fitDegree(points: readonly TrendPoint[], weights: number[], centre: num
   const scatter = freedom > 0 ? residual / freedom : weighted ? 1 : Infinity;
   const scale = weighted ? Math.max(1, scatter) : scatter;
   const aicc = n * Math.log(Math.max(residual, Number.MIN_VALUE) / n) + 2 * k + (2 * k * (k + 1)) / Math.max(1, n - k - 1);
-  return { coefficients: solved.solution, covariance: solved.inverse.map(row => row.map(v => v * scale)), aicc };
+  return { coefficients: solved.solution, covariance: solved.inverse.map(row => row.map(v => v * scale)), aicc, residual, freedom };
 }
 
 /**
  * The shapes physics allows each per-run measurement to take.
- * - `response`: heater °C/kWh, which an ideal room shows flat. A straight
- *   slope is kept as a diagnostic of misattributed losses, never a curve, and
- *   never one that reaches zero across the measured runs.
+ * - `response`: heater °C/kWh. It is 1 ÷ the room's heat capacity, which does
+ *   not depend on outdoor temperature, so the trend is always flat. When runs
+ *   scatter beyond their own uncertainty, `excessScatter` says by how much;
+ *   that spread is the evidence of misattributed losses, not a slope.
  * - `cooling`: cool-down °C/h against outdoor temperature. It falls with
  *   warmer weather and never rises, and may only bow steeper in the cold (air
  *   leakage grows faster than the temperature difference). Flat is only the
@@ -86,7 +91,7 @@ function fitDegree(points: readonly TrendPoint[], weights: number[], centre: num
  */
 export type TrendShape = 'response' | 'cooling';
 
-const MAX_DEGREE: Record<TrendShape, number> = { response: 1, cooling: 2 };
+const MAX_DEGREE: Record<TrendShape, number> = { response: 0, cooling: 2 };
 
 function slopeAt(coefficients: number[], centre: number, x: number): number {
   return coefficients.reduce((sum, c, j) => j === 0 ? sum : sum + j * c * (x - centre) ** (j - 1), 0);
@@ -95,12 +100,9 @@ function valueAt(coefficients: number[], centre: number, x: number): number {
   return coefficients.reduce((sum, c, j) => sum + c * (x - centre) ** j, 0);
 }
 
-function admissible(shape: TrendShape, coefficients: number[], centre: number, minX: number, maxX: number): boolean {
-  if (shape === 'response') {
-    // A heater cannot cool its room: a slope may not carry the trend to zero.
-    return valueAt(coefficients, centre, minX) > 0 && valueAt(coefficients, centre, maxX) > 0;
-  }
-  // The slope of a quadratic is linear, so both ends bound it everywhere between.
+/** Cool-down never rises with warmer weather and only bows steeper in the cold.
+ * The slope of a quadratic is linear, so both ends bound it everywhere between. */
+function admissible(coefficients: number[], centre: number, minX: number, maxX: number): boolean {
   const tolerance = 1e-12;
   return (coefficients[2] ?? 0) >= -tolerance &&
     slopeAt(coefficients, centre, minX) <= tolerance && slopeAt(coefficients, centre, maxX) <= tolerance;
@@ -123,7 +125,7 @@ export function fitTrend(input: readonly TrendPoint[], shape: TrendShape): Trend
     const fit = fitDegree(points, weights, centre, degree, weighted);
     if (!fit) continue;
     // A flat trend is always physical; a shape physics rules out is never shown.
-    if (degree > 0 && !admissible(shape, fit.coefficients, centre, minX, maxX)) { straightRejected ||= degree === 1; continue; }
+    if (degree > 0 && !admissible(fit.coefficients, centre, minX, maxX)) { straightRejected ||= degree === 1; continue; }
     candidates.push({ degree, fit });
   }
   if (!candidates.length) return null;
@@ -134,8 +136,10 @@ export function fitTrend(input: readonly TrendPoint[], shape: TrendShape): Trend
   }
   const best = Math.min(...candidates.map(candidate => candidate.fit.aicc));
   const chosen = candidates.find(candidate => candidate.fit.aicc <= best + PARSIMONY)!;
+  const excess = weighted && chosen.fit.freedom > 0 ? Math.sqrt(chosen.fit.residual / chosen.fit.freedom) : null;
   return { degree: chosen.degree, coefficients: chosen.fit.coefficients, covariance: chosen.fit.covariance,
-    centre, n: points.length, minX, maxX, ...(straightRejected && chosen.degree === 0 ? { constrained: true as const } : {}) };
+    centre, n: points.length, minX, maxX, ...(straightRejected && chosen.degree === 0 ? { constrained: true as const } : {}),
+    ...(excess !== null ? { excessScatter: excess } : {}) };
 }
 
 /** Inside the measured runs, the fitted shape. Beyond them the line continues

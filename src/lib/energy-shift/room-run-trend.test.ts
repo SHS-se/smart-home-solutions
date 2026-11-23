@@ -15,13 +15,17 @@ Deno.test('a constant response with honest noise is reported flat', () => {
   assertAlmostEquals(trendAt(trend, 0).y, 2, 0.15);
 });
 
-Deno.test('a real slope is kept and extra scatter widens its band', () => {
-  const points = Array.from({ length: 16 }, (_, i) => ({ x: -15 + i * 2, y: 3 - 0.1 * (-15 + i * 2) + noise(i) * 0.05, se: 0.05 }));
-  const trend = fitTrend(points, 'response')!;
-  assertEquals(trend.degree, 1);
-  assertAlmostEquals(trendAt(trend, 10).y, 2, 0.1);
-  const scattered = fitTrend(points.map((p, i) => ({ ...p, y: p.y + noise(i + 3) })), 'response')!;
-  assert(trendAt(scattered, 0).se > trendAt(trend, 0).se * 3);
+Deno.test('heating response stays flat; runs that disagree widen its band and report excess scatter', () => {
+  // A band-by-band loss error makes runs look like a slope. The trend stays flat.
+  const sloped = Array.from({ length: 16 }, (_, i) => { const x = -15 + i * 2; return { x, y: 3 - 0.1 * x + noise(i) * 0.05, se: 0.05 }; });
+  const trend = fitTrend(sloped, 'response')!;
+  assertEquals(trend.degree, 0);
+  assertEquals(trendSlopeAt(trend, 0), 0);
+  assert(trend.excessScatter! > 10);
+  const honest = Array.from({ length: 16 }, (_, i) => ({ x: -15 + i * 2, y: 3 + noise(i) * 0.1, se: 0.05 }));
+  const steady = fitTrend(honest, 'response')!;
+  assert(steady.excessScatter! < 1.5);
+  assert(trendAt(trend, 0).se > trendAt(steady, 0).se * 3);
 });
 
 Deno.test('a cool-down may bow steeper in the cold once enough runs support it', () => {
@@ -51,14 +55,11 @@ Deno.test('a cool-down never turns upward in warmer weather, inside or beyond th
   assertEquals(flat.constrained, true);
 });
 
-Deno.test('heating response is flat or straight, never curved and never reaching zero', () => {
+Deno.test('heating response never curves or slopes, whatever the runs suggest', () => {
   const curve = Array.from({ length: 24 }, (_, i) => { const x = -15 + i * 1.5; return { x, y: 2 + 0.01 * x * x + noise(i) * 0.02, se: 0.02 }; });
-  assert(fitTrend(curve, 'response')!.degree <= 1);
-  // A straight fit that would fall to zero within the runs is a non-physical heater.
-  const falling = Array.from({ length: 20 }, (_, i) => { const x = -10 + i; return { x, y: Math.max(0.05, 1 - 0.2 * x) + noise(i) * 0.01, se: 0.05 }; });
-  const trend = fitTrend(falling, 'response')!;
+  const trend = fitTrend(curve, 'response')!;
   assertEquals(trend.degree, 0);
-  assert(trendAt(trend, trend.maxX).y > 0);
+  assert(trendAt(trend, trend.minX).y > 0);
 });
 
 Deno.test('the cooling trend crosses zero at the temperature the room holds unheated', () => {
