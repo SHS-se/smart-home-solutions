@@ -4,9 +4,9 @@ import { activeDeviceKeys, type TimelineRow, type TimelineRange } from './energy
 import { splitConsumption } from './consumption-series';
 import { orderConsumptionStack } from './consumption-stack-order';
 import { formatHomeDayMonthTime } from './home-time';
-import type { PlannedSlot } from './contracts';
 import type { HotWaterQuarter } from './hot-water-gate';
 import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
+import { hasDeviceInstruction, type ChartInstructionSlot } from './plan-device-instruction';
 
 export interface PlanPanelRow {
   startMs: number;
@@ -76,9 +76,14 @@ const priced = (value: number | null, shadow: number | null) => quoted(value) ? 
 export function projectPlanChart(input: {
   rows: readonly TimelineRow[]; range: TimelineRange; timeZone: string;
   devices: readonly ChartDevice[]; prices: ChartPrices; hotWater?: ChartHotWater;
-  planSlots?: readonly Pick<PlannedSlot, 'start' | 'device_loads_w'>[];
+  planSlots?: readonly ChartInstructionSlot[];
+  poolHeaterKeys?: ReadonlySet<string>;
 }) {
   const { rows, range, timeZone, devices, prices, hotWater, planSlots } = input;
+  const poolHeaterKeys = input.poolHeaterKeys ?? new Set<string>();
+  const slots = new Map(planSlots?.map(slot => [Date.parse(slot.start), slot]));
+  const deviceValue = (row: TimelineRow, key: string) => row.measured || !planSlots ||
+    hasDeviceInstruction(slots.get(row.startMs), key, poolHeaterKeys) ? row.deviceW[key] ?? NaN : 0;
   const view = rows.slice(range.from, range.to);
   let running: number | null = 0;
   const panelRows: PlanPanelRow[] = view.map((row, i) => {
@@ -108,21 +113,25 @@ export function projectPlanChart(input: {
   const active = new Set([...activeDeviceKeys(rows, range), ...devices.filter(d => d.schedulable).map(d => d.key)]
     .filter(key => !waterKeys.has(key)));
   const water = hotWater ? [{
-    key: waterKey, name: waterDevice?.name ?? hotWater.name, schedulable: true, pinned: true, colour: waterDevice?.colour ?? hotWater.colour,
-    values: view.map((row, i) => panelRows[i].hotWater?.expectedW
-      ?? [...waterKeys].reduce((sum, key) => sum + (row.deviceW[key] ?? 0), 0)),
+    key: waterKey, name: waterDevice?.name ?? hotWater.name, schedulable: true,
+    pinned: view.some((row, i) => row.measured || panelRows[i].hotWater?.state === 'allowed' || panelRows[i].hotWater?.state === 'blocked'),
+    colour: waterDevice?.colour ?? hotWater.colour,
+    values: view.map((row, i) => panelRows[i].hotWater?.state === 'uncontrolled' ? 0
+      : panelRows[i].hotWater?.expectedW
+        ?? [...waterKeys].reduce((sum, key) => sum + (deviceValue(row, key) || 0), 0)),
   }] : [];
   const consumption = splitConsumption([...[...active].filter(key => catalogue.has(key)).map(key => ({
     key, name: catalogue.get(key)!.name, colour: catalogue.get(key)!.colour,
-    values: view.map(row => row.deviceW[key] ?? NaN), schedulable: catalogue.get(key)?.schedulable ?? false,
+    values: view.map(row => deviceValue(row, key)), schedulable: catalogue.get(key)?.schedulable ?? false,
   })), ...water], view.map(row => row.loadW));
   // Every view containing forecasts uses the same full plan as the app.
   // Historical-only views rank the measured loads in that window.
   const reference = planSlots && view.some(row => !row.measured && !row.missing) ? planSlots : undefined;
   const series = orderConsumptionStack(consumption.series, entry => reference
     ? reference.map(slot => hotWater && entry.key === waterKey
-      ? hotWater.byStart.get(Date.parse(slot.start))?.expectedW ?? slot.device_loads_w?.[entry.key]
-      : slot.device_loads_w?.[entry.key])
+      ? hotWater.byStart.get(Date.parse(slot.start))?.state === 'uncontrolled' ? 0
+        : hotWater.byStart.get(Date.parse(slot.start))?.expectedW ?? slot.device_loads_w?.[entry.key]
+      : hasDeviceInstruction(slot, entry.key, poolHeaterKeys) ? slot.device_loads_w?.[entry.key] : 0)
     : entry.values);
   return { rows: panelRows, consumption: { ...consumption, series },
     hotWaterSeriesKey: hotWater ? waterKey : undefined, realPrices: prices.kind !== 'live' };

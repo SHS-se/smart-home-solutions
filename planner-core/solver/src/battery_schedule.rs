@@ -30,6 +30,7 @@ impl Context<'_> {
             gross_w: s.base_w + self.planned[i].pool_w + ev_w,
             solar_w: s.solar_w,
             ev_w: ev_w + s.base_ev_w,
+            excluded_w: s.base_battery_excluded_w,
         }
     }
     /// A linear continuation segment is maximised at an inventory knot or a

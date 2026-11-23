@@ -31,6 +31,8 @@ pub struct Slot {
     pub base_w: f64,
     /// Passive EV consumption already included in base_w.
     pub base_ev_w: f64,
+    #[serde(default)]
+    pub base_battery_excluded_w: f64,
     pub solar_w: f64,
     pub outdoor_c: f64,
     pub import_price: f64,
@@ -439,10 +441,13 @@ fn validate(p: &Problem) -> Result<(), String> {
     {
         return bad("duplicate_measurement_key");
     }
-    if p.slots
-        .iter()
-        .any(|s| !s.base_ev_w.is_finite() || s.base_ev_w < 0.0 || s.base_ev_w > s.base_w)
-    {
+    if p.slots.iter().any(|s| {
+        !s.base_ev_w.is_finite()
+            || s.base_ev_w < 0.0
+            || !s.base_battery_excluded_w.is_finite()
+            || s.base_battery_excluded_w < 0.0
+            || s.base_ev_w + s.base_battery_excluded_w > s.base_w
+    }) {
         return bad("invalid_base_ev_partition");
     }
     if p.slots.iter().any(|s| s.hours <= 0.0) {

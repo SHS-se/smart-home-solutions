@@ -4,6 +4,7 @@ import { SLOT_MS, type DayWindow } from './energy-timeline';
 import type { HaRuntimeRow } from './ha-runtime';
 import type { PlanPanelRow } from './plan-chart-data';
 import type { ReplanRow } from './replan-request';
+import { hasDeviceInstruction } from './plan-device-instruction';
 
 type TraceRow = ReplanRow & HaRuntimeRow & {
   generation_request_id: string | null;
@@ -58,9 +59,7 @@ export function describePlanChart({
       const row = rows[index];
       if (row.missing || !Number.isFinite(value) || value <= 0) continue;
       const slot = visibleSlots[index];
-      const command = slot?.device_commands?.[key];
-      const hasCommand = (command && command.type !== 'unavailable')
-        || (poolHeaterKeys.has(key) && slot?.pool_permitted === true)
+      const hasCommand = hasDeviceInstruction(slot, key, poolHeaterKeys)
         || (key === hotWaterKey && row.hotWater && row.hotWater.state !== 'uncontrolled');
       const source: PowerSource = row.measured ? (row.estimatedEnergy ? 'estimated_meter' : 'measured')
         : hasCommand ? (slot?.binding ? 'scheduled' : 'advisory') : 'forecast_without_command';
@@ -74,6 +73,15 @@ export function describePlanChart({
       totals.peak_w = round(totals.peak_w);
     }
     return { device_key: key, operating_mode: owner ? plan.operating_scope?.modes[owner] ?? null : null, power_by_source: bySource };
+  });
+  const backgroundForecasts = plan.device_models.flatMap(model => {
+    const values = visibleSlots.flatMap(slot => {
+      const value = slot?.device_loads_w?.[model.key];
+      return !hasDeviceInstruction(slot, model.key, poolHeaterKeys) &&
+        typeof value === 'number' && Number.isFinite(value) && value > 0 ? [value] : [];
+    });
+    return values.length ? [{ device_key: model.key, quarters: values.length,
+      chart_kwh: round(values.reduce((sum, value) => sum + value / 4000, 0)), peak_w: round(Math.max(...values)) }] : [];
   });
 
   return {
@@ -93,6 +101,7 @@ export function describePlanChart({
       max_driving_difference_points: round(driving),
     } : null,
     power,
+    background_forecasts: backgroundForecasts,
   };
 }
 

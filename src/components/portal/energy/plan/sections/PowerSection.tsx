@@ -113,8 +113,8 @@ const PowerSection: React.FC<{
     devices: devices.map(device => ({
       key: device.device_key, name: device.name, colour: device.colour, schedulable: schedulableKeys.has(device.device_key),
     })),
-    hotWater, planSlots: model.active.slots,
-  }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater, model.active.slots]);
+    hotWater, planSlots: model.active.slots, poolHeaterKeys: new Set(poolHeaterKeys),
+  }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater, model.active.slots, poolHeaterKeys]);
   const { rows: panelRows, consumption, hotWaterSeriesKey } = chart;
   useEffect(() => {
     if (!trace) return;

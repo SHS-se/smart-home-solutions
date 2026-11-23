@@ -4,8 +4,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { describeMeasurementIssue, type MeasurementIssue } from '@/lib/energy-shift/measurement-issues';
 
 /**
- * Devices the current plan leaves out because a reading was impossible or
- * missing.
+ * Devices whose current readings cannot support a new model projection.
  * Only those devices are affected; the rest of the home is planned as usual.
  */
 export default function MeasurementIssuesAlert({ issues }: { issues: MeasurementIssue[] }) {
@@ -15,7 +14,7 @@ export default function MeasurementIssuesAlert({ issues }: { issues: Measurement
     <Alert data-testid="measurement-issues">
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>
-        {t('Utelämnat ur planen: givarvärden kunde inte användas', 'Left out of this plan: sensor readings could not be used')}
+        {t('Givarvärden kunde inte användas för ny planering', 'Sensor readings could not be used for new planning')}
       </AlertTitle>
       <AlertDescription className="space-y-2 text-sm">
         <ul className="list-disc pl-5">
@@ -28,8 +27,8 @@ export default function MeasurementIssuesAlert({ issues }: { issues: Measurement
         </ul>
         <p>
           {t(
-            'Resten av hemmet planeras som vanligt. Kontrollera givaren; när den visar ett rimligt värde igen rekommenderas en omplanering.',
-            'The rest of the home is planned as usual. Check the sensor; once it reports a real value again, a replan is recommended.',
+            'Resten av hemmet planeras som vanligt. Accepterade instruktioner behålls där underlaget räcker. Kontrollera givaren; nya prognoser kan beräknas när värdena återkommer.',
+            'The rest of the home is planned as usual. Accepted instructions are retained where sufficient evidence remains. Check the sensor; new forecasts can be calculated when readings return.',
           )}
         </p>
       </AlertDescription>

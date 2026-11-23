@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "be97dc5e8ff98f27999d9f6c299c54cd4ccc8cc77ef1396a3b1c3148cf64bc32",
-  "source_sha256": "0db343026a9412788ca2dc59fe92b47014b89b6ca4c409bcf4bd38c09ed94d87",
+  "wasm_sha256": "38236c88bcf8c01b7144daed04656866cc27cc9366e04e589c069f6d3c751623",
+  "source_sha256": "f56959a645ccf29ba76893afb4fe5e4057106b30b25939cda4215e4172e25dea",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -106,6 +106,7 @@
     "supabase/functions/_shared/rules-planner.ts",
     "supabase/functions/_shared/rules-pool-service.ts",
     "supabase/functions/_shared/rules-room-services.ts",
+    "supabase/functions/_shared/rules-service-continuity.ts",
     "supabase/functions/_shared/time-zone-formatter.ts"
   ]
 }

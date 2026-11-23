@@ -39,6 +39,8 @@ export interface ReadySlot {
   base_w: number;
   /** EV load already included in base_w, outside the controlled charger. */
   base_ev_w: number;
+  /** Other demand in base_w that the accepted instruction excludes from battery supply. */
+  base_battery_excluded_w?: number;
   solar_w: number;
   outdoor_c: number;
   import_price: number;

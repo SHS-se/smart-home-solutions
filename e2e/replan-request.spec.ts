@@ -1258,6 +1258,7 @@ test.describe('requesting a replan', () => {
     replan.publishedPlan = { ...PLAN, device_models: models,
       plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({
         ...slot, load_w: 5990, device_loads_w: Object.fromEntries(models.map((device, i) => [device.key, i === 10 ? 2990 : 100])),
+        device_commands: Object.fromEntries(models.map(device => [device.key, { type: 'switch_schedule' as const, on_seconds: 900 }])),
       })) } },
     };
     await context.route('**/rest/v1/rpc/set_energy_device_participation', async route => {
@@ -1317,6 +1318,7 @@ test.describe('requesting a replan', () => {
           load.key, load.key === 'steady' && i < 5 ? (i % 2 ? 290 : 110) : load.values[i % 6],
         ]));
         return { ...slot, boiler_consumption_w: 0, device_loads_w: deviceLoads,
+          device_commands: Object.fromEntries(loads.map(load => [load.key, { type: 'switch_schedule' as const, on_seconds: 900 }])),
           load_w: 500 + Object.values(deviceLoads).reduce((sum, value) => sum + value, 0) };
       }) } },
     };
@@ -2197,6 +2199,45 @@ test.describe('requesting a replan', () => {
     await expect(button).toBeDisabled();
   });
 
+  test('unavailable device forecasts stay in base demand and recover as scheduled bands', async ({ page }) => {
+    const model = mixedModeFixture.plan.device_models[0];
+    const models = [
+      { ...model, key: 'synthetic-charger', name: 'Synthetic charger', category: 'ev_charging' as const, control_type: 'variable_power' as const, planning_service: undefined },
+      { ...model, key: 'synthetic-heater', name: 'Synthetic heater', category: 'heating' as const, control_type: 'setpoint' as const, planning_service: undefined },
+      { ...model, key: 'synthetic-pump', name: 'Synthetic pump', control_type: 'switch_schedule' as const, planning_service: undefined },
+      { ...model, key: 'synthetic-water', name: 'Synthetic hot water', category: 'hot_water' as const, control_type: 'permit_inhibit' as const, planning_service: undefined },
+    ];
+    const loads = { 'synthetic-charger': 2200, 'synthetic-heater': 600, 'synthetic-pump': 400, 'synthetic-water': 800 };
+    const publish = (available: boolean) => {
+      replan.publishedPlan = { ...PLAN, capabilities: { ...PLAN.capabilities, boiler: true }, device_models: models,
+        plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({
+          ...slot, load_w: 5000, grid_import_w: 5000, device_loads_w: loads,
+          boiler_expected_w: 800, boiler_permitted: available,
+          device_commands: available ? {
+            'synthetic-charger': { type: 'variable_power', value: 6, unit: 'A' },
+            'synthetic-heater': { type: 'setpoint', target_c: 21, minimum_c: 5, maximum_c: 30 },
+            'synthetic-pump': { type: 'switch_schedule', on_seconds: 900 },
+            'synthetic-water': { type: 'permit_inhibit', permitted: true },
+          } : Object.fromEntries(models.map(device => [device.key,
+            { type: 'unavailable' as const, reason: 'Synthetic observation outage' }])),
+        })) } },
+      };
+    };
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    const baseReading = () => page.getByRole('tooltip').getByText(/^(Baslast|Base load)$/).locator('..');
+    publish(false);
+    await page.goto('/portal/energy-modeling?tab=plan');
+    for (const model of models) await expect(chart.locator(`[data-band="${model.key}"]`)).toHaveCount(0);
+    await chart.focus(); await chart.press('ArrowRight');
+    await expect(baseReading()).toContainText('5.00 kW');
+
+    publish(true);
+    await page.reload();
+    for (const model of models) await expect(chart.locator(`[data-band="${model.key}"]`)).toBeVisible();
+    await chart.focus(); await chart.press('ArrowRight');
+    await expect(baseReading()).toContainText('1.00 kW');
+  });
+
   test('exports which plan and data sources the chart showed during a replan', async ({ page }) => {
     const replacementId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     const model = mixedModeFixture.plan.device_models[0];
@@ -2235,6 +2276,8 @@ test.describe('requesting a replan', () => {
     replan.row.replan_completed_request_id = REQUEST_ID;
     await expect(button).toBeEnabled();
 
+    await expect(page.locator('path[data-band="heater"]')).toHaveCount(0);
+
     await page.locator('summary').filter({ hasText: /^(Diagnostik|Diagnostics)$/ }).click();
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: /Ladda ned planens visningslogg|Download plan display trace/ }).click();
@@ -2253,9 +2296,9 @@ test.describe('requesting a replan', () => {
             measured: { quarters: 1, chart_kwh: 0.2, peak_w: 800 },
             scheduled: expect.objectContaining({ peak_w: 1500 }),
           }) }),
-          expect.objectContaining({ device_key: 'heater', power_by_source: {
-            forecast_without_command: expect.objectContaining({ peak_w: 500 }),
-          } }),
+        ]),
+        background_forecasts: expect.arrayContaining([
+          expect.objectContaining({ device_key: 'heater', peak_w: 500 }),
         ]),
       }),
     };

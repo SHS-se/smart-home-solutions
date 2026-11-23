@@ -1,5 +1,16 @@
 # Requirements for planner and controller constraints
 
+User requirement, 22 November 2026: missing observations must not turn historical
+device demand into a new executable schedule. Both plan charts show individual
+scheduled bands only where the interval has an instruction; other forecast demand
+remains in the household total. When no bounded current store state can be formed,
+retain compatible accepted instructions over their original intervals, reserve their
+known full electrical draw, and preserve their hardware contract independently of
+store projections. Uncovered intervals hold existing settings. Do not invent SOC,
+water temperature, new OFF requests, or extend an accepted interval. Returning
+observations restore ordinary planning and execution automatically. Explicit user
+permissions and selective execution releases remain authoritative.
+
 User requirement, 22 November 2026: an optional vehicle location entity in the
 app selects readiness timing instead of cable connection. Arriving home starts
 a new 60-hour clock; known away states freeze elapsed time. The app durably

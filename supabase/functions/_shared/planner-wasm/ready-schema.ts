@@ -44,6 +44,7 @@ export const readyProblemSchema = z.object({
     hours: number,
     base_w: number,
     base_ev_w: number.nonnegative(),
+    base_battery_excluded_w: number.nonnegative().optional(),
     solar_w: number,
     outdoor_c: number,
     import_price: number,

@@ -789,6 +789,9 @@ export interface OptimisationPlan {
   policy: OptimisationSnapshot["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
+  /** Equipment and accepted cutoff for retained instructions; neither supplies a current store state. */
+  retained_ev_charger?: import("./device-models.ts").ChargerModel;
+  retained_pool_stop_temperature_c?: number;
   /** Measured planning state plus the website-owned upper temperature for execution. */
   pool: (PoolStateInput & { stop_temperature_c: number | null; heater_response?: HeatPumpResponse; planning_basis?: "thermal" | "empirical" }) | null;
   grid: OptimisationSnapshot["grid"];

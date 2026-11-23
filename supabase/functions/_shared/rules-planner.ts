@@ -39,6 +39,8 @@ import { planningStage, type PlanningTrace } from "./planning-trace.ts";
 import { assertHeldCommands, applyNativeHolds, commandOwner, compileCommitments, ownerLabel, unavailableOwner, evCurrentCeiling, recoverRetainedBattery, resizeRetainedCharge, type RetainedCommandSlot } from "./rules-commitments.ts";
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
+import { hasMissingServiceReading, retainUnavailableServices, type ServiceContinuity } from "./rules-service-continuity.ts";
+import type { ChargerModel } from "./planner/device-models.ts";
 
 import { RULES_MODEL_VERSION, executionModelRevision } from "./rules-planner-identity.ts";
 export { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
@@ -50,6 +52,7 @@ const fail = (message: string): never => { throw new PlanningInputError(message)
 export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "pool_permitted" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "boiler_battery_allowed" | "battery_command" | "device_commands"> & Partial<Pick<PlannedSlot, "battery_instruction">> & Partial<Pick<PlannedSlot, "device_loads_w" | "room_heating_w">>;
 export interface PublishedCommandReference {
   plan_id: string;
+  ev_charger?: ChargerModel | null;
   battery_contract?: {id: string; scope_revision: string; generation: number};
   hot_water_permissions?: string[];
   /** Provenance from the exact accepted publication, never inferred from its draw. */
@@ -58,6 +61,7 @@ export interface PublishedCommandReference {
   slots: PublishedCommandSlot[];
 }
 export interface PreparedRulesInput {
+  continuity: ServiceContinuity;
   rooms: RoomServices;
   pool_service: PoolService;
   snapshot: OptimisationSnapshot;
@@ -153,6 +157,9 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
     snapshot: input.snapshot, now: input.now, fixed_plan: input.fixed_plan,
     execution_replan: input.execution_replan, resolved_price_outlook: input.resolved_price_outlook,
   }, reference, approved, independent }));
+  const capturedEvControl = input.snapshot.services.find(service => service.device === "ev" && service.control.type === "discrete_current")?.control;
+  const capturedCharger = input.snapshot.device_physics?.car?.charger ??
+    (capturedEvControl?.type === "discrete_current" ? capturedEvControl : null);
   const isolated = isolateMeasurements(input.snapshot);
   const availability = new Map(parseExecutionChanges(isolated.execution_availability ?? []).map(change => [change.owner, change]));
   for (const change of input.execution_replan?.changes ?? []) {
@@ -333,10 +340,16 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
   // demand margin or future measured load enters the prepared forecast.
   const level = demandLevel(snapshot.demand_outlook?.days, localDay(snapshot.captured_at, snapshot.timezone));
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
-  const boilerW = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_expected_w ?? 0);
+  const boilerW = snapshot.slots.map((_s, i) => boilerService.length ? retainedServices[i]?.boiler_expected_w ?? 0 : 0);
   const roomKeys=new Set(snapshot.thermal_zones?.flatMap(z=>z.device_keys)??[]);
   // Retained pool instructions already consume headroom before rooms are planned.
   Object.assign(passive, poolService.power);
+  const continuity = retainUnavailableServices(snapshot, reference, new Set([
+    ...Object.values(members).flat().map(member => member.key), ...roomKeys, ...Object.keys(poolService.power),
+  ]), capturedCharger, new Set(input.execution_replan?.changes.filter(change => change.status !== "recovered").map(change => change.owner)),
+  new Set(input.fixed_plan?.slots.map(slot => Date.parse(slot.start))), input.snapshot.capabilities.boiler);
+  Object.assign(passive, continuity.power);
+  snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, continuity.warnings);
   // Forecast solar left after every load fixed before the solve.
   const spare=snapshot.slots.map((slot,i)=>slot.pv_forecast_w*
     snapshot.pv_calibration.correction_factor_by_lead_day[Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length-1,
@@ -351,6 +364,13 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
     Object.assign(passive, rooms.power);
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
     const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
+    const batteryAllowed = snapshot.slots.map((_s, i) => {
+      const instruction = retainedServices[i]?.battery_instruction;
+      const profile = instruction && "profile_id" in instruction ? instruction.profile_id : undefined;
+      if (profile === profileFor(true)) return true;
+      if (profile === profileFor(false)) return false;
+      return continuity.boiler_allowance[i] ?? retainedServices[i]?.boiler_battery_allowed ?? false;
+    });
     const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
     const usageKw = car && snapshot.ev_weekday_usage
       ? weekdayEvUsageKw(snapshot.ev_weekday_usage, snapshot.slots.map(s => s.start), at => localDay(at, snapshot.timezone)) : null;
@@ -372,6 +392,8 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
         return { battery_export_allowed: sellPrices[i] === null && !fixedSlots[i] && !locked[i]?.battery_command ? false : exportAllowed, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
           base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
           base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
+          ...(continuity.boiler_evidence_missing ? { base_battery_excluded_w: batteryAllowed[i] ? 0
+            : sum(snapshot.device_models.filter(m => m.category === "hot_water" && passive[m.key]).map(m => passive[m.key][i])) } : {}),
           solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
           outdoor_c: finite(outdoor) ? outdoor : 0,
           import_price: outlook.shadow_import_sek_per_kwh[i], export_price: exportValues[i],
@@ -424,8 +446,8 @@ export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference:
     problem.end_credit = problemEndCredit(problem, outlook.ev_replacement_sek_per_kwh);
     return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
       price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
-      members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
-      boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
+      continuity, members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
+      boiler_battery_allowed: batteryAllowed,
       boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
       boiler_shortfall_minutes: {}, base_w: baseW };
   }};
@@ -438,6 +460,11 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
   const ev = new Set(input.members.ev.map(m => m.key));
   const boiler = new Set(input.members.boiler.map(m => m.key));
   for (const model of input.snapshot.device_models) {
+    const retained = input.continuity.commands[model.key]?.[i];
+    if (retained) {
+      result[model.key] = structuredClone(retained);
+      continue;
+    }
     const isolated = input.snapshot.measurement_issues?.find(issue =>
       issue.device === 'ev' && model.category === 'ev_charging' ||
       issue.device === 'pool' && model.planning_service === 'pool');
@@ -455,8 +482,8 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
     // removed meters cannot remain in the replacement plan's command map.
     const committed = locked?.device_commands?.[model.key];
     const empiricalPool = input.pool_service.empirical && Object.prototype.hasOwnProperty.call(input.pool_service.power, model.key);
-    const retained = committed?.type === model.control_type ? committed : undefined;
-    result[model.key] = retained ? structuredClone(retained) : input.rooms.commands[model.key]?.[i] ?? (empiricalPool
+    const held = committed?.type === model.control_type ? committed : undefined;
+    result[model.key] = held ? structuredClone(held) : input.rooms.commands[model.key]?.[i] ?? (empiricalPool
       ? input.pool_service.commands[model.key][i] : pool.has(model.key) ? model.control_type === "switch_schedule"
       ? { type: "switch_schedule", on_seconds: command.pool_on ? 900 : 0 }
       : { type: "unavailable", reason: "Dedicated pool owner supplies the native enable command" }
@@ -490,7 +517,12 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     const poolUnavailable = unavailableOwner(snapshot, "$pool", source.start);
     // The solver masks unavailable pool work; publication must tell execution
     // to hold its last setting for that interval.
-    const poolPermitted = poolUnavailable ? null : input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on;
+    const retainedPool = input.continuity.pool[i];
+    const retainedEv = input.continuity.ev[i];
+    const retainedBoiler = input.continuity.boiler[i];
+    const poolStateMissing = !snapshot.capabilities.pool && hasMissingServiceReading(snapshot, "pool");
+    const poolPermitted = poolUnavailable ? null : poolStateMissing ? retainedPool?.pool_permitted ?? null
+      : input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on;
     const hours = f.hours + Math.min(0, f.start_seconds) / 3600;
     if (p.car) evChargeOnlyKwh = Math.min(Math.max(evChargeOnlyKwh, p.car_policy!.limit_kwh),
       evChargeOnlyKwh + q.ev_w * hours / 1000 * p.car.charge_efficiency);
@@ -522,21 +554,25 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       battery_idle_w: q.battery_idle_w, stored_end_kwh: q.battery_kwh,
       export_w: batteryExport, curtailed_w: q.curtailed_w, unserved_w: 0 });
     const locked = input.fixed_slots[i] ?? input.locked_slots[i];
+    const retainedPower = (category: "ev" | "pool") => snapshot.device_models.filter(model =>
+      (category === "ev" ? model.category === "ev_charging" : model.planning_service === "pool") &&
+      input.continuity.commands[model.key]?.[i]).reduce((sum, model) => sum + input.continuity.power[model.key][i], 0);
     return { start: source.start, duration_hours: hours, binding,
       pv_raw_w: source.pv_forecast_w, pv_w: f.solar_w, base_w: input.base_w[i],
       import_price_sek_per_kwh: source.import_price_sek_per_kwh, export_price_sek_per_kwh: source.export_price_sek_per_kwh,
       shadow_import_sek_per_kwh: f.import_price,
       shadow_export_sek_per_kwh: source.export_price_sek_per_kwh ?? input.price_outlook.shadow_export_sek_per_kwh?.[i] ?? null,
-      pool_w: input.pool_service.empirical ? input.pool_service.total_w[i] : q.pool_w,
+      pool_w: poolStateMissing ? retainedPower("pool") : input.pool_service.empirical ? input.pool_service.total_w[i] : q.pool_w,
       pool_permitted: poolPermitted,
       ...(poolPermitted === null ? {} : {
-        pool_command_w: locked?.pool_command_w ?? (input.pool_service.empirical ? input.pool_service.command_w[i]!
+        pool_command_w: retainedPool?.pool_command_w ?? locked?.pool_command_w ?? (input.pool_service.empirical ? input.pool_service.command_w[i]!
           : command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0) }),
       ...(q.pool_c === null ? {} : { pool_temperature_c: q.pool_c }),
-      boiler_expected_w: input.boiler_w[i], boiler_permitted: input.boiler_permitted[i],
-      ...(input.boiler_services.length ? { boiler_battery_allowed: input.boiler_battery_allowed[i] } : {}),
-      ev_w: q.ev_w, room_heating_w: Object.fromEntries(Object.entries(input.rooms.room_power).map(([key, values]) => [key, values[i]])), device_loads_w: loads, device_commands: commandMap(input, command, i),
-      ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
+      boiler_expected_w: retainedBoiler?.boiler_expected_w ?? input.boiler_w[i],
+      boiler_permitted: retainedBoiler?.boiler_permitted ?? input.boiler_permitted[i],
+      ...(input.boiler_services.length || input.continuity.boiler_evidence_missing ? { boiler_battery_allowed: input.boiler_battery_allowed[i] } : {}),
+      ev_w: q.ev_w + retainedPower("ev"), room_heating_w: Object.fromEntries(Object.entries(input.rooms.room_power).map(([key, values]) => [key, values[i]])), device_loads_w: loads, device_commands: commandMap(input, command, i),
+      ev_target_current_a: retainedEv?.ev_target_current_a ?? command.ev_amps, ev_min_current_a: retainedEv?.ev_min_current_a ?? locked?.ev_min_current_a ?? 0, ev_max_current_a: retainedEv?.ev_max_current_a ?? locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: !!snapshot.ev_battery?.connected,
       ...(p.car && f.ev_usage_kw !== undefined ? { ev_usage_estimate_kwh: f.ev_usage_kw * hours,
         ev_usage_unserved_kwh: q.ev_usage_unserved_kwh, ev_soc_from_charging: evChargeOnlyKwh / p.car.capacity_kwh } : {}),
@@ -545,7 +581,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
       battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command, q) : null,
       ...(p.battery && snapshot.schema_version >= 10 ? { battery_instruction: locked?.battery_instruction ??
-        instructionFor(command, q, profileFor(input.boiler_services.length ? input.boiler_battery_allowed[i] : undefined),
+        instructionFor(command, q, profileFor(input.boiler_services.length || input.continuity.boiler_evidence_missing
+          ? input.boiler_battery_allowed[i] : undefined),
           { import_w: p.limits.import_w, discharge_max_w: batteryAcCeilings(p.battery).discharge_w }) } : {}),
       battery_soc: p.battery && q.battery_kwh !== null ? q.battery_kwh / p.battery.capacity_kwh : 0,
       grid_import_w: imports, grid_export_w: exports, curtailed_w: q.curtailed_w, unserved_w: 0,
@@ -721,6 +758,8 @@ export function assembleRulesPlan(solved: SolvedRulesInput, trace?: PlanningTrac
       planned_temperature_c:input.rooms.temperature[z.key] as number[],unplanned_temperature_c:input.rooms.unplanned_temperature[z.key] as number[],
       planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:input.rooms.unplanned_power[z.key]}))} : undefined;
   let plan: OptimisationPlan = { schema_version: snapshot.schema_version, mode: "live", capabilities: snapshot.capabilities,
+    ...(input.continuity.ev_charger && input.continuity.ev.some(Boolean) ? { retained_ev_charger: input.continuity.ev_charger } : {}),
+    ...(finite(input.continuity.pool_stop_temperature_c) ? { retained_pool_stop_temperature_c: input.continuity.pool_stop_temperature_c } : {}),
     model_version: RULES_MODEL_VERSION, decision_diagnostics_version: 2, plan_id: snapshot.snapshot_id, snapshot_id: snapshot.snapshot_id,
     issued_at: input.now, valid_until: new Date(Date.parse(snapshot.slots.at(-1)!.start) + QUARTER_MS).toISOString(),
     binding_until: bindingUntil ? new Date(Date.parse(bindingUntil.start) + QUARTER_MS).toISOString() : snapshot.slots[0].start,
@@ -758,7 +797,8 @@ export function assembleRulesPlan(solved: SolvedRulesInput, trace?: PlanningTrac
     // The contract states the demand; the plan view reads the same partition.
     const { battery_supply_scope: _superseded, ...stated } = plan;
     plan = { ...stated, battery_demand: batteryDemand(snapshot.device_models,
-      p.slots.map((_s, i) => input.boiler_services.length ? input.boiler_battery_allowed[i] : undefined)) };
+      p.slots.map((_s, i) => input.boiler_services.length || input.continuity.boiler_evidence_missing
+        ? input.boiler_battery_allowed[i] : undefined)) };
   }
   if (snapshot.schema_version >= 9) {
     // One selected schedule owns both charts, the device requests and the

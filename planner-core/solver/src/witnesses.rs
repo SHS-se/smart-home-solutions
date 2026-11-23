@@ -489,6 +489,7 @@ fn battery_edit(
             gross_w: slot.base_w + q[i].pool_w + q[i].ev_w,
             solar_w: slot.solar_w,
             ev_w: slot.base_ev_w + q[i].ev_w,
+            excluded_w: slot.base_battery_excluded_w,
         }
     };
     // Rooms are terminal DC increments. AC allocations are inverted only after
@@ -889,6 +890,7 @@ pub(crate) mod tests {
                     hours: 0.25,
                     base_w: 0.0,
                     base_ev_w: 0.0,
+                    base_battery_excluded_w: 0.0,
                     solar_w: 0.0,
                     outdoor_c: 20.0,
                     import_price: 1.0,
