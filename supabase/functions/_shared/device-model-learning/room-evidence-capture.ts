@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import { qualifyProbeFreshness, type ProbeEvidence } from "../device-learning/room/source-freshness.ts";
 import type { ThermalQuarterRow } from "../thermal-training.ts";
 
@@ -160,8 +161,9 @@ export async function decodeRoomEvidenceCapture(base64: string, fromAt: string, 
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   if (await digest(bytes) !== sha256) throw new Error("Room evidence capture digest mismatch");
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const body = record(await new Response(stream).json(), envelopeFields);
+  // Each block is already one bounded gzip buffer. Creating an asynchronous
+  // stream/Response per tiny archived frame dominates fragmented captures.
+  const body = record(JSON.parse(new TextDecoder().decode(gunzipSync(bytes))), envelopeFields);
   if (body.version !== VERSION || body.from !== range.from || body.to !== range.to ||
     !Array.isArray(body.strings) || !Array.isArray(body.rows) || body.rows.length > MAX_ROWS) {
     throw new Error("Invalid room evidence block envelope");
