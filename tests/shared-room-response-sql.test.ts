@@ -49,7 +49,7 @@ async function database() {
     "20261120003000_continue_pending_room_windows", "20261119011000_room_learning_admission",
     "20261119022000_room_window_visits", "20261120004000_bound_room_learning_traversals",
     "20261122110000_bounded_room_run_calibration", "20261122160000_batch_room_fit_cells",
-    "20261123100000_shared_room_response"]) {
+    "20261123100000_shared_room_response", "20261123120000_drop_ten_run_ledger_limit"]) {
     await db.exec(await Deno.readTextFile(`supabase/migrations/${file}.sql`));
   }
   await db.exec("ALTER TABLE private.energy_learning_jobs DROP CONSTRAINT energy_learning_jobs_owner_kind_check; ALTER TABLE private.energy_learning_jobs ADD CHECK(owner_kind IN ('room','pool','device'))");
@@ -100,9 +100,10 @@ async function stageShared(db: PGlite, poolRefs: { window_key: string; sha256: s
   return { j: await claim(db), rev };
 }
 function sharedModel(rev: string | null, refs: { window_key: string; sha256: string }[], status: "fitted" | "unidentified" = "fitted") {
-  const runs = ["a", "b", "c", "d"].map((id, i) => ({ id, disposition: i < 3 ? "fitted" : "provisional" }));
-  const summary = { policy: "seasonal_independent_runs_v1", minimum_runs: 3, maximum_runs: 24, observed_runs: 4,
-    retained_runs: 4, fitted_runs: 3, suspect_runs: 0, provisional_runs: 1, oldest_run_at: null, newest_run_at: null };
+  // A full working set: more runs than the per-band ledgers ever held.
+  const runs = Array.from({ length: 24 }, (_, i) => ({ id: `run-${i}`, disposition: i < 3 ? "fitted" : "provisional" }));
+  const summary = { policy: "seasonal_independent_runs_v1", minimum_runs: 3, maximum_runs: 24, observed_runs: 24,
+    retained_runs: 24, fitted_runs: 3, suspect_runs: 0, provisional_runs: 21, oldest_run_at: null, newest_run_at: null };
   const ledger = { ...summary, runs, assessed_against: rev };
   const shared_attempt = { implementation: "synthetic", pool: refs, attempted_at: "2026-01-02T00:00:00Z", status };
   const model = { home_id: home, customer_id: home, room_key: "room", last_attempted_at: "2026-01-02T00:00:00Z",
