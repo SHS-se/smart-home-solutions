@@ -1122,6 +1122,59 @@ test.describe('requesting a replan', () => {
     expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
+  test('device Model shows a heat pump\'s start-up peaks and checks the model against later hours', async ({ page, context }) => {
+    const key = 'synthetic-heat-pump';
+    replan.devices = [{
+      id: key, device_key: key, statistic_id: key, name: 'Test heat pump', category: 'heating',
+      planning_role_override: 'controllable', control_type_override: 'setpoint', load_type_override: 'inverter',
+      mapping_status: 'ready', mapped_control_type: 'setpoint', mapping_summary: {}, profile_sample_count: 0,
+    }];
+    // Independently generated synthetic model, not a household capture.
+    const band = (band_c: number, peak: number, first: number, running: number) => ({
+      band_c, outdoor_c: band_c + 2.5, starts: 20, start_peak_w: peak - 100, start_peak_max_w: peak, first_hour_w: first,
+      recovery_w: [first - 100, first - 300], recovery_peak_w: [1900, 1700], running_hours: 140, running_w: running,
+      running_peak_w: 1600 });
+    const from = Date.parse('2026-01-15T00:00:00Z');
+    const hours = Array.from({ length: 48 }, (_, i) => ({ at: new Date(from + i * 3_600_000).toISOString(), outdoor_c: -8,
+      measured_w: i % 24 === 6 ? 1450 : 1000, predicted_w: i % 24 === 6 ? 1500 : 1050,
+      measured_peak_w: i % 24 === 6 ? 3050 : 1500, predicted_peak_w: i % 24 === 6 ? 2900 : 1600, start: i % 24 === 6 }));
+    const heat_pump = {
+      method: 'heat_pump_startup_v1', standby_w: 100, recovery_hours: 2,
+      observed_from: '2025-11-01T00:00:00Z', observed_to: '2026-01-29T00:00:00Z',
+      bands: [band(-10, 2900, 1500, 1000), band(-5, 2500, 1100, 700)],
+      starts: [{ at: '2026-01-10T06:00:00Z', outdoor_c: -8, peak_w: 2850, first_hour_w: 1500 },
+        { at: '2026-01-11T06:00:00Z', outdoor_c: -3, peak_w: 2400, first_hour_w: 1100 }],
+      check: { available: true, from: new Date(from).toISOString(), to: new Date(from + 14 * 86_400_000).toISOString(), hours,
+        draw_error_w: 50, draw_bias_w: 50, running_hours: 48, starts: 2, starts_within_peak: 0,
+        running_peak_hours: 46, running_peaks_within: 46 },
+    };
+    await context.route('**/rest/v1/energy_optimisation_device_operating_points*', async route => {
+      expect(new URL(route.request().url()).searchParams.get('select')).toContain('heat_pump:operating_points->heat_pump');
+      await route.fulfill({ json: [{ points: [
+        { min_c: -10, max_c: -5.5, outdoor_c: -8, watts: 1100, spread_w: 120, days: 4, hours: 15.5, band_c: -10,
+          revision: '33333333-3333-4333-8333-333333333333',
+          training_from: '2026-01-02T00:00:00Z', training_to: '2026-01-14T00:00:00Z' },
+      ], reference: null, heat_pump }] });
+    });
+
+    await page.goto(`/portal/energy-modeling?tab=devices&device=${key}`);
+    await page.getByRole('tab', { name: /^(Modell|Model)$/ }).click();
+    const model = page.getByRole('tabpanel', { name: /^(Modell|Model)$/ });
+    const peaks = model.getByRole('img', { name: /startspikar|start-up peaks/i });
+    await expect(peaks).toBeVisible();
+    await expect(peaks.locator('.recharts-scatter-symbol')).toHaveCount(2);
+    await expect(peaks.locator('.recharts-reference-line line')).toHaveCount(4);
+    await expect(model.getByText(/^2[,.]9 kW$/)).toBeVisible();
+    await model.getByRole('combobox', { name: /utomhustemperaturintervall|outdoor temperature band/i }).last().selectOption({ index: 1 });
+    await expect(model.getByText(/^2[,.]5 kW$/)).toBeVisible();
+    await expect(model.getByRole('img', { name: /modellkontroll|model check/i })).toBeVisible();
+    await expect(model.getByText('0 / 2', { exact: true })).toBeVisible();
+    await expect(model.getByText('46 / 46', { exact: true })).toBeVisible();
+    await expect(model.getByText(/^±0[,.]05 kW$/)).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await model.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+
   test('device Model shows fitted running-power evidence independently of the current plan', async ({ page, context }) => {
     const key = 'synthetic-floor-heater', meter = 'sensor.synthetic_floor_heater_energy';
     replan.devices = [{

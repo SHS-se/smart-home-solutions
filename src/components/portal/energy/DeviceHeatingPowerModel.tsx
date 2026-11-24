@@ -10,6 +10,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { WEATHER_HEATING_METHOD } from '../../../../supabase/functions/_shared/planner/weather-heating';
 import { formatHeatingRange, HEATING_BAND_WIDTH_C } from '../../../../supabase/functions/_shared/planner/heating-bands';
 import { HeatingBandSelect } from './HeatingBandSelect';
+import { HeatPumpStartupSection } from './HeatPumpStartupModel';
+import { heatPumpStartupModel } from './heat-pump-startup-schema';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 
 const runningPowerModel = z.object({
@@ -75,6 +77,8 @@ const weatherBand = z.object({
 const weatherProfile = z.object({
   points: z.array(weatherBand),
   reference: z.object({ points: z.array(weatherBand) }).nullish(),
+  // A start-up model the page cannot read is left out; the draw still shows.
+  heat_pump: z.unknown().nullish().transform(value => heatPumpStartupModel.safeParse(value).data ?? null),
 });
 
 type WeatherBand = z.infer<typeof weatherBand>;
@@ -161,7 +165,7 @@ export default function DeviceHeatingPowerModel({ homeId, deviceKey, heating, ch
     queryKey: ['device-heating-power-model', homeId, deviceKey, heating],
     queryFn: async () => {
       const { data, error } = await supabase.from('energy_optimisation_device_operating_points')
-        .select('points:operating_points->points,reference:operating_points->reference' as string)
+        .select('points:operating_points->points,reference:operating_points->reference,heat_pump:operating_points->heat_pump' as string)
         .eq('home_id', homeId).eq('device_key', deviceKey)
         .filter('operating_points->>method', 'eq', WEATHER_HEATING_METHOD).maybeSingle();
       if (error) throw error;
@@ -185,7 +189,7 @@ export default function DeviceHeatingPowerModel({ homeId, deviceKey, heating, ch
   if (model.data.kind === 'constant') return <RunningPowerContents model={model.data.model} configuredWatts={model.data.configuredWatts} />;
   const profile = model.data.profile;
   const title = t('Eleffekt vid uppvärmning efter utomhustemperatur', 'Heating power by outdoor temperature');
-  return <section className="space-y-3 rounded-md border p-4 text-sm">
+  return <div className="space-y-4"><section className="space-y-3 rounded-md border p-4 text-sm">
     <h3 className="font-semibold">{title}</h3>
     {profile.points.length > 0 && <HeatingPowerChart bands={profile.points} title={title} />}
     {profile.reference && <details className="space-y-3">
@@ -194,5 +198,6 @@ export default function DeviceHeatingPowerModel({ homeId, deviceKey, heating, ch
     </details>}
     {profile.points.length === 0 && !profile.reference &&
       <p className="text-muted-foreground">{t('Samlar in mätningar av effekt vid uppvärmning.', 'Collecting power readings while heating.')}</p>}
-  </section>;
+  </section>
+  {profile.heat_pump && <HeatPumpStartupSection model={profile.heat_pump} />}</div>;
 }

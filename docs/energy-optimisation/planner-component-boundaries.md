@@ -19,6 +19,7 @@ refactor does not create a new priority or spending policy.
 | `device-learning/room` | Joint internal/external room exchange, solar and delayed-heater fitting, fit evidence | Prices, commands, device permissions, other devices' fits |
 | `device-learning/pool` | Water/electricity observations, pool loss and response fitting, prospective model-family selection | Room coefficients, commitments, electrical permission |
 | `device-learning/operating-points.ts` | Measured draw and heat per kWh of variable-power equipment, per combination of its power settings | Planning, prices, commands or electrical permission |
+| `device-learning/heat-pump-startup.ts` | A heat pump's start-up peak, recovery draw and running draw and peak per outdoor band, with an out-of-sample check | Planning, commands or electrical permission |
 | `device-learning/linear-algebra.ts` | Numerical equation solving | Room or pool policy |
 | `planner/models/room/thermal.ts` | Room thermal response and delayed heat | Regression, prices, scheduling |
 | `planner/models/pool/state.ts` | Reconstruction of thermal memory from actual compressor energy | Parameter fitting or releasing commitments |
@@ -693,3 +694,40 @@ rates are labelled in °C/h; temperature prediction error is labelled as mean
 absolute prediction error in °C. Private measured validation stays outside the
 public repository; regression fixtures are independently generated synthetic
 plants.
+
+## Heat-pump start-up model (24 November 2026)
+
+User requirement, 24 November 2026: a room heater set up as an inverter load is
+a modulating heat pump, and its start-up peak must be learned so starts can be
+planned within the house limit. On a cold day an air-to-air heat pump can draw
+several times its running power while it recovers from standing idle, and the
+weather draw model above shows only the median running draw.
+
+Home Assistant sends each heat pump's highest power reading beside the energy
+of every native heating interval: the highest of three five-minute maxima for a
+quarter, the hourly maximum for an old hour, and nothing when the maxima do not
+cover the interval. Peaks are stored in `private.energy_heating_power_peaks`,
+apart from room evidence, so they never advance a room's learning clock. Ingest
+answers `heating_power_peaks_supported`; only after that does the app send peaks,
+and a home with a heat pump then re-sends its retained history once to fill them
+in, so the re-send is never spent on a server that would drop them.
+
+`device-learning/heat-pump-startup.ts` assembles hours from four complete
+quarters or one native hour. An hour averaging under 100 W is standby; a running
+hour after a standby hour is a start, and the two hours after it are its
+recovery. A missing or cooling hour is unknown, never standby, and the hours
+after it count as running only once a start inside it could no longer be
+recovering. Per 5 °C outdoor band it publishes the median and highest start
+peak, the start hour's draw, the recovery hours' draw and peaks, and the steady
+running draw and highest running peak, defrosts included. The model check fits
+the same method on everything before the last 14 days and predicts those days'
+running hours from when the unit actually started and the outdoor temperature.
+It reports the mean hourly error and bias and how many measured peaks stayed
+within the predicted highest.
+
+The model is recomputed by the device's daily weather-draw refit and stored as
+`operating_points.heat_pump`. It does not enter the planning snapshot, and the
+planner does not read it yet. A failed read keeps the previous model and never
+holds back the draw refit. Heat or cool mode is unknown for most old hourly
+history, so summer cooling still appears in the warm bands.
+

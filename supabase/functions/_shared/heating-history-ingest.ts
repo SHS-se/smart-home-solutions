@@ -17,7 +17,10 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
     heating_probe_observations_accepted: number | null;
     heating_history_errors: string[];
     heating_history_sources?: unknown;
-  } = { heating_observations_accepted: 0, heating_observations_accepted_by_source: [], heating_probe_observations_accepted: 0, heating_history_errors: [] };
+    /** Tells the app it may send heat pump peaks; an older server would drop them. */
+    heating_power_peaks_supported: true;
+  } = { heating_observations_accepted: 0, heating_observations_accepted_by_source: [], heating_probe_observations_accepted: 0,
+    heating_history_errors: [], heating_power_peaks_supported: true };
   // A failed side of the capture keeps its app cursor pending. Known heat and
   // probe facts can still land independently and identical retries are safe.
   await Promise.all([
@@ -26,6 +29,14 @@ export async function ingestHeatingHistory(db: Pick<SupabaseClient, "rpc">, inpu
       try {
         const { data, error } = await db.rpc("record_energy_heating_observations", { ...scope, p_rows: measured.observations });
         if (error) throw error;
+        // Peaks land after their intervals; a failed peak write retries the
+        // whole window, so the app never advances past peaks not yet stored.
+        const peaks = measured.observations.flatMap(row => Object.entries(row.device_peak_w ?? {})
+          .map(([device_key, peak_w]) => ({ device_key, start: row.start, duration_s: row.duration_s, peak_w })));
+        if (peaks.length) {
+          const stored = await db.rpc("record_energy_heating_power_peaks", { ...scope, p_rows: peaks });
+          if (stored.error) throw stored.error;
+        }
         exchange.heating_observations_accepted = data.accepted;
         exchange.heating_observations_accepted_by_source = data.accepted_by_source;
       } catch (error) {

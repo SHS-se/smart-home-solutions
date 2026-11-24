@@ -37,7 +37,7 @@ Deno.test("a transient heat write failure still syncs reviewed sources and share
   } } as unknown as Database;
   const result = await ingestHeatingHistory(db, input);
   assertEquals(result.exchange, { heating_observations_accepted: null, heating_observations_accepted_by_source: null,
-    heating_probe_observations_accepted: 1, heating_history_sources: configuration,
+    heating_probe_observations_accepted: 1, heating_history_sources: configuration, heating_power_peaks_supported: true,
     heating_history_errors: ["Heating history: the server could not store the upload. SHS will retry automatically."] });
 });
 
@@ -52,4 +52,22 @@ Deno.test("a database timeout names the failed history write while other receipt
   assertEquals(result.exchange.heating_observations_accepted, null);
   assertEquals(result.exchange.heating_probe_observations_accepted, 1);
   assertEquals(result.exchange.heating_history_sources, configuration);
+});
+
+Deno.test("heat pump peaks are stored after their intervals, and a failed peak write retries the window", async () => {
+  const peaked = { ...input, observations: [{ ...input.observations[0], device_peak_w: { heater: 2900 } }] };
+  const sent: unknown[] = [];
+  const working = { rpc: (name: string, args: { p_rows?: unknown }) => {
+    if (name === "record_energy_heating_power_peaks") sent.push(args.p_rows);
+    return Promise.resolve({ data: name === "record_energy_heating_observations" ? receipt : 1, error: null });
+  } } as unknown as Database;
+  const stored = await ingestHeatingHistory(working, peaked);
+  assertEquals(sent, [[{ device_key: "heater", start: new Date(start).toISOString(), duration_s: 3600, peak_w: 2900 }]]);
+  assertEquals(stored.exchange.heating_observations_accepted, 1);
+  const failing = { rpc: (name: string) => Promise.resolve(name === "record_energy_heating_power_peaks"
+    ? { data: null, error: { message: "synthetic unavailable storage" } }
+    : { data: name === "record_energy_heating_observations" ? receipt : 1, error: null }) } as unknown as Database;
+  const retried = await ingestHeatingHistory(failing, peaked);
+  assertEquals(retried.exchange.heating_observations_accepted, null);
+  assertEquals(retried.exchange.heating_history_errors.length, 1);
 });

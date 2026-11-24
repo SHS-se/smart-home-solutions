@@ -69,6 +69,8 @@ export interface HeatingObservation {
   heater_energy_limits_w?: Record<string, number>;
   /** Counter-cleaning semantics, independent of app version and observation time. */
   counter_processing_revision?: number;
+  /** A heat pump's highest power reading in the interval, where Home Assistant observed one. */
+  device_peak_w?: Record<string, number>;
 }
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -122,6 +124,15 @@ export function parseHeatingObservations(input: unknown, fromMs: number, toMs: n
         Number(row.counter_processing_revision) > 2147483647)) {
       skip("invalid_counter_processing_revision"); continue;
     }
+    // A peak is optional evidence beside the energy: an unusable one is
+    // dropped on its own and never costs the interval.
+    let peaks: Record<string, number> | undefined;
+    if (row.device_peak_w !== undefined) {
+      if (object(row.device_peak_w) && Object.entries(row.device_peak_w).every(([key, value]) =>
+        Object.hasOwn(row.device_statistics as Record<string, unknown>, key) && finite(value) && value >= 0 && value < 1_000_000)) {
+        if (Object.keys(row.device_peak_w).length) peaks = row.device_peak_w as Record<string, number>;
+      } else skip("invalid_heating_peak");
+    }
     const key = JSON.stringify([row.room_key, row.source_key, start, duration,
       Object.entries(row.device_statistics).sort(([a], [b]) => a.localeCompare(b))]);
     if (seen.has(key)) { skip("duplicate_heating_interval"); continue; }
@@ -137,7 +148,8 @@ export function parseHeatingObservations(input: unknown, fromMs: number, toMs: n
       cooling: cooling,
       ...(row.counter_processing_revision === undefined ? {} : { counter_processing_revision: row.counter_processing_revision as number }),
       ...(row.heater_energy_limits_w === undefined ? {} : { heater_energy_limits_w: row.heater_energy_limits_w as Record<string, number> }),
-      ...(row.invalidated_device_keys === undefined ? {} : { invalidated_device_keys: row.invalidated_device_keys as string[] }) });
+      ...(row.invalidated_device_keys === undefined ? {} : { invalidated_device_keys: row.invalidated_device_keys as string[] }),
+      ...(peaks ? { device_peak_w: peaks } : {}) });
   }
   return { observations, ignored };
 }

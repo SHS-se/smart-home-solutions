@@ -89,3 +89,14 @@ Deno.test("counter processing provenance survives parsing and malformed authorit
     assertEquals(result.ignored, { invalid_counter_processing_revision: 1 });
   }
 });
+
+Deno.test("a heat pump peak rides on its interval and an unusable one costs only itself", () => {
+  const result = parseHeatingObservations([
+    { ...row, device_peak_w: { heater: 2900 } },
+    { ...row, start: new Date(start + 3_600_000).toISOString(), device_peak_w: { other: 2900 } },
+    { ...row, start: new Date(start + 7_200_000).toISOString(), device_peak_w: { heater: -1 } },
+  ], start, start + 3 * 3_600_000);
+  assertEquals(result.observations.map(o => o.device_peak_w), [{ heater: 2900 }, undefined, undefined]);
+  assertEquals(result.observations.map(o => o.device_energy_kwh), [{ heater: .4 }, { heater: .4 }, { heater: .4 }]);
+  assertEquals(result.ignored, { invalid_heating_peak: 2 });
+});
