@@ -57,6 +57,36 @@ Deno.test('repeated cycling can be more disruptive than a less frequent continuo
   assertEquals(ordered.map(s => s.key), ['run', 'cycling']);
 });
 
+Deno.test('idle time does not lift a long run above loads that switch more often', () => {
+  // One four-hour block in a day, like a pool heater, against a small load
+  // that runs every quarter but keeps changing, and a heater that pulses.
+  const day = 96;
+  const block = Array.from({ length: day }, (_, i) => i >= 80 ? 3000 : 0);
+  const wobbling = Array.from({ length: day }, (_, i) => i % 2 ? 400 : 500);
+  const pulsing = Array.from({ length: day }, (_, i) => i % 8 < 2 ? 1500 : 0);
+  const ordered = orderConsumptionStack([
+    stackSeries('pulsing', pulsing), stackSeries('wobbling', wobbling), stackSeries('pool', block),
+  ]);
+  assertEquals(ordered.map(s => s.key), ['pool', 'wobbling', 'pulsing']);
+});
+
+Deno.test('equally continuous loads put the more powerful one lower', () => {
+  const shape = [0, 1, 1, 1, 1, 0, 0, 1, 1, 0];
+  const ordered = orderConsumptionStack([
+    stackSeries('small', shape.map(on => on * 300)), stackSeries('large', shape.map(on => on * 3000)),
+  ]);
+  assertEquals(ordered.map(s => s.key), ['large', 'small']);
+});
+
+Deno.test('stack order does not depend on units', () => {
+  const input = [
+    stackSeries('a', [0, 500, 500, 0, 500, 0]), stackSeries('b', [200, 250, 200, 250, 200, 250]),
+    stackSeries('c', [0, 0, 4000, 4000, 0, 0]),
+  ];
+  const scaled = input.map(s => stackSeries(s.key, s.values.map(value => value * 1000)));
+  assertEquals(orderConsumptionStack(scaled).map(s => s.key), orderConsumptionStack(input).map(s => s.key));
+});
+
 Deno.test('idle, missing and empty series sort deterministically above active loads', () => {
   const input = [stackSeries('z-idle', [0, 0]), stackSeries('a-missing', [NaN, Infinity]),
     stackSeries('empty', []), stackSeries('active', [200, 200])];
