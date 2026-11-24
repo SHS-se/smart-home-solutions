@@ -1598,6 +1598,19 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText(/Master bathroom21\.3 °C/);
     await expect(page.getByRole('tooltip')).toContainText('Hall18.0 °C');
     await expect(page.getByRole('tooltip')).not.toContainText(/may be outside comfort|kan hamna utanför komfort/);
+    // One temperature per room, keyed by the line it is drawn as: solid where
+    // measured, dashed where planned. Comfort and forecast instants stay on the chart.
+    const tooltip = page.getByRole('tooltip');
+    const bathRow = tooltip.getByText('Master bathroom', { exact: true }).locator('../..');
+    await expect(bathRow).toHaveText(/^Master bathroom\d+\.\d °C$/);
+    await expect(bathRow.locator('[data-reading-mark]')).toHaveAttribute('data-reading-mark', 'line');
+    await expect(tooltip).not.toContainText(/comfort|komfort|· plan/);
+    for (let i = 0; i < 3; i++) await chart.press('ArrowRight');
+    await expect(bathRow).toHaveText(/^Master bathroom\d+\.\d °C$/);
+    await expect(bathRow.locator('[data-reading-mark]')).toHaveAttribute('data-reading-mark', 'dashed');
+    expect(await tooltip.locator('[data-reading-mark="area"]').first().evaluate(element =>
+      parseFloat(getComputedStyle(element).borderRadius) >= element.getBoundingClientRect().width / 2)).toBe(true);
+    await tooltip.screenshot({ path: testInfo.outputPath('room-tooltip.png') });
     await page.keyboard.press('Escape');
     // Names belong beside the curves, without a legend block separating the plots.
     for (const width of [2560, 1440, 768, 375]) {

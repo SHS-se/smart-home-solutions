@@ -31,7 +31,7 @@ import {
 } from '@/lib/energy-shift/price-bands';
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
-import { roomTemperatureSeries } from '@/lib/energy-shift/room-temperature';
+import { roomTemperatureSeries, type RoomTemperatureSample } from '@/lib/energy-shift/room-temperature';
 import { SLOT_MS } from '@/lib/energy-shift/energy-timeline';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { PLAN_COLOURS, hatchBackground } from './palette';
@@ -1072,7 +1072,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           realPrices={realPrices}
           storeLines={storeLines}
           rooms={rooms}
-          timeZone={homeTimeZone}
           auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
           left={pointer.left}
           top={pointer.top}
@@ -1105,13 +1104,12 @@ const PlanTooltip: React.FC<{
   storeLines?: EnergyStoreLines;
   rooms: readonly EnergyRoomLine[];
   auditDescriptions?: readonly string[];
-  timeZone: string;
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
   row, colours, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, storeLines,
-  rooms, left, top, bounds, auditDescriptions, timeZone,
+  rooms, left, top, bounds, auditDescriptions,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -1142,15 +1140,17 @@ const PlanTooltip: React.FC<{
   ) => {
     const value = values?.[index];
     return value === null || value === undefined || !Number.isFinite(value) ? null : (
-      <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
+      <Reading name={`${name} · ${storeLines?.name}`} colour={colour} mark="dashed" value={format(value)} />
     );
   };
   const carUsage = hasEvBattery && row.evSoc !== null && row.evSocFromCharging !== undefined
     && row.evSocFromCharging - row.evSoc >= CAR_USAGE_SHOWN ? row.evSocFromCharging - row.evSoc : null;
-  const roomReadingCount = rooms.reduce((count, room) => count + (row.roomTemperatures?.[room.key]?.length ?? 0)
-    + (row.roomComfortMinC?.[room.key] === undefined ? 0 : 1), 0);
+  const roomReadings = rooms.flatMap(room => {
+    const reading = roomReading(row.roomTemperatures?.[room.key]);
+    return reading ? [{ room, ...reading }] : [];
+  });
   const estimated = 174 + (row.estimatedEnergy ? 40 : 0)
-    + (running.length + (storeLines ? 3 : 0) + (carUsage === null ? 0 : 1) + roomReadingCount) * 16;
+    + (running.length + (storeLines ? 3 : 0) + (carUsage === null ? 0 : 1) + roomReadings.length) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1195,7 +1195,7 @@ const PlanTooltip: React.FC<{
         />
       )}
       {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
-        <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
+        <Reading key={name} name={name} colour={colour} mark="area" value={`${value.toFixed(2)} kW`} />
       ))}
       <div className="mt-1 border-t pt-1">
         <Reading
@@ -1204,12 +1204,12 @@ const PlanTooltip: React.FC<{
         />
         {running.map(entry => (
           <Reading
-            key={entry.key} name={entry.name} colour={entry.colour}
+            key={entry.key} name={entry.name} colour={entry.colour} mark="area"
             value={`${entry.partial[index] ? "≥ " : ""}${(entry.value / 1_000).toFixed(2)} kW`}
           />
         ))}
         <Reading
-          name={t('Baslast', 'Base load')} colour={PLAN_COLOURS.base}
+          name={t('Baslast', 'Base load')} colour={PLAN_COLOURS.base} mark="area"
           value={Number.isFinite(baseValue) ? `${(baseValue / 1_000).toFixed(2)} kW` : t('Ej tillgänglig', 'Unavailable')}
         />
         {consumptionIssue && <p className="mt-1 text-muted-foreground">
@@ -1219,7 +1219,7 @@ const PlanTooltip: React.FC<{
       <div className="mt-1 border-t pt-1">
         {hasBattery && row.homeSoc !== null && (
           <Reading
-            name={t('Hembatteri', 'Home battery')} colour={PLAN_COLOURS.battery}
+            name={t('Hembatteri', 'Home battery')} colour={PLAN_COLOURS.battery} mark="area"
             value={`${Math.round(row.homeSoc)} %`}
           />
         )}
@@ -1228,13 +1228,13 @@ const PlanTooltip: React.FC<{
         )}
         {hasEvBattery && row.evSoc !== null && (
           <Reading
-            name={t('Bilbatteri', 'Car battery')} colour={colours.ev}
+            name={t('Bilbatteri', 'Car battery')} colour={colours.ev} mark="line"
             value={`${Math.round(row.evSoc)} %`}
           />
         )}
         {carUsage !== null && (
           <Reading
-            name={t('Uppskattad körning', 'Estimated driving')} swatch={hatchBackground(colours.ev)}
+            name={t('Uppskattad körning', 'Estimated driving')} colour={colours.ev} mark="hatch"
             value={`−${Math.round(carUsage)} %`}
           />
         )}
@@ -1243,47 +1243,63 @@ const PlanTooltip: React.FC<{
         )}
         {row.poolTemperatureC != null && (
           <Reading
-            name={t('Pooltemperatur', 'Pool temperature')} colour={colours.pool}
+            name={t('Pooltemperatur', 'Pool temperature')} colour={colours.pool} mark="line"
             value={`${row.poolTemperatureC.toFixed(1)} °C`}
           />
         )}
         {compared(t('Pooltemperatur', 'Pool temperature'), colours.pool, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
       </div>
       </>}
-      {rooms.map(room => {
-        const samples = row.roomTemperatures?.[room.key] ?? [], comfort = row.roomComfortMinC?.[room.key];
-        const measured = samples.find(sample => sample.kind === 'interval_mean');
-        const forecast = samples.filter(sample => sample.kind === 'forecast');
-        const values = [
-          ...(measured ? [`${measured.temperatureC.toFixed(1)} °C · ${t('medel', 'mean')}`] : []),
-          ...forecast.map(sample => `${sample.temperatureC.toFixed(1)} °C · ${formatHomeTime(new Date(sample.atMs), timeZone)} ${t('plan', 'plan')}`),
-          ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`]),
-        ];
-        return values.length === 0 ? null : (
-          <Reading key={room.key} name={room.name} colour={room.colour}
-            value={<>{values.map((value, i) => <span key={i} className="block">{value}</span>)}</>} />
-        );
-      })}
+      {roomReadings.map(({ room, temperatureC, measured: isMeasured }) => (
+        <Reading key={room.key} name={room.name} colour={room.colour} mark={isMeasured ? 'line' : 'dashed'}
+          value={`${temperatureC.toFixed(1)} °C`} />
+      ))}
     </div>
   );
 };
 
 /**
- * A swatch carries the identity; the text stays in ink.
+ * One temperature per room: the measured mean where there is one (the solid
+ * line), otherwise the plan's state at the end of the quarter (the dashed line).
+ */
+const roomReading = (samples: readonly RoomTemperatureSample[] | undefined) => {
+  const measured = samples?.find(sample => sample.kind === 'interval_mean');
+  if (measured) return { temperatureC: measured.temperatureC, measured: true };
+  const forecast = samples?.filter(sample => sample.kind === 'forecast').at(-1);
+  return forecast ? { temperatureC: forecast.temperatureC, measured: false } : null;
+};
+
+/** How a series is drawn in the chart, so its key in the tooltip looks the same. */
+type ReadingMark = 'area' | 'line' | 'dashed' | 'hatch';
+
+const ReadingMarker: React.FC<{ colour?: string; mark: ReadingMark }> = ({ colour, mark }) => {
+  if (!colour) return <span className="h-2 w-3 shrink-0" aria-hidden="true" />;
+  if (mark === 'area' || mark === 'hatch') {
+    return (
+      <span className="mx-0.5 h-2 w-2 shrink-0 rounded-full" aria-hidden="true" data-reading-mark={mark}
+        style={mark === 'hatch' ? { background: hatchBackground(colour) } : { backgroundColor: colour }} />
+    );
+  }
+  return (
+    <svg className="shrink-0" width={12} height={8} viewBox="0 0 12 8" aria-hidden="true" data-reading-mark={mark}>
+      <line x1={0} x2={12} y1={4} y2={4} stroke={colour} strokeWidth={2}
+        strokeDasharray={mark === 'dashed' ? '4 2' : undefined} />
+    </svg>
+  );
+};
+
+/**
+ * A marker carries the identity; the text stays in ink.
  *
  * Colouring the label itself would put a 2:1 yellow on a light popover, which
  * is the one place the chart's palette cannot survive being text.
  */
-const Reading: React.FC<{ name: string; value: React.ReactNode; colour?: string; swatch?: string }> = ({
-  name, value, colour, swatch,
+const Reading: React.FC<{ name: string; value: React.ReactNode; colour?: string; mark?: ReadingMark }> = ({
+  name, value, colour, mark = 'area',
 }) => (
-  <div className="flex items-baseline justify-between gap-3">
-    <span className="flex min-w-0 items-baseline gap-1.5">
-      <span
-        className="mt-px h-2 w-2 shrink-0 rounded-sm"
-        style={swatch ? { background: swatch } : { backgroundColor: colour ?? 'transparent' }}
-        aria-hidden="true"
-      />
+  <div className="flex items-center justify-between gap-3">
+    <span className="flex min-w-0 items-center gap-1.5">
+      <ReadingMarker colour={colour} mark={mark} />
       <span className="truncate">{name}</span>
     </span>
     <span className="shrink-0 tabular-nums">{value}</span>
