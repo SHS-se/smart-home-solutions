@@ -634,17 +634,20 @@ that line the point occupies, not its unobserved cause. Flags do not remove
 points from learning. Room/house reference corrections use identified
 exchange coefficients and are separate from the raw points.
 
-User requirement, 24 November 2026: the planner plans each room with the
-measured lines in its charts, because they stay sane on sparse data. The
-published response takes the heater gain from the net rise line, including its
-outdoor slope, and cools by Newton's law through the cooling line's level at
-the cooling points' mean room and outdoor temperatures. It has no rest-of-home
-exchange, constant term, solar term or delay. The net rise already includes the
-losses during each run, so the planner counts some loss twice while heating: it
-can understate the heater, never overstate it. Hold-out validation describes this
-response, fitted on the training prefix. Where no heating or cooling line can be
-formed, the chronological fit below keeps the room planned. The chronological
-fit and its validation stay in the learning evidence either way.
+User requirement, 24 November 2026: the planner plans each room from its
+measured runs, because they stay sane on sparse data. Heater-off loss is fitted
+to the cooling points as outdoor loss times (room − outdoor), plus rest-of-home
+exchange times (room − home), minus a constant term, weighted by measured hours
+with nonnegative couplings. Each heating point's net rise per kWh gets the loss
+during its own run added back once, and the heater gain line (with its outdoor
+slope) is fitted to those values, weighted by energy. There is no solar term or
+delay, and a positive constant receives no future credit. On 30 days of metered
+room energy this matched the meter far better than the net rise line alone,
+which counted losses twice, or the chronological fit. Hold-out validation
+describes this response, fitted on the training prefix. Where the cooling or
+heating points cannot form it, the chronological fit below keeps the room
+planned. The chronological fit and its validation stay in the learning evidence
+either way.
 
 The descriptive lines do not identify the floor's entry storage or intrinsic
 heater gain. `measured-response.ts` therefore also fits the supporting chronological

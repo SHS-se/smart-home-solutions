@@ -532,8 +532,8 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
       </section>}
     <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">{t('Planerarens modellparametrar', 'Planner model parameters')}</summary>
       <ModelSummary view={view} />
-      <p className="mt-2 text-muted-foreground">{t('Planeraren använder linjerna ovan: värmarens effekt från nettoökningen och avsvalningen från avsvalningslinjen. Ett rum utan någon av linjerna planeras med den kronologiska anpassningen.',
-        'The planner uses the lines above: the heater response from the net rise line and cooling from the cooling line. A room without either line is planned with the chronological fit.')}</p>
+      <p className="mt-2 text-muted-foreground">{t('Planeraren bygger på de uppmätta förloppen ovan: avsvalningen mot ute och övriga hemmet från avsvalningspunkterna, och värmarens effekt från nettoökningen med förlusten under varje förlopp tillagd. Ett rum där förloppen inte räcker planeras med den kronologiska anpassningen.',
+        'The planner builds on the measured runs above: cooling towards outdoors and the rest of the home from the cooling points, and the heater response from the net rise with the loss during each run added back. A room whose runs are not enough is planned with the chronological fit.')}</p>
     </details>
   </section>;
 }

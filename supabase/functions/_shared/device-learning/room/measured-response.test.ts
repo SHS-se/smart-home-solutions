@@ -129,15 +129,30 @@ function syntheticRuns(cooling = true): MeasuredRoomRun[] {
   });
 }
 
-Deno.test("the planner response is the measured lines: net rise as heater gain, Newton cooling through the cooling line", () => {
+Deno.test("the planner response takes cooling loss from the cooling points and adds each run's loss back to its net rise once", () => {
   const model = measuredLineResponse(syntheticRuns(), 1000);
   assert(model && model.response_family === "finite" && readThermalModel(JSON.parse(JSON.stringify(model))));
   for (const outdoor of [-6, 0, 5]) {
-    assertAlmostEquals(roomHeaterGain(model, outdoor) * 1000, 1 + .02 * outdoor, 1e-6, "heater gain is the net rise line");
-    assertAlmostEquals(model.cooling_constant_per_h * (20 - outdoor), .01 * (20 - outdoor), 1e-6, "cooling passes through the cooling line");
+    // Net rise 1 + .02·outdoor over a one-hour, 1 kWh run at 19.5 °C, plus that hour's loss .01·(19.5 − outdoor).
+    assertAlmostEquals(roomHeaterGain(model, outdoor) * 1000, 1 + .02 * outdoor + .01 * (19.5 - outdoor), 1e-6);
   }
-  assertEquals([model.house_coupling_per_h, model.background_gain_c_per_h, model.heat_lag_h], [0, 0, 0]);
-  assertEquals(measuredLineResponse(syntheticRuns(false), 1000), null, "no cooling line, no line response");
+  assertAlmostEquals(model.cooling_constant_per_h, .01, 1e-9, "cooling falls .01 °C/h per °C above outdoors");
+  assertEquals([model.house_coupling_per_h, model.heat_lag_h], [0, 0]);
+  assertAlmostEquals(model.background_gain_c_per_h, 0, 1e-9);
+  assertEquals(measuredLineResponse(syntheticRuns(false), 1000), null, "no cooling points, no line response");
+});
+
+Deno.test("cooling points separate rest-of-home exchange from outdoor loss and a constant term", () => {
+  const runs = syntheticRuns().map((run, i) => {
+    const room = 20 + (i % 3) * .5, house = 19 + (i % 4) * .4, outdoor = run.cooling!.outdoor_c;
+    return { ...run, cooling: { ...run.cooling!, room_c: room, house_c: house,
+      c_per_h: .012 * (room - outdoor) + .05 * (room - house) - .02 } };
+  });
+  const model = measuredLineResponse(runs, 1000);
+  assert(model && model.response_family === "finite");
+  assertAlmostEquals(model.cooling_constant_per_h, .012, 1e-9);
+  assertAlmostEquals(model.house_coupling_per_h!, .05, 1e-9);
+  assertAlmostEquals(model.background_gain_c_per_h, .02, 1e-9);
 });
 
 Deno.test("measured lines become the published planner response and the chronological fit stays as evidence", () => {
@@ -145,7 +160,6 @@ Deno.test("measured lines become the published planner response and the chronolo
   assert(fit.result.ok);
   assertEquals(fit.result.learning_evidence.planner_response, "measured_lines");
   assert(fit.result.model.response_family === "finite");
-  assertEquals(fit.result.model.house_coupling_per_h, 0);
   assert(fit.result.learning_evidence.chronological_model);
   assertEquals(fit.result.learning_evidence.measured_runs.fitted_observations, fit.result.model.sample_count);
   assert(hasMeasuredRoomSupport(fit.result.learning_evidence));

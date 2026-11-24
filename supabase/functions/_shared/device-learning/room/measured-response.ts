@@ -13,7 +13,7 @@ import { excludeUncontrolledRoomHeat, type ThermalZoneModel } from "../../planne
 import { ROOM_MEASURED_POLICY, measuredRoomLineAt, type MeasuredRoomCalibration, type MeasuredRoomLedger, type MeasuredRoomRun } from "../../planner/models/room/measured-evidence.ts";
 import { validateRoomResponseEvidence, type RoomResponseEvidence } from "./chronological-evidence.ts";
 import { measureRoomRuns, roomHeatingRuns } from "./run-measurements.ts";
-import { assessMeasuredRuns, robustResidualScale, huberWeight } from "./measured-lines.ts";
+import { assessMeasuredRuns, fitMeasuredLine, robustResidualScale, huberWeight } from "./measured-lines.ts";
 
 const LAGS = [0, .5, 1, 1.5, 2, 2.5, 3, 4, 5] as const;
 // One candidate is the atomic checkpoint: lag × partition × weather × family.
@@ -251,28 +251,75 @@ function responseModel(fit: Candidate, ratedPowerW: number | null): ThermalZoneM
     time_constant_h: fit.k > 0 ? 1 / fit.k : null,
     heating_rate_c_per_h: ratedPowerW !== null && ratedPowerW > 0 ? gain * ratedPowerW : null };
 }
-/** The planner's response from the published measured lines. Cooling follows
- * Newton's law through the cooling line's level at its measured room and
- * outdoor temperatures. The heater gain is the measured net rise line itself.
- * That rise already includes the losses during each run, so the planner counts
- * some loss twice while heating: it can understate the heater, never overstate
- * it. There is no rest-of-home exchange, constant term, solar term or delay. */
+/** Heater-off loss from the measured cooling points: fall rate =
+ * outdoor loss × (room − outdoor) + rest-of-home exchange × (room − home) − constant.
+ * Weighted by each point's measured hours. Couplings are nonnegative; a term the
+ * points cannot separate (for example a constant room − home difference) is left out. */
+function coolingLoss(points: readonly { hours: number; c_per_h: number; room_c: number; outdoor_c: number; house_c: number | null }[]):
+  { outdoor: number; house: number; background: number; points: number } | null {
+  const withHouse = points.filter(point => point.house_c !== null);
+  for (const [outdoor, house] of [[true, true], [true, false], [false, true]] as const) {
+    const used = house ? withHouse : points;
+    const columns = (point: typeof points[number]) => [...(outdoor ? [point.room_c - point.outdoor_c] : []),
+      ...(house ? [point.room_c - point.house_c!] : []), -1];
+    const width = (outdoor ? 1 : 0) + (house ? 1 : 0) + 1;
+    if (used.length <= width) continue;
+    const a = Array.from({ length: width }, () => new Array<number>(width).fill(0)), b = new Array<number>(width).fill(0);
+    for (const point of used) {
+      const x = columns(point);
+      for (let i = 0; i < width; i++) {
+        b[i] += point.hours * x[i] * point.c_per_h;
+        for (let j = 0; j < width; j++) a[i][j] += point.hours * x[i] * x[j];
+      }
+    }
+    const solved = solveNormalEquations(a, b);
+    if (!solved) continue;
+    const coupling = { outdoor: outdoor ? solved[0] : 0, house: house ? solved[outdoor ? 1 : 0] : 0 };
+    if (coupling.outdoor < 0 || coupling.house < 0) continue;
+    return { ...coupling, background: solved[width - 1], points: used.length };
+  }
+  return null;
+}
+/** Gaussian elimination with partial pivoting; null when the normal equations are singular. */
+function solveNormalEquations(a: number[][], b: number[]): number[] | null {
+  const n = b.length, m = a.map(row => [...row]), y = [...b];
+  const scale = Math.max(...m.map((row, i) => Math.abs(row[i])), Number.MIN_VALUE);
+  for (let i = 0; i < n; i++) {
+    let pivot = i;
+    for (let r = i + 1; r < n; r++) if (Math.abs(m[r][i]) > Math.abs(m[pivot][i])) pivot = r;
+    if (Math.abs(m[pivot][i]) <= scale * 1e-10) return null;
+    [m[i], m[pivot]] = [m[pivot], m[i]]; [y[i], y[pivot]] = [y[pivot], y[i]];
+    for (let r = 0; r < n; r++) if (r !== i) {
+      const f = m[r][i] / m[i][i];
+      for (let c = i; c < n; c++) m[r][c] -= f * m[i][c];
+      y[r] -= f * y[i];
+    }
+  }
+  return y.map((value, i) => value / m[i][i]);
+}
+/** The planner's response from the measured runs. Heater-off loss comes from
+ * the cooling points: outdoor loss, rest-of-home exchange and a constant term.
+ * Each heating point's net rise per kWh gets the loss during its own run added
+ * back once, and the heater gain line is fitted to those values. Validated on
+ * 24 November 2026 against 30 days of metered room energy. No solar term or delay. */
 function lineCandidate(runs: readonly MeasuredRoomRun[]): Candidate | null {
-  const { cooling, heating } = assessMeasuredRuns(runs, null).calibration.lines;
-  const fall = runs.flatMap(run => run.cooling ? [run.cooling] : []);
-  const hours = fall.reduce((sum, point) => sum + point.hours, 0);
-  if (!cooling || !(hours > 0)) return null;
-  const drive = fall.reduce((sum, point) => sum + point.hours * point.room_c, 0) / hours - cooling.reference_outdoor_c;
-  if (!(cooling.intercept > 0 && drive > 0)) return null;
-  const k = cooling.intercept / drive;
-  const rise = runs.flatMap(run => run.heating && run.heating.energy_kwh > 0 ? [run.heating] : []);
-  if (!heating || !rise.length) return null;
+  const loss = coolingLoss(runs.flatMap(run => run.cooling ? [run.cooling] : []));
+  if (!loss) return null;
+  const rise = runs.flatMap(run => run.heating && run.heating.energy_kwh > 0 &&
+    (loss.house === 0 || run.heating.house_c !== null) ? [run.heating] : []);
+  const heating = fitMeasuredLine(rise.map(point => ({ x: point.outdoor_c, weight: point.energy_kwh,
+    y: point.c_per_kwh + (loss.outdoor * (point.room_mean_c - point.outdoor_c) +
+      loss.house * (point.room_mean_c - (point.house_c ?? point.room_mean_c)) - loss.background) * point.hours / point.energy_kwh })),
+  "rises", "c_per_kwh");
+  if (!heating) return null;
   const low = Math.min(...rise.map(point => point.outdoor_c)), high = Math.max(...rise.map(point => point.outdoor_c));
   const gain = (x: number) => Math.max(0, measuredRoomLineAt(heating, x)) / 1000;
   const weather = high > low && heating.slope_per_c > 0;
-  const beta = weather ? [gain(low), gain(high), 0, k] : [gain(heating.reference_outdoor_c), 0, k];
-  const n = heating.points + cooling.points, dof = n - (weather ? 3 : 2);
-  if (!(Math.max(beta[0], weather ? beta[1] : 0) > 0) || dof <= 0) return null;
+  const k = loss.outdoor + loss.house;
+  const beta = weather ? [gain(low), gain(high), loss.background, loss.outdoor] : [gain(heating.reference_outdoor_c), loss.background, loss.outdoor];
+  const parameters = (weather ? 2 : 1) + 1 + (loss.outdoor > 0 ? 1 : 0) + (loss.house > 0 ? 1 : 0);
+  const n = heating.points + loss.points, dof = n - parameters;
+  if (!(Math.max(beta[0], weather ? beta[1] : 0) > 0) || !(k > 0) || dof <= 0) return null;
   return { family: "finite", lag: 0, k, solar: false, weather, low: weather ? low : heating.reference_outdoor_c,
     high: weather ? high : heating.reference_outdoor_c, beta, initial: [], n, dof, mse: 0 };
 }
