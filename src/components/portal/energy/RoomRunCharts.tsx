@@ -90,7 +90,7 @@ function Key({ lines, chronological, measured = false }: { lines: boolean; chron
   const items: [Kind, string][] = [
     ['used', measured ? t('Behållet förlopp', 'Kept run') : chronological ? t('Bedömt mot modellen', 'Assessed against the model') : t('I publicerad anpassning', 'In the published fit')],
     ['noisy', measured ? t('Utan mätbart punktvärde', 'Without a measurable point') : t('För brusigt att bedöma', 'Too noisy to judge')],
-    ['suspect', measured ? t('Flaggat avstånd från linjen', 'Flagged distance from line') : t('Avvikande förlopp', 'Flagged run')],
+    ['suspect', measured ? t('Flaggat i modellbedömningen', 'Flagged by model assessment') : t('Avvikande förlopp', 'Flagged run')],
   ];
   if (!chronological) items.splice(1, 0, ['credible', t('Trovärdigt förlopp', 'Credible run')]);
   return <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -198,7 +198,7 @@ function ModelSummary({ view }: { view: RoomResponseView }) {
   </dl>;
 }
 
-function LegacyRoomRunCharts({ view, pageControls }: { view: RoomResponseView; pageControls?: ReactNode }) {
+function LegacyRoomRunCharts({ view }: { view: RoomResponseView }) {
   const { language, t } = useLanguage();
   const [selected, setSelected] = useState<string | null>(null);
   const format = (value: number, digits = 1) => value.toLocaleString(language, { maximumFractionDigits: digits });
@@ -264,7 +264,6 @@ function LegacyRoomRunCharts({ view, pageControls }: { view: RoomResponseView; p
       'Varje punkt är ett uppmätt förlopp där värmaren slogs på och sedan av. Välj en punkt för detaljer.',
       'Each point is one measured run where the heater switched on and then off. Select a point for details.',
     )}</p>
-    {pageControls}
     {chronological && <p className="text-xs text-muted-foreground">{t(
       'Modellen anpassas till alla användbara intervallövergångar. Avslutade uppvärmningsförlopp bedöms sedan mot den publicerade modellen.',
       'The model uses all eligible interval transitions. Each completed heating run is then assessed against the published model.',
@@ -371,18 +370,25 @@ function MeasuredRunDetail({ point, onClose }: { point: MeasuredRoomAssessment; 
         <Row term={t('Rum / övriga hemmet under uppvärmning', 'Room / rest of home during heating')}>{value(point.heating.room_mean_c, '°C')} / {value(point.heating.house_c, '°C')}</Row>
       </>}
       <Row term={t('Uppmätt nettoökning', 'Measured net rise')}>{value(point.heating?.c_per_kwh, '°C/kWh')}</Row>
-      <Row term={t('Nettoökning vid referenstemperatur', 'Net rise at reference temperature')}>{value(point.reference_heating_c_per_kwh, '°C/kWh')}</Row>
       <Row term={t('Uppmätt avsvalning, värmaren av', 'Measured cooling, heater off')}>{value(point.cooling?.c_per_h, '°C/h')}</Row>
       {point.cooling && <>
         <Row term={t('Avsvalningens mätintervall', 'Cooling measurement interval')}>{time(point.cooling.from_ms)} – {time(point.cooling.to_ms)}</Row>
         <Row term={t('Ute under avsvalning', 'Outdoors during cooling')}>{value(point.cooling.outdoor_c, '°C')}</Row>
         <Row term={t('Rum / övriga hemmet under avsvalning', 'Room / rest of home during cooling')}>{value(point.cooling.room_c, '°C')} / {value(point.cooling.house_c, '°C')}</Row>
       </>}
-      <Row term={t('Avsvalning vid referenstemperatur', 'Cooling at reference temperature')}>{value(point.reference_cooling_c_per_h, '°C/h')}</Row>
-      <Row term={t('Uppvärmning: avstånd från linjen', 'Heating: distance from line')}>{value(point.heating_residual, '°C/kWh')}</Row>
-      <Row term={t('Avsvalning: avstånd från linjen', 'Cooling: distance from line')}>{value(point.cooling_residual, '°C/h')}</Row>
     </dl>
     {point.reasons.length > 0 && <p>{t('Mätanmärkningar', 'Measurement notes')}: {point.reasons.map(code => measuredReason(code, t)).join(' · ')}</p>}
+    <details><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+      {t('Modellbedömning', 'Model assessment')}</summary>
+      <p className="text-muted-foreground">{t('Modellen tar hänsyn till rumstemperaturerna när den bedömer avvikelser. Dessa justerade värden ändrar inte de uppmätta punkterna i diagrammen.',
+        'The model accounts for room temperatures when assessing deviations. These adjusted values do not change the measured points in the charts.')}</p>
+      <dl>
+        <Row term={t('Nettoökning vid referenstemperatur', 'Net rise at reference temperature')}>{value(point.reference_heating_c_per_kwh, '°C/kWh')}</Row>
+        <Row term={t('Avsvalning vid referenstemperatur', 'Cooling at reference temperature')}>{value(point.reference_cooling_c_per_h, '°C/h')}</Row>
+        <Row term={t('Uppvärmning: avstånd från linjen', 'Heating: distance from line')}>{value(point.heating_residual, '°C/kWh')}</Row>
+        <Row term={t('Avsvalning: avstånd från linjen', 'Cooling: distance from line')}>{value(point.cooling_residual, '°C/h')}</Row>
+      </dl>
+    </details>
   </section>;
 }
 
@@ -404,10 +410,9 @@ function measuredReason(code: string, t: (sv: string, en: string) => string): st
   return message ? t(...message) : t(`Sparad mätanmärkning: ${code}`, `Stored measurement note: ${code}`);
 }
 
-function MeasuredRoomRunCharts({ view, pageControls }: { view: RoomResponseView; pageControls?: ReactNode }) {
+function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
   const { language, t } = useLanguage();
   const calibration = view.response!.measuredRuns!;
-  const [reference, setReference] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const format = (value: number, digits = 2) => value.toLocaleString(language, { maximumFractionDigits: digits });
   const point = view.measuredPoints.find(run => run.id === selected);
@@ -419,13 +424,12 @@ function MeasuredRoomRunCharts({ view, pageControls }: { view: RoomResponseView;
       'Measured temperature fall per hour with the heater off. A positive value means cooling; a negative value means warming.'),
   };
   const charts = (['heating', 'cooling'] as const).map(kind => {
-    const line: MeasuredRoomLine | null = calibration.lines[reference ? `reference_${kind}` : kind];
+    const line: MeasuredRoomLine | null = calibration.lines[kind];
     const unit = kind === 'heating' ? '°C/kWh' : '°C/h';
     const title = kind === 'heating' ? t('Nettoökning per förlopp', 'Net rise per run') : t('Avsvalning per förlopp', 'Cooling per run');
     const dots = view.measuredPoints.flatMap(run => {
       const fact = run[kind];
-      const y = kind === 'heating' ? (reference ? run.reference_heating_c_per_kwh : run.heating?.c_per_kwh)
-        : (reference ? run.reference_cooling_c_per_h : run.cooling?.c_per_h);
+      const y = kind === 'heating' ? run.heating?.c_per_kwh : run.cooling?.c_per_h;
       if (!fact || y == null) return [];
       const state: Kind = run.disposition === 'consistent' ? 'used' : run.disposition === 'unmeasured' ? 'noisy' : 'suspect';
       return [{ id: run.id, x: fact.outdoor_c, y, kind: state,
@@ -444,26 +448,18 @@ function MeasuredRoomRunCharts({ view, pageControls }: { view: RoomResponseView;
   return <section className="space-y-4" aria-label={t('Uppmätta förlopp efter utetemperatur', 'Measured runs by outdoor temperature')}>
     <div className="space-y-2">
       <h4 className="font-semibold">{t('Uppmätta förlopp efter utetemperatur', 'Measured runs by outdoor temperature')}</h4>
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('Förloppens temperaturvillkor', 'Run temperature conditions')}>
-        <Button variant={!reference ? 'default' : 'outline'} className="min-h-11" aria-pressed={!reference} onClick={() => setReference(false)}>{t('Uppmätt', 'Measured')}</Button>
-        <Button variant={reference ? 'default' : 'outline'} className="min-h-11" aria-pressed={reference} onClick={() => setReference(true)}>{t('Vid referenstemperatur', 'At reference temperature')}</Button>
-      </div>
-      <p className="text-xs text-muted-foreground">{reference ? t(
-        `Modelljusterade punkter och publicerade linjer vid ${format(calibration.reference.room_c)} °C i rummet och ${format(calibration.reference.house_c)} °C i övriga hemmet.`,
-        `Model-adjusted points and published lines at ${format(calibration.reference.room_c)} °C in the room and ${format(calibration.reference.house_c)} °C in the rest of the home.`,
-      ) : t('Punkterna visar förloppens uppmätta värden vid de rumstemperaturer som rådde då.',
-        'Points show the measured runs at their actual room temperatures.')}</p>
-      <p className="text-xs text-muted-foreground">{t('Anpassningen använder alla mätbara förlopp. Visad sida begränsar bara punkterna, inte underlaget för linjerna.',
-        'The fit uses all measurable runs. This page limits the displayed points, not the evidence behind the lines.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Punkterna är beräknade från temperatur- och energimätningar vid de förhållanden som rådde under varje förlopp.',
+        'Points are calculated from temperature and energy readings at the conditions observed during each run.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Alla förlopp visas tillsammans. Flaggade punkter finns kvar; linjerna kommer från den publicerade anpassningen.',
+        'All runs are shown together. Flagged points remain included; the lines come from the published fit.')}</p>
       <p className="text-xs tabular-nums" data-testid="measured-run-counts">{format(kept, 0)} {t('behållna', 'kept')}{' · '}
         {format(calibration.flagged_runs, 0)} {t('flaggade', 'flagged')}{' · '}{format(calibration.unmeasured_runs, 0)} {t('utan mätbart punktvärde', 'without a measurable point')}
         {' · '}{format(view.measuredPoints.length, 0)} {t('visade', 'shown')}</p>
-      {pageControls}
       {view.observedRuns === null && <p role="status" className="text-xs text-muted-foreground">{t('Förloppen för denna modellrevision är inte tillgängliga. Linjerna kommer från den publicerade anpassningen.',
         'Runs for this model revision are unavailable. The lines come from the published fit.')}</p>}
     </div>
     {charts.map(chart => <section key={chart.kind} className="min-w-0 space-y-1">
-      <h5 className="font-medium">{chart.title}{reference ? ` · ${t('modelljusterat', 'model-adjusted')}` : ''}</h5>
+      <h5 className="font-medium">{chart.title}</h5>
       <p className="text-xs text-muted-foreground">{descriptions[chart.kind]}</p>
       {chart.dots.length || chart.line ? <RunScatter label={chart.title} unit={chart.unit} dots={chart.dots} line={chart.fitted}
         xDomain={chart.xDomain} yDomain={chart.yDomain} selected={selected} onSelect={select} zeroLine />
@@ -474,8 +470,8 @@ function MeasuredRoomRunCharts({ view, pageControls }: { view: RoomResponseView;
       ) : t('Ingen linje har publicerats för detta mått.', 'No line has been published for this measure.')}</p>
     </section>)}
     <Key lines={charts.some(chart => chart.line !== null)} chronological measured />
-    <p className="text-xs text-muted-foreground">{t('Flaggningen beskriver avståndet från linjen efter anpassningen. Den fastställer inte orsaken.',
-      'Flags describe distance from the line after fitting. They do not establish the cause.')}</p>
+    <p className="text-xs text-muted-foreground">{t('Flaggorna kommer från modellbedömningen. De ändrar eller tar inte bort uppmätta punkter och fastställer inte orsaken.',
+      'Flags come from the model assessment. They do not change or remove measured points and do not establish the cause.')}</p>
     {missingReasons.size > 0 && <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
       {t('Mätanmärkningar för visade förlopp', 'Measurement notes for the runs shown')}</summary>
       <ul className="list-disc space-y-1 pl-5">{[...missingReasons].map(([reason, count]) => <li key={reason}>{measuredReason(reason, t)} · {format(count, 0)}</li>)}</ul>
@@ -501,6 +497,6 @@ function MeasuredRoomRunCharts({ view, pageControls }: { view: RoomResponseView;
   </section>;
 }
 
-export default function RoomRunCharts(props: { view: RoomResponseView; pageControls?: ReactNode }) {
+export default function RoomRunCharts(props: { view: RoomResponseView }) {
   return props.view.response?.measuredRuns ? <MeasuredRoomRunCharts {...props} /> : <LegacyRoomRunCharts {...props} />;
 }
