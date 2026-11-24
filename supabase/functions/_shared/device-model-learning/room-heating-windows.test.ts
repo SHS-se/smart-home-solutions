@@ -188,6 +188,10 @@ Deno.test("chronological source extents survive retention and a late correction 
   assert(idle.kind === "model");
   assertEquals(idle.model.gain_c_per_wh, undefined);
   assertEquals((idle.model.heating_bands as RoomHeatingBands).reference_revision, library.reference_revision);
+  // The same evidence is fitted again when another room learner made the accepted fit.
+  const older = { ...accepted, heating_bands: { ...library,
+    shared_attempt: { ...library.shared_attempt!, learner_version: "room-learner:older" } } };
+  assertEquals((await step(older)).kind, "shared");
 
   // The old rows have expired from hot source tables. Change a later meter,
   // reconstruct only its extent, then fit from both archived extents again.

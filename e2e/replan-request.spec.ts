@@ -2354,6 +2354,32 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('button', { name: replanButton })).toBeDisabled();
   });
 
+  test('the busy button names each stage of the replan in one word', async ({ page }) => {
+    replan.row = {
+      replan_request_id: REQUEST_ID,
+      replan_requested_at: CAPTURED_AT,
+      replan_completed_request_id: null,
+      replan_error: null,
+    };
+    let stage = 'refitting';
+    await page.route('**/rest/v1/rpc/get_energy_replan_progress', route => route.fulfill({
+      json: { request_id: REQUEST_ID, stage, refitting_rooms: stage === 'refitting' ? 2 : 0 } }));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const button = page.getByRole('button', { name: replanButton });
+    const word = page.getByTestId('replan-stage');
+    await expect(word).toHaveText('Anpassar');
+    await expect(button).toHaveAccessibleName('Planera om nu – Anpassar');
+    await expect(button).toBeDisabled();
+    stage = 'measuring';
+    await expect(word).toHaveText('Mäter');
+    stage = 'planning';
+    await expect(word).toHaveText('Planerar');
+    replan.row = { ...replan.row, replan_completed_request_id: REQUEST_ID };
+    await expect(button).toBeEnabled();
+    await expect(word).toHaveCount(0);
+    await expect(button).toHaveText('Planera om nu');
+  });
+
   test('a house that could not answer says why, and can be asked again', async ({ page }) => {
     replan.row = {
       replan_request_id: REQUEST_ID,

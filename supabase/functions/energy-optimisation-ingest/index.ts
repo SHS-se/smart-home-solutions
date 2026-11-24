@@ -11,6 +11,7 @@ import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts
 import { deviceContractBreach, roomMapping, type AppDeviceSetup, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { captureRulesPlanningInput } from "../_shared/rules-planning-capture.ts";
 import { RULES_MODEL_VERSION } from "../_shared/rules-planner-identity.ts";
+import { ROOM_LEARNER_VERSION } from "../_shared/room-learner-version.ts";
 import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, weatherHeatingOwners, type DeviceModelBundle } from "../_shared/device-model-store.ts";
 import { recordTestPriceForecastGeneration, testPriceForecastContext } from "../_shared/price-estimate-evidence.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
@@ -1088,13 +1089,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     }
     if (snapshot) {
       const owners = new Map<string, { kind: "room"; key: string; requested: boolean; input: {
-        location: OptimisationSnapshot["location"] | null;
+        location: OptimisationSnapshot["location"] | null; learner_version: string;
       } }>();
       for (const device of storedDevices) {
         const room = roomMapping(device);
         if (!room) continue;
         const owner = owners.get(room.key) ?? { kind: "room" as const, key: room.key, requested: false,
-          input: { location: snapshot.location ?? null } };
+          input: { location: snapshot.location ?? null, learner_version: ROOM_LEARNER_VERSION } };
         owner.requested ||= device.planning_role_override === "controllable" &&
           ["setpoint", "switch_schedule"].includes(device.control_type_override ?? "");
         owners.set(room.key, owner);

@@ -3,6 +3,7 @@ import type { LearnedMeasuredRoomResponse } from "../device-learning/room/measur
 import { ROOM_MEASURED_POLICY, ROOM_MEASUREMENT_METHOD, type MeasuredRoomLedger } from "../planner/models/room/measured-evidence.ts";
 import { decodeRoomEvidenceCapture, encodeRoomEvidenceCapture, qualifyRoomEvidenceBlocks, type DecodedRoomEvidenceBlock } from "./room-evidence-capture.ts";
 import { qualifyRoomOperationEvidence } from "../device-learning/room/operation-evidence.ts";
+import { ROOM_LEARNER_VERSION } from "../room-learner-version.ts";
 import { selectDoorwayExchange } from "../device-learning/room/doorway-exchange.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.ts";
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
@@ -218,7 +219,10 @@ export async function prepareStoredRoomHeating(
     return { kind: saved ? "refreshed" : "superseded" };
   }
   const evidence: RoomEvidenceBasis = { sourceRevision: work.source_revision, fromAt, toAt: historyTo, implementation: ROOM_SOURCE_IMPLEMENTATION };
-  if (library.shared_attempt?.implementation === ROOM_RESPONSE_IMPLEMENTATION && sameEvidence(library.shared_attempt.evidence, evidence)) {
+  // A changed learner refits the same evidence; an unchanged one has nothing to add.
+  if (library.shared_attempt?.implementation === ROOM_RESPONSE_IMPLEMENTATION &&
+    (library.shared_attempt as { learner_version?: string }).learner_version === ROOM_LEARNER_VERSION &&
+    sameEvidence(library.shared_attempt.evidence, evidence)) {
     return bookkeeping();
   }
   const blocks = await rpc<EvidenceBlock[]>("load_energy_room_evidence_blocks", scope);
@@ -312,7 +316,7 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
     residual_std_c: physical.residual_std_c, heat_lag_h: physical.heat_lag_h ?? null,
     prediction_error_c: physical.prediction_error_c ?? null, solar_mean_w_per_m2: physical.solar_mean_w_per_m2 ?? null,
   } : {};
-  const shared_attempt = { implementation: ROOM_RESPONSE_IMPLEMENTATION, evidence, attempted_at: attemptedAt,
+  const shared_attempt = { implementation: ROOM_RESPONSE_IMPLEMENTATION, learner_version: ROOM_LEARNER_VERSION, evidence, attempted_at: attemptedAt,
     status: physical ? "fitted" as const : "unidentified" as const };
   const accepted = library.reference !== undefined || library.active.length > 0;
   const { diagnostics: _diagnostics, ...kept } = library;

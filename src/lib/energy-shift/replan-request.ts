@@ -85,3 +85,12 @@ export function replanCompleted(
     row?.replan_completed_request_id === awaitedRequestId
   );
 }
+
+/** A replan's stage on the server, as `get_energy_replan_progress` reports it. */
+export type ReplanStage = 'refitting' | 'measuring' | 'planning';
+
+/** Only an in-progress stage is shown; anything else leaves the default word. */
+export function replanProgressStage(value: unknown): ReplanStage | null {
+  const stage = value && typeof value === 'object' ? (value as { stage?: unknown }).stage : null;
+  return stage === 'refitting' || stage === 'measuring' || stage === 'planning' ? stage : null;
+}

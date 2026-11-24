@@ -649,6 +649,17 @@ heating points cannot form it, the chronological fit below keeps the room
 planned. The chronological fit and its validation stay in the learning evidence
 either way.
 
+User requirement, 24 November 2026: a changed room learner refits every room
+before it plans. The learner's version is a digest of its source
+(`scripts/room-learner-version.ts`, checked by `tests/room-learner-version.test.ts`;
+run `deno task generate:room-learner-version` after a learner change). Each fit
+records the version that made it. An upload requests a refit for any room fitted
+by another version, and so does the replan button, which then holds the request
+back from Home Assistant while room learning is pending, for at most 20 minutes.
+Home Assistant answers each request once, so it must not see the request before
+the refits finish. The portal's replan button reads `get_energy_replan_progress`
+and names the stage in one word: refitting, measuring or planning.
+
 The descriptive lines do not identify the floor's entry storage or intrinsic
 heater gain. `measured-response.ts` therefore also fits the supporting chronological
 native interval means with the exact mean-pair equations, profiled nonnegative

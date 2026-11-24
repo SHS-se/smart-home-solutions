@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { replanCompleted, replanState, type ReplanRow } from '@/lib/energy-shift/replan-request';
+import { replanCompleted, replanProgressStage, replanState, type ReplanRow, type ReplanStage } from '@/lib/energy-shift/replan-request';
 import type { PlanDisplayTrace } from '@/lib/energy-shift/plan-display-trace';
 
 export default function ReplanControls({ homeId, replan, refreshing, trace, onReplanChanged, onBusyChange }: {
@@ -30,6 +30,28 @@ export default function ReplanControls({ homeId, replan, refreshing, trace, onRe
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
+  // The stage is read from the server while a replan is under way: rooms refit
+  // first when the learner changed, then the house measures and the plan is made.
+  const [stage, setStage] = useState<ReplanStage | null>(null);
+  const waiting = waitingForReplan || awaitingRow;
+  useEffect(() => {
+    if (!homeId || !waiting) { setStage(null); return; }
+    let cancelled = false;
+    const read = async () => {
+      const { data, error } = await supabase.rpc('get_energy_replan_progress', { p_home_id: homeId });
+      if (!cancelled) setStage(error ? null : replanProgressStage(data));
+    };
+    void read();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void read(); }, 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [homeId, waiting]);
+  const words: Record<ReplanStage | 'requesting', string> = {
+    requesting: t('Begär', 'Requesting'),
+    refitting: t('Anpassar', 'Refitting'),
+    measuring: t('Mäter', 'Measuring'),
+    planning: t('Planerar', 'Planning'),
+  };
+  const word = replanning ? words.requesting : words[stage ?? 'measuring'];
   const requestReplan = async () => {
     if (refreshing || busy) return;
     if (!homeId) return;
@@ -89,14 +111,19 @@ export default function ReplanControls({ homeId, replan, refreshing, trace, onRe
           onClick={() => void requestReplan()}
           disabled={!homeId || refreshing || busy}
           aria-busy={busy}
-          aria-label={busy ? t('Planera om nu – pågår', 'Replan now – in progress') : undefined}
-          className="min-h-11"
+          aria-label={busy ? `${t('Planera om nu', 'Replan now')} – ${word}` : undefined}
+          className="min-h-11 min-w-36"
           variant="secondary"
+          data-testid="replan-button"
         >
           {busy
             ? <Loader2 aria-hidden="true" className="w-4 h-4 mr-2 animate-spin motion-reduce:animate-none" />
             : <RefreshCw aria-hidden="true" className="w-4 h-4 mr-2" />}
-          {t('Planera om nu', 'Replan now')}
+          {busy
+            // Keyed by the word, so each new stage fades in where the last one was.
+            ? <span key={word} aria-hidden="true" data-testid="replan-stage"
+              className="animate-in fade-in slide-in-from-bottom-1 duration-300 motion-reduce:animate-none">{word}</span>
+            : t('Planera om nu', 'Replan now')}
         </Button>
 
       {!busy && replanProgress.status === 'failed' && (

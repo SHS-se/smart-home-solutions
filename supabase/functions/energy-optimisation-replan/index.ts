@@ -21,6 +21,7 @@ import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // The reply below is therefore an acknowledgement of the request, not a plan.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { ROOM_LEARNER_VERSION } from "../_shared/room-learner-version.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -94,6 +95,13 @@ serve(withTrafficMetrics("energy-optimisation-replan", async (request, traffic) 
       global: { fetch: traffic.fetch },
       auth: { persistSession: false },
     });
+
+    // Rooms fitted by another version of the room learner refit first; the
+    // house is asked for measurements once they finish. A failure here never
+    // stops the replan, which then uses the models already accepted.
+    const { error: refitError } = await service.rpc("request_energy_stale_room_refits",
+      { p_home_id: homeId, p_learner_version: ROOM_LEARNER_VERSION });
+    if (refitError) console.warn("[ENERGY-REPLAN] room refit request failed", refitError.message);
 
     // One request per home at a time: a second click while one is outstanding
     // returns the same id rather than queueing a request the house would answer

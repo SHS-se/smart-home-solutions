@@ -161,7 +161,15 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       return json({ error: "storage_failed" }, 500);
     }
 
-    let pending = pendingReplanRequestId(current);
+    // A requested replan waits while rooms refit, so the house answers it once
+    // with the new models. A failed check never holds the request back.
+    const unlessRefitting = async (requestId: string | null) => {
+      if (!requestId) return null;
+      const { data: held, error } = await supabase.rpc("energy_replan_held_for_refit", { p_home_id: auth.homeId });
+      if (error) console.warn("[INTEGRATION-STATUS] refit hold unreadable", error.message);
+      return held === true ? null : requestId;
+    };
+    let pending = await unlessRefitting(pendingReplanRequestId(current));
     const params = new URL(req.url).searchParams;
     const notification = req.method === "GET" && params.get("wait_for_replan") === "true";
     if (notification) {
@@ -175,7 +183,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
             .select("replan_request_id, replan_completed_request_id, replan_error")
             .eq("home_id", auth.homeId).maybeSingle();
           if (error) throw error;
-          return pendingReplanRequestId(data);
+          return await unlessRefitting(pendingReplanRequestId(data));
         },
         subscribe: changed => {
           const channel = supabase.channel(`shs-replan:${auth.homeId}`, { config: { private: true } });
