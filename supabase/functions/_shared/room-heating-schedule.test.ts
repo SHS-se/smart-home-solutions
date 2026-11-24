@@ -386,6 +386,25 @@ Deno.test("schedule comparison preserves genuine sustained heating demand", () =
   assert(result.room_power.bathroom.every(watts => Math.abs(watts - 2000) < 1e-6));
 });
 
+Deno.test("schedule comparison pays to preheat for a comfort deadline the literal schedule misses", () => {
+  const snapshot = sharedRelayRoom();
+  const zone = snapshot.thermal_zones![0];
+  const deadline = 8;
+  zone.start_temperature_c = 18;
+  zone.target_c = zone.target_c.map((_, i) => i >= deadline ? 21 : 18);
+  zone.comfort_min_c = zone.target_c;
+  snapshot.outdoor_temperature_c!.fill(0);
+  assert(zone.model && "gain_c_per_wh" in zone.model);
+  zone.model = {...zone.model, gain_c_per_wh: .001, cooling_constant_per_h: .025,
+    house_coupling_per_h: .08, background_gain_c_per_h: 0};
+  snapshot.house_temperature_c = snapshot.slots.map(() => 20);
+  // Flat prices: preheating can only cost more than following the schedule.
+  const result = prepareRoomServices(snapshot, [], undefined, prices(snapshot.slots.map(() => 2)));
+  assert(result.room_power.bathroom.slice(0, deadline).some(watts => watts > 0), "heat starts before the deadline");
+  assert(result.commands.rack.slice(0, deadline).some(command => command.type === "room_relay" && command.target_c > 18));
+  assert(result.temperature.bathroom[deadline]! >= 21 - 1e-3, "the room is warm when comfort starts");
+});
+
 Deno.test("schedule comparison accepts cheaper heating that improves scheduled comfort", () => {
   const snapshot = sharedRelayRoom();
   const zone = snapshot.thermal_zones![0];

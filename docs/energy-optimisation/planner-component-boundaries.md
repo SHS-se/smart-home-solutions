@@ -603,7 +603,10 @@ transitions and supported running draw remain the captured physical basis.
 
 The solver compares total priced electricity, including solar opportunity cost,
 and degree-hours below literal scheduled targets as separate quantities.
-A proposal that increases either quantity yields to the literal schedule.
+A proposal with more shortfall yields to the literal schedule. A proposal that
+costs more is kept only when it is short in no quarter the literal schedule
+meets and meets at least one quarter the literal schedule misses, such as
+preheating for a comfort deadline.
 The selected schedule supplies commands, member power and room temperature
 together. This requires one forward projection in addition to the existing
 search. Model fitting and statistical qualification stay in the room learner.

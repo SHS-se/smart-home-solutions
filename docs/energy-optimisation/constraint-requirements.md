@@ -31,6 +31,15 @@ weight used during search cannot justify extra spending in this comparison.
 Keep the existing sparse-evidence safeguard during qualification of learned
 response evidence.
 
+User requirement, 24 November 2026: comfort is a deadline, so a modeled room
+schedule may cost more than following the literal schedule when it meets
+scheduled comfort that the literal schedule misses. It must never be short in a
+quarter where the literal schedule is not, and it must fully meet at least one
+quarter the literal schedule misses. Spending more to narrow a gap without
+closing any quarter still yields to the literal schedule. This replaces the
+21 November rule that every change must cost no more, which removed all
+preheating for comfort deadlines.
+
 User requirement, 21 November 2026: a room fit with too little measured heating
 or too few observations must not drive modeled preheating. If a selected fit
 lacks that evidence, plan the room with its existing comfort commands and

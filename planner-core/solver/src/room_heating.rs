@@ -996,9 +996,13 @@ fn literal_schedule(
     Some(result)
 }
 
-/// Optional changes must preserve comfort and pay for their electricity.
-/// Comparing these separately prevents a tiny response from buying unlimited
-/// energy through the search's large shortfall weight.
+/// Optional changes must preserve comfort. They may cost more than the literal
+/// schedule only when they meet scheduled comfort the literal schedule misses:
+/// every quarter the proposal is short, the literal schedule is short too, and
+/// at least one quarter it misses is met. Preheating for a comfort deadline
+/// qualifies; a response too weak to reach any missed target cannot buy
+/// unlimited energy through the search's large shortfall weight, because
+/// narrowing a gap without closing it never justifies extra spending.
 fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool {
     let cost = |plan: &Plan| {
         input
@@ -1025,7 +1029,27 @@ fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool
             .sum::<f64>()
     };
     // Tolerances cover floating point accumulation only, not model quality.
-    cost(proposal) <= cost(reference) + 1e-8 && shortfall(proposal) <= shortfall(reference) + 1e-8
+    if shortfall(proposal) > shortfall(reference) + 1e-8 {
+        return false;
+    }
+    if cost(proposal) <= cost(reference) + 1e-8 {
+        return true;
+    }
+    let short = |plan: &Plan, i: usize| {
+        let target = input.quarters[i]
+            .room_target
+            .as_ref()
+            .expect("shared room")
+            .preferred_c;
+        plan.temperature_c[i] < target - 1e-6
+    };
+    let quarters = 0..input.quarters.len();
+    quarters
+        .clone()
+        .all(|i| !short(proposal, i) || short(reference, i))
+        && quarters
+            .into_iter()
+            .any(|i| short(reference, i) && !short(proposal, i))
 }
 
 #[derive(Serialize)]
