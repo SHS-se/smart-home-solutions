@@ -106,6 +106,8 @@ export function readMeasuredRoomAssessmentPage(raw: unknown, count: number): Mea
   const result = z.array(measuredAssessment).length(count).safeParse(raw);
   if (!result.success || new Set(result.data.map(value => value.id)).size !== count) return null;
   return result.data.map(({ disposition, heating_status, cooling_status, ...value }) => ({ ...value,
+    // The earlier note described the run-level flag, not either point.
+    reasons: disposition === undefined ? value.reasons : value.reasons.filter(code => code !== 'descriptive_line_residual'),
     heating_residual: disposition === undefined ? value.heating_residual : null,
     cooling_residual: disposition === undefined ? value.cooling_residual : null,
     heating_status: heating_status ?? null, cooling_status: cooling_status ?? null })) as MeasuredRoomAssessment[];

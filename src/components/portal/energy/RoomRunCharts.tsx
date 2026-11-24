@@ -3,7 +3,9 @@ import { CartesianGrid, ComposedChart, ErrorBar, Line, ReferenceLine, Scatter, X
 import { X } from 'lucide-react';
 import { ChartContainer } from '@/components/ui/chart';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { trendCooldown, trendRun, type RoomRunDisposition, type RoomRunPoint } from '@/lib/energy-shift/room-run-points';
 import { roomResponseLines, type RoomResponseLines, type RoomResponseView } from '@/lib/energy-shift/room-response-view';
 import { measuredPointStatus, measuredRoomLineAt, type MeasuredPointStatus, type MeasuredRoomAssessment, type MeasuredRoomCalibration, type MeasuredRoomLine } from '../../../../supabase/functions/_shared/planner/models/room/measured-evidence';
@@ -21,8 +23,8 @@ const kindOf = (disposition: RoomRunDisposition): Kind => (disposition === 'fitt
 interface Dot { id: string; x: number; y: number; err?: [number, number]; kind: Kind; label: string }
 interface ModelLine { at: (x: number) => number; measuredRange: { minX: number; maxX: number } | null }
 
-function Marker({ cx, cy, dot, selected, onSelect }: {
-  cx?: number; cy?: number; dot: Dot; selected: boolean; onSelect: (id: string) => void;
+function Marker({ cx, cy, dot, selected, onSelect, anchored = false }: {
+  cx?: number; cy?: number; dot: Dot; selected: boolean; onSelect: (id: string) => void; anchored?: boolean;
 }) {
   if (cx === undefined || cy === undefined) return null;
   const colour = dot.kind === 'suspect' ? SUSPECT : dot.kind === 'noisy' ? MUTED : ACCENT;
@@ -32,7 +34,9 @@ function Marker({ cx, cy, dot, selected, onSelect }: {
     data-run={dot.id} onClick={select} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } }}>
     <title>{dot.label}</title>
     <circle cx={cx} cy={cy} r={12} fill="transparent" />
-    {selected && <circle cx={cx} cy={cy} r={9} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />}
+    {selected && (anchored
+      ? <PopoverAnchor asChild><circle cx={cx} cy={cy} r={9} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} /></PopoverAnchor>
+      : <circle cx={cx} cy={cy} r={9} fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />)}
     {dot.kind === 'suspect'
       ? <rect x={cx - 4.5} y={cy - 4.5} width={9} height={9} transform={`rotate(45 ${cx} ${cy})`} fill={fill} stroke={colour} strokeWidth={1.8} />
       : <circle cx={cx} cy={cy} r={5} fill={fill} stroke={colour} strokeWidth={1.8} />}
@@ -47,9 +51,11 @@ function niceDomain(values: number[], step: number): [number, number] {
 
 /** Runs as points; the published model's response as a line, solid over the
  * measured runs and dashed beyond them. */
-function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSelect, zeroLine }: {
+function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSelect, zeroLine, detail }: {
   label: string; unit: string; dots: Dot[]; line: ModelLine | null; xDomain: [number, number]; yDomain: [number, number];
   selected: string | null; onSelect: (id: string) => void; zeroLine?: boolean;
+  /** When given, the selected point opens its own details beside it. */
+  detail?: { label: string; render: (id: string) => ReactNode; onClose: () => void };
 }) {
   const { language } = useLanguage();
   const format = (value: number) => value.toLocaleString(language, { maximumFractionDigits: 2 });
@@ -64,7 +70,10 @@ function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSel
     if (grid[i].fit !== null && grid[i - 1].fit === null) grid[i - 1].beyond = line!.at(grid[i - 1].x);
     if (grid[i].fit === null && grid[i - 1].fit !== null) grid[i - 1].beyond = grid[i - 1].fit;
   }
-  return <ChartContainer className="h-72 w-full min-w-0" config={{}} role="img" aria-label={label}>
+  const open = !!detail && selected !== null && dots.some(dot => dot.id === selected);
+  // A narrow chart has no room beside a point; below it, the details can shift to fit the screen.
+  const narrow = useIsMobile();
+  const chart = <ChartContainer className="h-72 w-full min-w-0" config={{}} role="img" aria-label={label}>
     <ComposedChart margin={{ top: 10, right: 16, left: 0, bottom: 18 }}>
       <CartesianGrid className="stroke-border" />
       <XAxis dataKey="x" type="number" domain={xDomain} allowDataOverflow tickCount={8}
@@ -77,12 +86,18 @@ function RunScatter({ label, unit, dots, line, xDomain, yDomain, selected, onSel
       {line && <Line data={grid} dataKey="beyond" type="linear" stroke={ACCENT} strokeWidth={1.5} strokeDasharray="5 4" dot={false} isAnimationActive={false} connectNulls={false} />}
       <Scatter data={dots} dataKey="y" isAnimationActive={false}
         shape={(props: { cx?: number; cy?: number; payload?: Dot }) => props.payload
-          ? <Marker cx={props.cx} cy={props.cy} dot={props.payload} selected={props.payload.id === selected} onSelect={onSelect} />
+          ? <Marker cx={props.cx} cy={props.cy} dot={props.payload} selected={props.payload.id === selected} onSelect={onSelect} anchored={open} />
           : <g />}>
         <ErrorBar dataKey="err" direction="y" width={0} stroke={MUTED} strokeWidth={1.2} />
       </Scatter>
     </ComposedChart>
   </ChartContainer>;
+  if (!detail) return chart;
+  return <Popover open={open} onOpenChange={next => { if (!next) detail.onClose(); }}>
+    {chart}
+    {open && <PopoverContent side={narrow ? 'bottom' : 'right'} align="center" collisionPadding={8} aria-label={detail.label}
+      className="w-80 max-w-[calc(100vw-1rem)] p-3 text-xs" data-testid="room-point-detail">{detail.render(selected!)}</PopoverContent>}
+  </Popover>;
 }
 
 function Key({ lines, chronological, measured = false }: { lines: boolean; chronological: boolean; measured?: boolean }) {
@@ -351,60 +366,64 @@ function measuredStatus(stored: MeasuredPointStatus | null, line: MeasuredRoomLi
   return stored ?? (line ? measuredPointStatus(line, x, y) : null);
 }
 
-function MeasuredRunDetail({ point, lines, onClose }: { point: MeasuredRoomAssessment; lines: MeasuredRoomCalibration['lines']; onClose: () => void }) {
+function PointDetail({ title, status, onClose, notes, children }: {
+  title: string; status: string; onClose: () => void; notes: string[]; children: ReactNode;
+}) {
+  const { t } = useLanguage();
+  return <div className="space-y-1">
+    <div className="flex items-start justify-between gap-2"><div>
+      <p className="font-semibold">{title}</p><p>{status}</p>
+    </div><Button variant="ghost" size="icon" className="-mr-2 -mt-2 h-11 w-11 shrink-0" onClick={onClose} aria-label={t('Stäng', 'Close')}><X className="h-4 w-4" /></Button></div>
+    <dl>{children}</dl>
+    {notes.length > 0 && <p>{t('Mätanmärkningar', 'Measurement notes')}: {notes.join(' · ')}</p>}
+  </div>;
+}
+
+/** One chart's point: only that measure's facts, status and distance from its own line. */
+function MeasuredPointDetail({ kind, run, line, onClose }: {
+  kind: 'heating' | 'cooling'; run: MeasuredRoomAssessment; line: MeasuredRoomLine | null; onClose: () => void;
+}) {
   const { language, t } = useLanguage();
-  const number = (value: number, unit: string) => `${value.toLocaleString(language, { maximumFractionDigits: 2 })} ${unit}`;
-  const value = (n: number | null | undefined, unit: string) => n == null ? '—' : number(n, unit);
+  const value = (n: number | null | undefined, unit: string) => n == null ? '—' : `${n.toLocaleString(language, { maximumFractionDigits: 2 })} ${unit}`;
   const time = (ms: number) => new Date(ms).toLocaleString(language, { dateStyle: 'medium', timeStyle: 'short' });
-  const label = (status: MeasuredPointStatus | null, present: boolean) => !present ? t('Ingen mätbar punkt', 'No measurable point') : {
+  const statusLabel = (status: MeasuredPointStatus | null) => ({
     consistent: t('Nära linjen', 'Close to the line'),
     above_line: t('Flaggad: över linjen', 'Flagged: above the line'),
     below_line: t('Flaggad: under linjen', 'Flagged: below the line'),
-  }[status ?? 'consistent'];
-  const h = point.heating, c = point.cooling;
-  const heatingStatus = h ? measuredStatus(point.heating_status, lines.heating, h.outdoor_c, h.c_per_kwh) : null;
-  const coolingStatus = c ? measuredStatus(point.cooling_status, lines.cooling, c.outdoor_c, c.c_per_h) : null;
-  const distance = (line: MeasuredRoomLine | null, x: number | undefined, y: number | undefined) =>
-    line && x !== undefined && y !== undefined ? y - measuredRoomLineAt(line, x) : null;
-  return <section className="space-y-2 rounded-md border bg-muted/20 p-3 text-xs" aria-label={t('Valt förlopp', 'Selected run')} data-testid="room-run-detail">
-    <div className="flex items-start justify-between gap-2"><div>
-      <h5 className="font-semibold">{time(point.from_ms)}</h5>
-    </div><Button variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={onClose} aria-label={t('Stäng', 'Close')}><X className="h-4 w-4" /></Button></div>
-    <dl>
-      <Row term={t('Uppvärmningspunkt', 'Heating point')}>{label(heatingStatus, h !== null)}</Row>
-      <Row term={t('Avsvalningspunkt', 'Cooling point')}>{label(coolingStatus, c !== null)}</Row>
-      <Row term={t('Värmaren på → av', 'Heater on → off')}>{time(point.on_ms)} → {time(point.off_ms)}</Row>
-      <Row term={t('Uppmätt energi i hela förloppet', 'Measured energy across the run')}>{value(point.energy_kwh, 'kWh')}</Row>
-      <Row term={t('Start → topp (intervallmedel)', 'Onset → peak (interval means)')}>{value(h?.room_start_c, '°C')} → {value(h?.room_peak_c, '°C')}</Row>
-      {h && <>
-        <Row term={t('Toppens mätintervall', 'Peak measurement interval')}>{time(h.peak_ms)} – {time(h.peak_end_ms)}</Row>
-        <Row term={t('Energi från start till topp', 'Energy from onset to peak')}>{value(h.energy_kwh, 'kWh')}</Row>
-        <Row term={t('Ute under uppvärmning', 'Outdoors during heating')}>{value(h.outdoor_c, '°C')}</Row>
-        <Row term={t('Rum / övriga hemmet under uppvärmning', 'Room / rest of home during heating')}>{value(h.room_mean_c, '°C')} / {value(h.house_c, '°C')}</Row>
-      </>}
-      <Row term={t('Uppmätt nettoökning', 'Measured net rise')}>{value(h?.c_per_kwh, '°C/kWh')}</Row>
-      <Row term={t('Uppmätt avsvalning, värmaren av', 'Measured cooling, heater off')}>{value(c?.c_per_h, '°C/h')}</Row>
-      {c && <>
-        <Row term={t('Avsvalningens mätintervall', 'Cooling measurement interval')}>{time(c.from_ms)} – {time(c.to_ms)}</Row>
-        <Row term={t('Ute under avsvalning', 'Outdoors during cooling')}>{value(c.outdoor_c, '°C')}</Row>
-        <Row term={t('Rum / övriga hemmet under avsvalning', 'Room / rest of home during cooling')}>{value(c.room_c, '°C')} / {value(c.house_c, '°C')}</Row>
-      </>}
-    </dl>
-    {point.reasons.length > 0 && <p>{t('Mätanmärkningar', 'Measurement notes')}: {point.reasons.map(code => measuredReason(code, t)).join(' · ')}</p>}
-    <details><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
-      {t('Modellbedömning', 'Model assessment')}</summary>
-      <dl>
-        <Row term={t('Uppvärmning: avstånd från linjen', 'Heating: distance from line')}>{value(distance(lines.heating, h?.outdoor_c, h?.c_per_kwh), '°C/kWh')}</Row>
-        <Row term={t('Avsvalning: avstånd från linjen', 'Cooling: distance from line')}>{value(distance(lines.cooling, c?.outdoor_c, c?.c_per_h), '°C/h')}</Row>
-      </dl>
-      <p className="mt-2 text-muted-foreground">{t('Värden justerade för rumstemperaturerna under förloppet. De ändrar inte punkterna eller flaggorna i diagrammen.',
-        'Values adjusted for the room temperatures during the run. They do not change the points or the flags in the charts.')}</p>
-      <dl>
-        <Row term={t('Nettoökning vid referenstemperatur', 'Net rise at reference temperature')}>{value(point.reference_heating_c_per_kwh, '°C/kWh')}</Row>
-        <Row term={t('Avsvalning vid referenstemperatur', 'Cooling at reference temperature')}>{value(point.reference_cooling_c_per_h, '°C/h')}</Row>
-      </dl>
-    </details>
-  </section>;
+  })[status ?? 'consistent'];
+  // Notes about the other measure do not describe this point.
+  const notes = run.reasons.filter(code => code !== 'descriptive_line_residual' &&
+    !code.startsWith(kind === 'heating' ? 'cooling_' : 'heating_') && code !== (kind === 'heating' ? 'missing_cooling' : ''))
+    .map(code => measuredReason(code, t));
+  if (kind === 'heating' && run.heating) {
+    const h = run.heating;
+    const status = measuredStatus(run.heating_status, line, h.outdoor_c, h.c_per_kwh);
+    return <PointDetail title={t(`Uppvärmning ${time(h.on_ms)}`, `Heating ${time(h.on_ms)}`)} status={statusLabel(status)} onClose={onClose} notes={notes}>
+      <Row term={t('Uppmätt nettoökning', 'Measured net rise')}>{value(h.c_per_kwh, '°C/kWh')}</Row>
+      <Row term={t('Avstånd från linjen', 'Distance from line')}>{value(line ? h.c_per_kwh - measuredRoomLineAt(line, h.outdoor_c) : null, '°C/kWh')}</Row>
+      <Row term={t('Värmaren på → av', 'Heater on → off')}>{time(run.on_ms)} → {time(run.off_ms)}</Row>
+      <Row term={t('Start → topp (intervallmedel)', 'Onset → peak (interval means)')}>{value(h.room_start_c, '°C')} → {value(h.room_peak_c, '°C')}</Row>
+      <Row term={t('Toppens mätintervall', 'Peak measurement interval')}>{time(h.peak_ms)} – {time(h.peak_end_ms)}</Row>
+      <Row term={t('Energi från start till topp', 'Energy from onset to peak')}>{value(h.energy_kwh, 'kWh')}</Row>
+      <Row term={t('Ute', 'Outdoors')}>{value(h.outdoor_c, '°C')}</Row>
+      <Row term={t('Rum / övriga hemmet', 'Room / rest of home')}>{value(h.room_mean_c, '°C')} / {value(h.house_c, '°C')}</Row>
+      <Row term={t('Justerad till referenstemperatur', 'Adjusted to reference temperature')}>{value(run.reference_heating_c_per_kwh, '°C/kWh')}</Row>
+    </PointDetail>;
+  }
+  if (kind === 'cooling' && run.cooling) {
+    const c = run.cooling;
+    const status = measuredStatus(run.cooling_status, line, c.outdoor_c, c.c_per_h);
+    return <PointDetail title={t(`Avsvalning ${time(c.from_ms)}`, `Cooling ${time(c.from_ms)}`)} status={statusLabel(status)} onClose={onClose} notes={notes}>
+      <Row term={t('Uppmätt avsvalning, värmaren av', 'Measured cooling, heater off')}>{value(c.c_per_h, '°C/h')}</Row>
+      <Row term={t('Avstånd från linjen', 'Distance from line')}>{value(line ? c.c_per_h - measuredRoomLineAt(line, c.outdoor_c) : null, '°C/h')}</Row>
+      <Row term={t('Värmaren av', 'Heater off')}>{time(run.off_ms)}</Row>
+      <Row term={t('Mätintervall', 'Measurement interval')}>{time(c.from_ms)} – {time(c.to_ms)}</Row>
+      <Row term={t('Ute', 'Outdoors')}>{value(c.outdoor_c, '°C')}</Row>
+      <Row term={t('Rum / övriga hemmet', 'Room / rest of home')}>{value(c.room_c, '°C')} / {value(c.house_c, '°C')}</Row>
+      <Row term={t('Justerad till referenstemperatur', 'Adjusted to reference temperature')}>{value(run.reference_cooling_c_per_h, '°C/h')}</Row>
+    </PointDetail>;
+  }
+  return null;
 }
 
 function measuredReason(code: string, t: (sv: string, en: string) => string): string {
@@ -428,10 +447,10 @@ function measuredReason(code: string, t: (sv: string, en: string) => string): st
 function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
   const { language, t } = useLanguage();
   const calibration = view.response!.measuredRuns!;
-  const [selected, setSelected] = useState<string | null>(null);
+  // A point is selected in one chart; the other chart's point for the same run stays closed.
+  const [selected, setSelected] = useState<{ kind: 'heating' | 'cooling'; id: string } | null>(null);
   const format = (value: number, digits = 2) => value.toLocaleString(language, { maximumFractionDigits: digits });
-  const point = view.measuredPoints.find(run => run.id === selected);
-  const select = (id: string) => setSelected(current => current === id ? null : id);
+  const byId = useMemo(() => new Map(view.measuredPoints.map(run => [run.id, run])), [view.measuredPoints]);
   const descriptions = {
     heating: t('Uppmätt nettoökning per kWh från värmepåslag till topp. Start och topp är intervallmedelvärden som närmar sig förloppets ändpunkter.',
       'Measured net rise per kWh from heater onset to peak. Onset and peak are interval-mean proxies for the run’s endpoints.'),
@@ -478,7 +497,11 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
       <h5 className="font-medium">{chart.title}</h5>
       <p className="text-xs text-muted-foreground">{descriptions[chart.kind]}</p>
       {chart.dots.length || chart.line ? <RunScatter label={chart.title} unit={chart.unit} dots={chart.dots} line={chart.fitted}
-        xDomain={chart.xDomain} yDomain={chart.yDomain} selected={selected} onSelect={select} zeroLine />
+        xDomain={chart.xDomain} yDomain={chart.yDomain} zeroLine
+        selected={selected?.kind === chart.kind ? selected.id : null} onSelect={id => setSelected({ kind: chart.kind, id })}
+        detail={{ label: chart.kind === 'heating' ? t('Vald uppvärmningspunkt', 'Selected heating point') : t('Vald avsvalningspunkt', 'Selected cooling point'),
+          onClose: () => setSelected(null),
+          render: id => { const run = byId.get(id); return run ? <MeasuredPointDetail kind={chart.kind} run={run} line={chart.line} onClose={() => setSelected(null)} /> : null; } }} />
         : <p className="py-3 text-xs text-muted-foreground">{t('Inga mätbara punkter eller publicerad linje är tillgängliga.', 'No measurable points or published line are available.')}</p>}
       <p className="text-xs text-muted-foreground tabular-nums">{chart.line ? t(
         `Publicerad linje: ${format(chart.line.intercept)} ${chart.unit} vid ${format(chart.line.reference_outdoor_c)} °C ute, lutning ${format(chart.line.slope_per_c, 3)} ${chart.unit}/°C. ${format(chart.line.points, 0)} förlopp i anpassningen.`,
@@ -490,13 +513,12 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
     </section>)}
     <Key lines={charts.some(chart => chart.line !== null)} chronological measured />
     <p className="text-xs text-muted-foreground">{t('En punkt flaggas när den ligger mer än tre robusta spridningar från linjen i sitt diagram. Den finns kvar i anpassningen med lägre vikt, och flaggan fastställer inte orsaken.',
-      'A point is flagged when it lies more than three robust spreads from the line in its chart. It stays in the fit with reduced weight, and the flag does not establish the cause.')}</p>
+      'A point is flagged when it lies more than three robust spreads from the line in its chart. It stays in the fit with reduced weight, and the flag does not establish the cause.')}
+      {' '}{t('Välj en punkt för att se dess mätning.', 'Select a point to see its measurement.')}</p>
     {missingReasons.size > 0 && <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
       {t('Mätanmärkningar för visade förlopp', 'Measurement notes for the runs shown')}</summary>
       <ul className="list-disc space-y-1 pl-5">{[...missingReasons].map(([reason, count]) => <li key={reason}>{measuredReason(reason, t)} · {format(count, 0)}</li>)}</ul>
     </details>}
-    <RunPicker runs={view.measuredPoints.map(run => ({ id: run.id, fromMs: run.from_ms }))} selected={point?.id ?? null} onSelect={setSelected} />
-    {point && <MeasuredRunDetail point={point} lines={calibration.lines} onClose={() => setSelected(null)} />}
     {(calibration.validation.trajectory_mae_c !== null || calibration.validation.projected_trajectory_mae_c != null) &&
       <section className="space-y-1 text-xs" data-testid="room-prediction-error">
         <h5 className="font-medium">{t('Medelabsolut prognosfel för temperatur', 'Mean absolute temperature prediction error')}</h5>

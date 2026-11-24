@@ -662,24 +662,41 @@ test.describe('staff navigation shell', () => {
     await expect(panel.getByTestId('room-prediction-error').locator('dd')).toHaveText(['0,12 °C', '0,2 °C']);
     await expect(panel.getByTestId('room-prediction-error')).toContainText('Planerarens prognos');
     await expect(panel.getByText(/Publicerad linje: 0,8 °C\/kWh/)).toContainText('304 förlopp i anpassningen');
-    const select = panel.getByLabel('Visa detaljer för ett förlopp');
-    await select.selectOption('synthetic-0');
-    const detail = panel.getByTestId('room-run-detail');
-    await expect(detail.locator('dd').nth(0)).toHaveText('Flaggad: över linjen');
-    await expect(detail.locator('dd').nth(1)).toHaveText('Nära linjen');
+    // Details open beside the clicked point, for that chart's measure only.
+    await expect(panel.getByLabel('Visa detaljer för ett förlopp')).toHaveCount(0);
+    await expect(panel.getByTestId('room-run-detail')).toHaveCount(0);
+    const detail = page.getByTestId('room-point-detail');
+    await heating.locator('[data-run="synthetic-0"]').click();
+    await expect(detail).toHaveCount(1);
+    await expect(detail).toContainText('Uppvärmning');
+    await expect(detail).toContainText('Flaggad: över linjen');
     await expect(detail).toContainText('Start → topp (intervallmedel)');
+    await expect(detail).not.toContainText('Avsvalning');
     await expect(detail).not.toContainText('annan källa');
-    await select.selectOption('synthetic-1');
-    await expect(detail.locator('dd').nth(0)).toHaveText('Ingen mätbar punkt');
-    await expect(detail).toContainText('Uppvärmningen saknar fullständiga');
-    await select.selectOption('synthetic-304');
+    await expect(cooling.locator('[data-run="synthetic-0"] circle[r="9"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(detail).toHaveCount(0);
+    await cooling.locator('[data-run="synthetic-2"]').click();
+    await expect(detail).toContainText('Avsvalning');
+    await expect(detail).toContainText('Flaggad: under linjen');
+    await expect(detail).not.toContainText('nettoökning');
+    await expect(heating.locator('[data-run="synthetic-2"] circle[r="9"]')).toHaveCount(0);
+    // Choosing a point in the other chart replaces the open details.
+    await heating.locator('[data-run="synthetic-304"]').click();
+    await expect(detail).toHaveCount(1);
     await expect(detail).toContainText('2025');
+    await expect(detail).toContainText('Nära linjen');
     await expect(heating.locator('[data-run="synthetic-304"]')).toHaveAttribute('aria-label', /0,68 °C\/kWh/);
     await expect(heating.locator('[data-run]')).toHaveCount(304);
     await expect(panel.getByText(/Publicerad linje: 1,1 °C\/kWh/)).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath('measured-room-runs-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.screenshot({ path: testInfo.outputPath('measured-room-runs-mobile.png'), fullPage: true });
+    await heating.locator('[data-run="synthetic-304"]').scrollIntoViewIfNeeded();
+    await expect.poll(async () => {
+      const box = await detail.boundingBox();
+      return !!box && box.x >= 0 && box.x + box.width <= 390;
+    }, { message: 'point details stay on a narrow screen' }).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('measured-room-runs-mobile.png') });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
 

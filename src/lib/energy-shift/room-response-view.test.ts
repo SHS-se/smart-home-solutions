@@ -168,7 +168,9 @@ Deno.test('heating and cooling statuses are read independently and earlier run-l
   const view = readRoomResponseView(measuredCapture([measuredRun('separate')], 1))!;
   assertEquals([view.measuredPoints[0].heating_status, view.measuredPoints[0].cooling_status], ['consistent', 'above_line']);
   const { heating_status: _h, cooling_status: _c, ...legacy } = measuredRun('legacy');
-  const earlier = readRoomResponseView(measuredCapture([{ ...legacy, heating_residual: -1.7, disposition: 'consistent' }], 1))!;
+  const earlier = readRoomResponseView(measuredCapture([{ ...legacy, heating_residual: -1.7, disposition: 'above_line',
+    reasons: ['missing_house', 'descriptive_line_residual'] }], 1))!;
+  assertEquals(earlier.measuredPoints[0].reasons, ['missing_house'], 'the note for the run-level flag goes with it');
   assertEquals(earlier.measuredPoints[0].heating_status, null, 'a run-level flag never stands in for one measure');
   assertEquals(earlier.measuredPoints[0].heating_residual, null, 'residuals against reference lines are not shown as distances from drawn lines');
   assert(!('disposition' in earlier.measuredPoints[0]));
