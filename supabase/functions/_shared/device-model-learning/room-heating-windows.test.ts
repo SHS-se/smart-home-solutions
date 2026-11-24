@@ -178,7 +178,9 @@ Deno.test("chronological source extents survive retention and a late correction 
   const offline = learnRoomResponse(roomResponseEvidence(quarters, metadata.trainingView), 500);
   const published = finalizeStoredRoomResponse(metadata, quarters, offline);
   assert(offline.result.ok);
-  assertEquals(offline.result.model.sample_count, 239);
+  // Every quarter reaches the chronological fit; the planner's response counts measured run points.
+  assertEquals((offline.result.learning_evidence as { chronological_model?: { sample_count?: number } })
+    .chronological_model?.sample_count, 239);
   const accepted = { ...published.model, model_revision: 2 };
   const library = published.model.heating_bands as RoomHeatingBands;
   assertEquals(library.reference?.scope, { kind: "shared" });

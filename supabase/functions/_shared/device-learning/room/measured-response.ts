@@ -10,7 +10,7 @@ import { solveNonnegativeNuisance } from "./mean-nuisance.ts";
 import { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 import { roomMeanObservation } from "../../planner/models/room/observation.ts";
 import { excludeUncontrolledRoomHeat, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
-import { ROOM_MEASURED_POLICY, type MeasuredRoomCalibration, type MeasuredRoomLedger } from "../../planner/models/room/measured-evidence.ts";
+import { ROOM_MEASURED_POLICY, measuredRoomLineAt, type MeasuredRoomCalibration, type MeasuredRoomLedger, type MeasuredRoomRun } from "../../planner/models/room/measured-evidence.ts";
 import { validateRoomResponseEvidence, type RoomResponseEvidence } from "./chronological-evidence.ts";
 import { measureRoomRuns, roomHeatingRuns } from "./run-measurements.ts";
 import { assessMeasuredRuns, robustResidualScale, huberWeight } from "./measured-lines.ts";
@@ -251,6 +251,36 @@ function responseModel(fit: Candidate, ratedPowerW: number | null): ThermalZoneM
     time_constant_h: fit.k > 0 ? 1 / fit.k : null,
     heating_rate_c_per_h: ratedPowerW !== null && ratedPowerW > 0 ? gain * ratedPowerW : null };
 }
+/** The planner's response from the published measured lines. Cooling follows
+ * Newton's law through the cooling line's level at its measured room and
+ * outdoor temperatures. The heater gain is the measured net rise line itself.
+ * That rise already includes the losses during each run, so the planner counts
+ * some loss twice while heating: it can understate the heater, never overstate
+ * it. There is no rest-of-home exchange, constant term, solar term or delay. */
+function lineCandidate(runs: readonly MeasuredRoomRun[]): Candidate | null {
+  const { cooling, heating } = assessMeasuredRuns(runs, null).calibration.lines;
+  const fall = runs.flatMap(run => run.cooling ? [run.cooling] : []);
+  const hours = fall.reduce((sum, point) => sum + point.hours, 0);
+  if (!cooling || !(hours > 0)) return null;
+  const drive = fall.reduce((sum, point) => sum + point.hours * point.room_c, 0) / hours - cooling.reference_outdoor_c;
+  if (!(cooling.intercept > 0 && drive > 0)) return null;
+  const k = cooling.intercept / drive;
+  const rise = runs.flatMap(run => run.heating && run.heating.energy_kwh > 0 ? [run.heating] : []);
+  if (!heating || !rise.length) return null;
+  const low = Math.min(...rise.map(point => point.outdoor_c)), high = Math.max(...rise.map(point => point.outdoor_c));
+  const gain = (x: number) => Math.max(0, measuredRoomLineAt(heating, x)) / 1000;
+  const weather = high > low && heating.slope_per_c > 0;
+  const beta = weather ? [gain(low), gain(high), 0, k] : [gain(heating.reference_outdoor_c), 0, k];
+  const n = heating.points + cooling.points, dof = n - (weather ? 3 : 2);
+  if (!(Math.max(beta[0], weather ? beta[1] : 0) > 0) || dof <= 0) return null;
+  return { family: "finite", lag: 0, k, solar: false, weather, low: weather ? low : heating.reference_outdoor_c,
+    high: weather ? high : heating.reference_outdoor_c, beta, initial: [], n, dof, mse: 0 };
+}
+/** The planner response the measured lines give for these runs, if they form one. */
+export function measuredLineResponse(runs: readonly MeasuredRoomRun[], ratedPowerW: number | null): ThermalZoneModel | null {
+  const fit = lineCandidate(runs);
+  return fit ? responseModel(fit, ratedPowerW) : null;
+}
 function gainAt(fit: Candidate, outdoor: number): number {
   return fit.weather ? Math.max(0, fit.beta[0] + (fit.beta[1] - fit.beta[0]) * (outdoor - fit.low) / (fit.high - fit.low)) : fit.beta[0];
 }
@@ -348,6 +378,11 @@ export interface MeasuredRoomLearningEvidence {
   selection: "chronological_trajectory_mse";
   selection_scope: "state_carrying";
   selected_lag_h: number | null;
+  /** Which response the planner receives. The chronological fit stays as evidence. */
+  planner_response: "measured_lines" | "chronological_fit";
+  /** The chronological fit as fitted, including any positive background. */
+  chronological_model: ThermalZoneModel | null;
+  chronological_validation: { observations: number; trajectory_mae_c: number | null; trajectory_bias_c: number | null };
   /** Best description across all families, not a second executable response. */
   descriptive_fit: { family: Family; lag_h: number; criterion: "chronological_trajectory_mse" | "aicc";
     observations: number; trajectory_mae_c: number | null; trajectory_bias_c: number | null } | null;
@@ -371,29 +406,48 @@ export function finalizeMeasuredRoomResponse(prepared: PreparedMeasuredRoomRespo
   // Algebraic equilibrium identifies a balance, not room capacity. The same
   // learner fits it as descriptive evidence but never invents a relaxation
   // constant to turn that balance into a measured-state forecast.
-  const { selected, validation, errors } = selectCandidate(full.filter(fit => fit.family !== "equilibrium"),
+  const selection = selectCandidate(full.filter(fit => fit.family !== "equilibrium"),
     evaluated.filter(value => value.fit.family !== "equilibrium"));
+  const { selected, validation } = selection;
   const descriptive = selectCandidate(full, evaluated);
-  const model = selected ? responseModel(selected, prepared.ratedPowerW) : null;
-  const assessed = assessMeasuredRuns(measureRoomRuns(prepared.full.rows), model);
-  const projectedValues = validation ? [...validationErrors(validationView, validation, split, true).values()] : [];
+  const chronological = selected ? responseModel(selected, prepared.ratedPowerW) : null;
+  // The planner plans with the measured lines whenever both can be formed;
+  // otherwise the chronological fit keeps the room planned.
+  const runs = measureRoomRuns(prepared.full.rows);
+  const lines = lineCandidate(runs);
+  if (lines) {
+    const fitted = [...validationErrors(prepared.full, lines, 0).values()];
+    lines.mse = fitted.length ? fitted.reduce((sum, x) => sum + x * x, 0) / fitted.length : 0;
+  }
+  const lineValidation = lines && split ? lineCandidate(measureRoomRuns(prepared.training.rows)) : null;
+  const planner = lines ?? selected;
+  const model = planner ? responseModel(planner, prepared.ratedPowerW) : null;
+  const assessed = assessMeasuredRuns(runs, model);
+  const checked = lines ? lineValidation : validation;
+  const errors = lines ? lineValidation ? [...validationErrors(validationView, lineValidation, split).values()] : [] : selection.errors;
+  const projectedValues = checked ? [...validationErrors(validationView, checked, split, true).values()] : [];
   const projectedMetrics = {
     projected_trajectory_mae_c: projectedValues.length ? projectedValues.reduce((sum, x) => sum + Math.abs(x), 0) / projectedValues.length : null,
     projected_trajectory_bias_c: projectedValues.length ? projectedValues.reduce((sum, x) => sum + x, 0) / projectedValues.length : null,
   };
-  const calibration: MeasuredRoomCalibration = { ...assessed.calibration, fitted_observations: selected?.n ?? 0,
-    residual_degrees_of_freedom: selected?.dof ?? 0, validation: { ...projectedMetrics,
+  const calibration: MeasuredRoomCalibration = { ...assessed.calibration, fitted_observations: planner?.n ?? 0,
+    residual_degrees_of_freedom: planner?.dof ?? 0, validation: { ...projectedMetrics,
       training_to: split ? new Date(prepared.training.rows[split - 1].start_ms + roomIntervalSeconds(prepared.training.rows[split - 1]) * 1000).toISOString() : null,
       observations: errors.length, trajectory_mae_c: errors.length ? errors.reduce((sum, x) => sum + Math.abs(x), 0) / errors.length : null,
       trajectory_bias_c: errors.length ? errors.reduce((sum, x) => sum + x, 0) / errors.length : null } };
-  const offset = selected ? selected.beta[selected.weather ? 2 : 1] : 0;
+  const offset = planner ? planner.beta[planner.weather ? 2 : 1] : 0;
   const learning: MeasuredRoomLearningEvidence = { method: "measured_run_native_mean_v1", implementation: ROOM_MEASURED_POLICY,
     observation: "interval_mean", selection: "chronological_trajectory_mse", selection_scope: "state_carrying", selected_lag_h: selected?.lag ?? null,
+    planner_response: lines ? "measured_lines" : "chronological_fit",
+    chronological_model: chronological,
+    chronological_validation: { observations: selection.errors.length,
+      trajectory_mae_c: selection.errors.length ? selection.errors.reduce((sum, x) => sum + Math.abs(x), 0) / selection.errors.length : null,
+      trajectory_bias_c: selection.errors.length ? selection.errors.reduce((sum, x) => sum + x, 0) / selection.errors.length : null },
     descriptive_fit: descriptive.selected ? { family: descriptive.selected.family, lag_h: descriptive.selected.lag,
       criterion: descriptive.criterion, observations: descriptive.errors.length,
       trajectory_mae_c: descriptive.errors.length ? descriptive.errors.reduce((sum, x) => sum + Math.abs(x), 0) / descriptive.errors.length : null,
       trajectory_bias_c: descriptive.errors.length ? descriptive.errors.reduce((sum, x) => sum + x, 0) / descriptive.errors.length : null } : null,
-    forecast_nuisance: { excluded: true, fitted_offset: offset, projected_offset: Math.min(0, offset), unit: selected?.family === "equilibrium" ? "C" : "C/h" },
+    forecast_nuisance: { excluded: true, fitted_offset: offset, projected_offset: Math.min(0, offset), unit: planner?.family === "equilibrium" ? "C" : "C/h" },
     measured_runs: calibration };
   return { result: model ? { ok: true, model: excludeUncontrolledRoomHeat(model), learning_evidence: learning }
     : { ok: false, reason: "singular", sample_count: prepared.full.rows.length, learning_evidence: learning },

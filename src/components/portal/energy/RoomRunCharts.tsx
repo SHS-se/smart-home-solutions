@@ -532,8 +532,8 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
       </section>}
     <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">{t('Planerarens modellparametrar', 'Planner model parameters')}</summary>
       <ModelSummary view={view} />
-      <p className="mt-2 text-muted-foreground">{t('Värmarparametern är en inneboende modellrespons med förluster separat. Den uppmätta nettoökningen ovan inkluderar förluster under förloppet.',
-        'The heater parameter is an intrinsic model response with losses accounted for separately. The measured net rise above includes losses during the run.')}</p>
+      <p className="mt-2 text-muted-foreground">{t('Planeraren använder linjerna ovan: värmarens effekt från nettoökningen och avsvalningen från avsvalningslinjen. Ett rum utan någon av linjerna planeras med den kronologiska anpassningen.',
+        'The planner uses the lines above: the heater response from the net rise line and cooling from the cooling line. A room without either line is planned with the chronological fit.')}</p>
     </details>
   </section>;
 }

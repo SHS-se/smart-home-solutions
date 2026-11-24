@@ -266,7 +266,10 @@ Deno.test("a pinned chronological generation finishes despite later uploads and 
   assert(f.archive.reads.filter(call => call.name === "get_energy_room_evidence_work")
     .every(call => Date.parse(String(call.args.p_to_at)) === f.now));
   assertEquals(f.resets, 0);
-  assertEquals(f.model?.sample_count, f.source.length - 1);
+  // The pinned generation fitted every source quarter; the planner's response counts measured run points.
+  const evidence = (f.model?.heating_bands as RoomHeatingBands | undefined)?.reference?.learning_evidence as
+    { chronological_model?: { sample_count?: number } } | undefined;
+  assertEquals(evidence?.chronological_model?.sample_count, f.source.length - 1);
   assert(f.rows.length > f.source.length);
 });
 

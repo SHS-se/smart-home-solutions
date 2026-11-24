@@ -634,8 +634,20 @@ that line the point occupies, not its unobserved cause. Flags do not remove
 points from learning. Room/house reference corrections use identified
 exchange coefficients and are separate from the raw points.
 
-These descriptive lines do not identify the floor's entry storage or intrinsic
-heater gain. `measured-response.ts` therefore fits the supporting chronological
+User requirement, 24 November 2026: the planner plans each room with the
+measured lines in its charts, because they stay sane on sparse data. The
+published response takes the heater gain from the net rise line, including its
+outdoor slope, and cools by Newton's law through the cooling line's level at
+the cooling points' mean room and outdoor temperatures. It has no rest-of-home
+exchange, constant term, solar term or delay. The net rise already includes the
+losses during each run, so the planner counts some loss twice while heating: it
+can understate the heater, never overstate it. Hold-out validation describes this
+response, fitted on the training prefix. Where no heating or cooling line can be
+formed, the chronological fit below keeps the room planned. The chronological
+fit and its validation stay in the learning evidence either way.
+
+The descriptive lines do not identify the floor's entry storage or intrinsic
+heater gain. `measured-response.ts` therefore also fits the supporting chronological
 native interval means with the exact mean-pair equations, profiled nonnegative
 entry storage and robust run-energy weights. It compares constant and outdoor-
 dependent heater gain in the finite, integrator and equilibrium response
