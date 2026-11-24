@@ -619,11 +619,16 @@ demand evidence remain separate work in the model owner.
 `device-learning/room/run-measurements.ts` owns run identity and the native-mean
 measurements: onset to peak rise per delivered kWh, matching outdoor exposure,
 and the signed fall rate in a post-peak off window. Unknown meter coverage is
-never an off observation. `measured-lines.ts` owns energy-weighted robust lines
-and residual assessments. Heating lines rise or stay flat with outdoor
-temperature; positive fall-rate lines fall or stay flat. A residual flag reports
-which side of the line a run occupies, not its unobserved cause. Flags do not
-remove runs from learning. Room/house reference corrections use identified
+never an off observation. `measured-lines.ts` owns the robust lines and residual
+assessments. Heating and cooling are separate measures with separate
+populations: heating points are weighted by their delivered energy, cooling
+points by their own heater-off window, and neither measure's weight, residual or
+flag depends on the other. Heating lines rise or stay flat with outdoor
+temperature; positive fall-rate lines fall or stay flat. Each point is flagged
+against the published line of its own measure, the line its chart draws, when
+it lies more than three robust scales from it. A flag reports which side of
+that line the point occupies, not its unobserved cause. Flags do not remove
+points from learning. Room/house reference corrections use identified
 exchange coefficients and are separate from the raw points.
 
 These descriptive lines do not identify the floor's entry storage or intrinsic

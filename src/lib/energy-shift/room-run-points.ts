@@ -85,6 +85,7 @@ function runPoint(value: z.infer<typeof run>, scope: string): RoomRunPoint {
 export const ROOM_RUN_PAGE_SIZE = 50;
 export const MEASURED_ROOM_RUN_PAGE_SIZE = 100;
 
+const pointStatus = z.enum(['consistent', 'above_line', 'below_line']);
 const measuredAssessment = z.object({
   id: z.string(), from_ms: num, on_ms: num, off_ms: num, to_ms: num, energy_kwh: num,
   heating: z.object({ on_ms: num, peak_ms: num, peak_end_ms: num, energy_kwh: num, hours: num,
@@ -94,13 +95,20 @@ const measuredAssessment = z.object({
     outdoor_c: num, house_c: num.nullable(), energy_kwh: num }).nullable(),
   reasons: z.array(z.string()), reference_heating_c_per_kwh: num.nullable(), reference_cooling_c_per_h: num.nullable(),
   heating_residual: num.nullable(), cooling_residual: num.nullable(),
-  disposition: z.enum(['consistent', 'above_line', 'below_line', 'unmeasured']),
-});
+  heating_status: pointStatus.nullable().optional(), cooling_status: pointStatus.nullable().optional(),
+  /** Ledgers published before heating and cooling were judged separately. */
+  disposition: z.enum(['consistent', 'above_line', 'below_line', 'unmeasured']).optional(),
+}).refine(value => (value.disposition === undefined) === (value.heating_status !== undefined && value.cooling_status !== undefined));
 
+/** Earlier ledgers carry one run-level flag judged against other lines. It is
+ * dropped: those points are judged against their own chart's published line. */
 export function readMeasuredRoomAssessmentPage(raw: unknown, count: number): MeasuredRoomAssessment[] | null {
   const result = z.array(measuredAssessment).length(count).safeParse(raw);
   if (!result.success || new Set(result.data.map(value => value.id)).size !== count) return null;
-  return result.data as MeasuredRoomAssessment[];
+  return result.data.map(({ disposition, heating_status, cooling_status, ...value }) => ({ ...value,
+    heating_residual: disposition === undefined ? value.heating_residual : null,
+    cooling_residual: disposition === undefined ? value.cooling_residual : null,
+    heating_status: heating_status ?? null, cooling_status: cooling_status ?? null })) as MeasuredRoomAssessment[];
 }
 
 const assessedRun = run.extend({ disposition: z.enum(['assessed', 'suspect_change', 'uninformative']) });

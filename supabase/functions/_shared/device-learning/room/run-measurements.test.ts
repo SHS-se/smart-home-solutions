@@ -41,16 +41,39 @@ Deno.test("partial peak intervals count their electricity and signed net rises s
   corrected[4].room_c = 23;
   assertEquals(measureRoomRuns(corrected)[0].heating!.peak_ms, 4.5 * 3_600_000);
 });
-Deno.test("cooling lines weight preceding electrical energy, and never off duration", () => {
-  const points: MeasuredRoomRun[] = [1, 9].map((energy, i) => ({
+Deno.test("cooling lines weight their own heater-off window, never the preceding heating energy", () => {
+  const points: MeasuredRoomRun[] = [[9, 1], [1, 3]].map(([energy, hours], i) => ({
     id: String(i), from_ms: 0, on_ms: 1, off_ms: 2, to_ms: 3, energy_kwh: energy,
-    heating: null, cooling: { from_ms: 0, to_ms: 1, hours: i ? 1 : 100,
-      c_per_h: i ? 3 : 1, room_c: 20, outdoor_c: 0, house_c: 20, energy_kwh: energy }, reasons: [],
+    heating: null, cooling: { from_ms: 0, to_ms: 1, hours,
+      c_per_h: i ? 3 : 1, room_c: 20, outdoor_c: 0, house_c: 20, energy_kwh: 0 }, reasons: [],
   }));
   const result = assessMeasuredRuns(points, null);
-  assertAlmostEquals(result.calibration.lines.cooling!.intercept, 2.8);
+  assertAlmostEquals(result.calibration.lines.cooling!.intercept, 2.5);
   assertEquals(result.calibration.lines.cooling!.points, 2);
 });
+
+Deno.test("a run's heating and cooling points are flagged independently against their own lines", () => {
+  const runs: MeasuredRoomRun[] = Array.from({ length: 12 }, (_, i) => {
+    const outdoor = i - 6, c_per_kwh = i === 3 ? -9 : 1.4, c_per_h = i === 7 ? 1.5 : .2 + (i % 3) * .01;
+    return { id: String(i), from_ms: i, on_ms: i, off_ms: i + 1, to_ms: i + 2, energy_kwh: i === 3 ? .05 : .5,
+      heating: { on_ms: i, peak_ms: i + 1, peak_end_ms: i + 2, energy_kwh: i === 3 ? .025 : .5, hours: .5,
+        rise_c: c_per_kwh * .5, c_per_kwh: c_per_kwh + (i % 2) * .05, room_start_c: 20, room_peak_c: 20.5, room_mean_c: 20.2,
+        outdoor_c: outdoor, house_c: 20, native_seconds: [900] },
+      cooling: { from_ms: i + 1, to_ms: i + 2, hours: 2, c_per_h, room_c: 20, outdoor_c: outdoor, house_c: 20, energy_kwh: 0 },
+      reasons: [] };
+  });
+  const { runs: assessed, calibration } = assessMeasuredRuns(runs, null);
+  assertEquals(assessed[3].heating_status, "below_line");
+  assertEquals(assessed[3].cooling_status, "consistent", "a bad heating point says nothing about the cooling point");
+  assertEquals(assessed[7].heating_status, "consistent", "a bad cooling point says nothing about the heating point");
+  assertEquals(assessed[7].cooling_status, "above_line");
+  assertEquals([calibration.heating_flagged_runs, calibration.cooling_flagged_runs], [1, 1]);
+  assert(assessed.every(run => !("disposition" in run)));
+  // Residuals are distances from the drawn lines, not from loss-corrected references.
+  assertAlmostEquals(assessed[3].heating_residual!, assessed[3].heating!.c_per_kwh - calibration.lines.heating!.intercept
+    - calibration.lines.heating!.slope_per_c * (assessed[3].heating!.outdoor_c - calibration.lines.heating!.reference_outdoor_c));
+});
+
 Deno.test("descriptive monotonic lines retain all measured points after robust fitting", () => {
   const points = Array.from({ length: 10 }, (_, i) => ({ x: i, y: i === 5 ? 100 : 2 + i, weight: 1 }));
   const line = fitMeasuredLine(points, "rises", "c_per_kwh")!;

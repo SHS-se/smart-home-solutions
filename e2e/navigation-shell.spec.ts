@@ -592,7 +592,7 @@ test.describe('staff navigation shell', () => {
     await expect(heating.locator('.recharts-line-curve')).toHaveCount(0);
   });
 
-  test('room Model shows all measured run facts together without reference or date paging controls', async ({ page, context }, testInfo) => {
+  test('room Model flags heating and cooling points separately, without reference or date paging controls', async ({ page, context }, testInfo) => {
     // Independently generated measurements and published lines, never household data.
     await mockComfortLink(context);
     const revision = 'synthetic-measured-revision';
@@ -601,16 +601,17 @@ test.describe('staff navigation shell', () => {
       return { id: `synthetic-${i}`, from_ms: start, on_ms: start + 900_000, off_ms: start + 4_500_000,
         to_ms: start + 7_200_000, energy_kwh: 1,
         heating: i === 1 ? null : { on_ms: start + 900_000, peak_ms: start + 4_500_000, peak_end_ms: start + 5_400_000,
-          energy_kwh: 1, hours: 1.25, rise_c: .8 + outdoor * .02, c_per_kwh: .8 + outdoor * .02,
+          energy_kwh: 1, hours: 1.25, rise_c: .8 + outdoor * .02, c_per_kwh: .8 + outdoor * .02 + (i === 0 ? .5 : 0),
           room_start_c: 19, room_peak_c: 19.8 + outdoor * .02, room_mean_c: 19.4,
           outdoor_c: outdoor, house_c: 19, native_seconds: [900] },
         cooling: i === 1 ? null : { from_ms: start + 5_400_000, to_ms: start + 7_200_000, hours: .5,
-          c_per_h: .4 - outdoor * .02, room_c: 19.7, outdoor_c: outdoor, house_c: 19, energy_kwh: 0 },
+          c_per_h: .4 - outdoor * .02 - (i === 2 ? .5 : 0), room_c: 19.7, outdoor_c: outdoor, house_c: 19, energy_kwh: 0 },
         reference_heating_c_per_kwh: i === 1 ? null : 1.1 + outdoor * .02,
         reference_cooling_c_per_h: i === 1 ? null : .5 - outdoor * .02,
-        heating_residual: i === 1 ? null : i === 0 ? .1 : 0, cooling_residual: i === 1 ? null : 0,
-        disposition: i === 1 ? 'unmeasured' : i === 0 ? 'above_line' : 'consistent',
-        reasons: i === 1 ? ['heating_window_incomplete', 'cooling_window_incomplete'] : i === 0 ? ['descriptive_line_residual'] : [],
+        heating_residual: i === 1 ? null : i === 0 ? .5 : 0, cooling_residual: i === 1 ? null : i === 2 ? -.5 : 0,
+        heating_status: i === 1 ? null : i === 0 ? 'above_line' : 'consistent',
+        cooling_status: i === 1 ? null : i === 2 ? 'below_line' : 'consistent',
+        reasons: i === 1 ? ['heating_window_incomplete', 'cooling_window_incomplete'] : [],
       };
     });
     const line = (heating: boolean, reference: boolean) => ({ reference_outdoor_c: 0,
@@ -622,7 +623,7 @@ test.describe('staff navigation shell', () => {
         house_coupling_per_h: .02, background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 30,
         time_constant_h: 16.7, heating_rate_c_per_h: 1, r2: .9, sample_count: 800, residual_std_c: .05 },
         measured_runs: { policy: 'measured_room_runs_v1', measurement_method: 'native_mean_onset_peak_v1', fitted_observations: 800,
-          residual_degrees_of_freedom: 796, observed_runs: 305, heating_runs: 304, cooling_runs: 304, flagged_runs: 1, unmeasured_runs: 1,
+          residual_degrees_of_freedom: 796, observed_runs: 305, heating_runs: 304, cooling_runs: 304, heating_flagged_runs: 1, cooling_flagged_runs: 1, unmeasured_runs: 1,
           reference: { room_c: 20, house_c: 20 }, lines: { heating: line(true, false), cooling: line(false, false),
             reference_heating: line(true, true), reference_cooling: line(false, true) },
           validation: { training_to: '2026-07-01T00:00:00Z', observations: 20, trajectory_mae_c: .12, trajectory_bias_c: -.01, projected_trajectory_mae_c: .2, projected_trajectory_bias_c: -.08 } } },
@@ -645,7 +646,16 @@ test.describe('staff navigation shell', () => {
     await expect(heating.locator('[data-run]')).toHaveCount(304);
     await expect(cooling.locator('[data-run]')).toHaveCount(304);
     expect(requestedOffsets).toEqual([100, 200, 300]);
-    await expect(panel.getByTestId('measured-run-counts')).toHaveText('303 behållna · 1 flaggade · 1 utan mätbart punktvärde · 305 visade');
+    await expect(panel.getByTestId('measured-run-counts')).toHaveText('305 visade förlopp');
+    await expect(panel.getByTestId('measured-run-counts-heating')).toHaveText('303 nära linjen · 1 flaggade · 1 utan uppvärmningspunkt');
+    await expect(panel.getByTestId('measured-run-counts-cooling')).toHaveText('303 nära linjen · 1 flaggade · 1 utan avsvalningspunkt');
+    // A run flagged in one chart is an ordinary point in the other.
+    await expect(heating.locator('[data-run="synthetic-0"] rect')).toHaveCount(1);
+    await expect(cooling.locator('[data-run="synthetic-0"] rect')).toHaveCount(0);
+    await expect(cooling.locator('[data-run="synthetic-2"] rect')).toHaveCount(1);
+    await expect(heating.locator('[data-run="synthetic-2"] rect')).toHaveCount(0);
+    await expect(heating.locator('[data-run] rect')).toHaveCount(1);
+    await expect(cooling.locator('[data-run] rect')).toHaveCount(1);
     await expect(panel.getByRole('group', { name: 'Förloppens temperaturvillkor' })).toHaveCount(0);
     await expect(panel.getByRole('button', { name: /Nyare förlopp|Äldre förlopp|Vid referenstemperatur|Uppmätt/ })).toHaveCount(0);
     await expect(panel.getByTestId('room-prediction-error')).toContainText('Medelabsolut prognosfel för temperatur');
@@ -655,11 +665,12 @@ test.describe('staff navigation shell', () => {
     const select = panel.getByLabel('Visa detaljer för ett förlopp');
     await select.selectOption('synthetic-0');
     const detail = panel.getByTestId('room-run-detail');
-    await expect(detail).toContainText('Flaggat: över den anpassade linjen');
+    await expect(detail.locator('dd').nth(0)).toHaveText('Flaggad: över linjen');
+    await expect(detail.locator('dd').nth(1)).toHaveText('Nära linjen');
     await expect(detail).toContainText('Start → topp (intervallmedel)');
     await expect(detail).not.toContainText('annan källa');
     await select.selectOption('synthetic-1');
-    await expect(detail).toContainText('Inget mätbart punktvärde');
+    await expect(detail.locator('dd').nth(0)).toHaveText('Ingen mätbar punkt');
     await expect(detail).toContainText('Uppvärmningen saknar fullständiga');
     await select.selectOption('synthetic-304');
     await expect(detail).toContainText('2025');

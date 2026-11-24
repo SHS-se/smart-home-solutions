@@ -14,7 +14,10 @@ const measuredLine = z.object({
 export const roomMeasuredEvidence = z.object({
   policy: z.literal(ROOM_MEASURED_POLICY), measurement_method: z.literal(ROOM_MEASUREMENT_METHOD),
   fitted_observations: count, residual_degrees_of_freedom: finite,
-  observed_runs: count, heating_runs: count, cooling_runs: count, flagged_runs: count, unmeasured_runs: count,
+  observed_runs: count, heating_runs: count, cooling_runs: count, unmeasured_runs: count,
+  heating_flagged_runs: count.optional(), cooling_flagged_runs: count.optional(),
+  /** Run-level count published before heating and cooling were flagged separately. */
+  flagged_runs: count.optional(),
   reference: z.object({ room_c: finite, house_c: finite }),
   lines: z.object({ heating: measuredLine.nullable(), cooling: measuredLine.nullable(),
     reference_heating: measuredLine.nullable(), reference_cooling: measuredLine.nullable() }),

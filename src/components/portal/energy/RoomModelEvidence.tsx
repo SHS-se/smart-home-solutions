@@ -73,7 +73,10 @@ export function LatestRoomRunEvidence({ attempt }: { attempt: unknown }) {
   return <section className="space-y-1 border-t pt-3 text-xs" data-testid="latest-room-run-evidence">
     <h4 className="text-sm font-medium">{t('Senaste anpassningsförsök', 'Latest fitting attempt')}</h4>
     {measured && <p>{measured.observed_runs.toLocaleString(language)} {t('observerade förlopp', 'observed runs')}
-      {' · '}{measured.flagged_runs.toLocaleString(language)} {t('flaggade efter anpassningen', 'flagged after fitting')}
+      {measured.heating_flagged_runs !== undefined && measured.cooling_flagged_runs !== undefined ? <>
+        {' · '}{measured.heating_flagged_runs.toLocaleString(language)} {t('flaggade uppvärmningspunkter', 'flagged heating points')}
+        {' · '}{measured.cooling_flagged_runs.toLocaleString(language)} {t('flaggade avsvalningspunkter', 'flagged cooling points')}
+      </> : measured.flagged_runs !== undefined && <>{' · '}{measured.flagged_runs.toLocaleString(language)} {t('flaggade efter anpassningen', 'flagged after fitting')}</>}
       {' · '}{measured.unmeasured_runs.toLocaleString(language)} {t('utan mätbart punktvärde', 'without a measurable point')}</p>}
     {!measured && transitions && <p>{t('Anpassade övergångar', 'Fitted transitions')}{' · '}{transitions.fitted_transitions.toLocaleString(language)}</p>}
     {!measured && !transitions && run && <p>{run.fitted_runs.toLocaleString(language)} {t('jämförbara förlopp', 'comparable runs')}

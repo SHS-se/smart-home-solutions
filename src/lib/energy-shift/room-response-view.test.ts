@@ -108,7 +108,7 @@ Deno.test('chronological support and per-run diagnostics are separate, including
 const measuredCalibration: MeasuredRoomCalibration = {
   policy: 'measured_room_runs_v1', measurement_method: 'native_mean_onset_peak_v1',
   fitted_observations: 200, residual_degrees_of_freedom: 196,
-  observed_runs: 135, heating_runs: 130, cooling_runs: 120, flagged_runs: 10, unmeasured_runs: 5,
+  observed_runs: 135, heating_runs: 130, cooling_runs: 120, heating_flagged_runs: 6, cooling_flagged_runs: 4, unmeasured_runs: 5,
   reference: { room_c: 20, house_c: 20 },
   lines: {
     heating: { reference_outdoor_c: 0, intercept: .7, slope_per_c: .03, robust_scale: .05, points: 130, effective_points: 125, constraint: 'rises', units: 'c_per_kwh' },
@@ -125,7 +125,7 @@ const measuredRun = (id: string): MeasuredRoomAssessment => ({
   cooling: { from_ms: 5_400_000, to_ms: 7_200_000, hours: .5, c_per_h: .4, room_c: 19.5,
     outdoor_c: 0, house_c: null, energy_kwh: 0 },
   reasons: ['missing_house'], reference_heating_c_per_kwh: null, reference_cooling_c_per_h: null,
-  heating_residual: 0, cooling_residual: 0, disposition: 'consistent',
+  heating_residual: 0, cooling_residual: 0, heating_status: 'consistent', cooling_status: 'above_line',
 });
 const measuredCapture = (runs: unknown[], total = 135, revision = 'measured-v1') => ({
   ...evidence('measured-v1', revision, []),
@@ -159,9 +159,21 @@ Deno.test('a single measured run is displayed with missing reference values and 
 
 Deno.test('unmeasured runs preserve their identity and reasons instead of disappearing', () => {
   const run: MeasuredRoomAssessment = { ...measuredRun('unmeasured'), heating: null, cooling: null, heating_residual: null, cooling_residual: null,
-    disposition: 'unmeasured', reasons: ['missing_energy', 'missing_cooling'] };
+    heating_status: null, cooling_status: null, reasons: ['missing_energy', 'missing_cooling'] };
   const view = readRoomResponseView(measuredCapture([run], 1))!;
   assertEquals(view.measuredPoints, [run]);
+});
+
+Deno.test('heating and cooling statuses are read independently and earlier run-level flags are dropped', () => {
+  const view = readRoomResponseView(measuredCapture([measuredRun('separate')], 1))!;
+  assertEquals([view.measuredPoints[0].heating_status, view.measuredPoints[0].cooling_status], ['consistent', 'above_line']);
+  const { heating_status: _h, cooling_status: _c, ...legacy } = measuredRun('legacy');
+  const earlier = readRoomResponseView(measuredCapture([{ ...legacy, heating_residual: -1.7, disposition: 'consistent' }], 1))!;
+  assertEquals(earlier.measuredPoints[0].heating_status, null, 'a run-level flag never stands in for one measure');
+  assertEquals(earlier.measuredPoints[0].heating_residual, null, 'residuals against reference lines are not shown as distances from drawn lines');
+  assert(!('disposition' in earlier.measuredPoints[0]));
+  const mixed = readRoomResponseView(measuredCapture([{ ...measuredRun('mixed'), disposition: 'consistent' }], 1))!;
+  assertEquals(mixed.measuredPoints, [], 'one ledger never mixes both shapes');
 });
 
 Deno.test('missing, stale, malformed and truncated measured pages never attach points to the accepted revision', () => {

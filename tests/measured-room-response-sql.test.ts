@@ -7,6 +7,7 @@ import type { MeasuredRoomAssessment, MeasuredRoomCalibration } from "../supabas
 
 const migration = "supabase/migrations/20261123160000_measured_room_response.sql";
 const stateMigration = "supabase/migrations/20261123170000_state_carrying_room_forecasts.sql";
+const flagMigration = "supabase/migrations/20261124100000_separate_measured_run_flags.sql";
 const policy = "measured_room_runs_v1", method = "native_mean_onset_peak_v1";
 const archive = "chronological_native_evidence_v1", previousImplementation = `${archive}:${policy}:${method}`;
 const implementation = `${previousImplementation}:state_carrying_forecast_v1`;
@@ -15,6 +16,7 @@ async function database() {
   const db = await chronologicalRoomDatabase();
   await db.exec(await Deno.readTextFile(migration));
   await db.exec(await Deno.readTextFile(stateMigration));
+  await db.exec(await Deno.readTextFile(flagMigration));
   await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()");
   return db;
 }
@@ -23,13 +25,14 @@ const run = (i: number): MeasuredRoomAssessment => ({
   heating: { on_ms:i,peak_ms:i+1,peak_end_ms:i+2,energy_kwh:.2,hours:1,rise_c:.4,c_per_kwh:2,
     room_start_c:19,room_peak_c:19.4,room_mean_c:19.2,outdoor_c:i,house_c:null,native_seconds:[300,900] },
   cooling: null, reasons: [], reference_heating_c_per_kwh:2,reference_cooling_c_per_h:null,
-  heating_residual:0,cooling_residual:null,disposition:"consistent",
+  heating_residual:0,cooling_residual:null,heating_status:"consistent",cooling_status:null,
 });
 function summary(runs: MeasuredRoomAssessment[]): MeasuredRoomCalibration {
   return {policy,measurement_method:method,fitted_observations:100,residual_degrees_of_freedom:90,
     observed_runs:runs.length,heating_runs:runs.filter(r=>r.heating).length,cooling_runs:runs.filter(r=>r.cooling).length,
-    flagged_runs:runs.filter(r=>r.disposition==="above_line" || r.disposition==="below_line").length,
-    unmeasured_runs:runs.filter(r=>r.disposition==="unmeasured").length,reference:{room_c:20,house_c:20},
+    heating_flagged_runs:runs.filter(r=>r.heating_status==="above_line" || r.heating_status==="below_line").length,
+    cooling_flagged_runs:runs.filter(r=>r.cooling_status==="above_line" || r.cooling_status==="below_line").length,
+    unmeasured_runs:runs.filter(r=>!r.heating && !r.cooling).length,reference:{room_c:20,house_c:20},
     lines:{heating:null,cooling:null,reference_heating:null,reference_cooling:null},
     validation:{training_to:null,observations:0,trajectory_mae_c:null,trajectory_bias_c:null}};
 }
@@ -83,7 +86,7 @@ Deno.test("measured SQL retains accepted response and immutable ledger when an u
   const db=await database();try {
     let fit=await stage(db,[run(1)]); assert(await fit.complete());
     const accepted=(await db.query<{v:unknown}>("SELECT heating_bands->'reference' AS v FROM energy_optimisation_zone_models WHERE home_id=$1",[home])).rows[0].v;
-    await handBack(db,fit.j); fit=await stage(db,[{...run(2),heating:null,disposition:"unmeasured",reasons:["missing_native_temperature"]}]);
+    await handBack(db,fit.j); fit=await stage(db,[{...run(2),heating:null,heating_status:null,reasons:["missing_native_temperature"]}]);
     const failed={...fit.model,heating_bands:{...fit.model.heating_bands,reference:accepted,
       shared_attempt:{...fit.model.heating_bands.shared_attempt,status:"unidentified"}}};
     assert(await fit.complete(failed)); assertEquals(await page(db,"synthetic-accepted"),[run(1)]);
@@ -110,6 +113,29 @@ Deno.test("measured SQL enforces structural support and ledger types, without in
     assert(await (await stage(db,[unusual],"second-accepted")).complete());
   } finally {await db.close();}
 });
+Deno.test("measured SQL counts heating and cooling flags separately and still accepts the earlier run-level shape",async()=>{
+  const db=await database();try {
+    const cooling={from_ms:3,to_ms:4,hours:1,c_per_h:.2,room_c:20,outdoor_c:3,house_c:null,energy_kwh:0};
+    const runs=[{...run(0),heating_status:"below_line" as const,cooling,cooling_status:"consistent" as const},
+      {...run(1),cooling,cooling_status:"above_line" as const}];
+    let fit=await stage(db,runs);
+    const support=fit.model.last_fit_attempt.learning.measured_runs;
+    assertEquals([support.heating_flagged_runs,support.cooling_flagged_runs],[1,1]);
+    await assertRejects(()=>fit.complete(fit.model,{...fit.ledger,runs:[{...runs[0],heating_status:"consistent"},runs[1]]}),Error,"population");
+    await assertRejects(()=>fit.complete(fit.model,{...fit.ledger,runs:[runs[0],{...runs[1],heating_status:"unmeasured"}]}),Error,"assessment");
+    await assertRejects(()=>fit.complete(fit.model,{...fit.ledger,runs:[runs[0],{...runs[1],disposition:"consistent"}]}),Error,"assessment");
+    assert(await fit.complete()); assertEquals(await page(db,"synthetic-accepted"),runs.toReversed());
+    await handBack(db,fit.j);
+    // A ledger published before the split keeps its run-level disposition.
+    fit=await stage(db,[],"legacy-accepted");
+    const {heating_status:_h,cooling_status:_c,...legacyRun}=run(2);
+    const {heating_flagged_runs:_hf,cooling_flagged_runs:_cf,...legacySupport}=fit.model.last_fit_attempt.learning.measured_runs;
+    const learning={measured_runs:{...legacySupport,observed_runs:1,heating_runs:1,flagged_runs:0,unmeasured_runs:0}};
+    const legacy={...fit.model,last_fit_attempt:{learning},heating_bands:{...fit.model.heating_bands,
+      reference:{...fit.model.heating_bands.reference,learning_evidence:learning}}};
+    assert(await fit.complete(legacy,{...fit.ledger,observed_runs:1,runs:[{...legacyRun,disposition:"consistent"}]}));
+  } finally {await db.close();}
+});
 Deno.test("measured migration fences old numerical capsules while keeping accepted models and reusable source archives",async()=>{
   const db=await database();try {
     const fit=await stage(db,[run(0)]);
@@ -125,7 +151,7 @@ Deno.test("measured migration fences old numerical capsules while keeping accept
 Deno.test("untrained measured attempts keep their complete accounting and hourly cadence without fabricating a response",async()=>{
   const db=await database();try {
     await db.query("UPDATE energy_optimisation_zone_models SET trained=false,rejection_reason='insufficient_samples',gain_c_per_wh=NULL,cooling_constant_per_h=NULL WHERE home_id=$1",[home]);
-    const fit=await stage(db,[{...run(0),heating:null,disposition:"unmeasured",reasons:["no_measured_onset"]}]);
+    const fit=await stage(db,[{...run(0),heating:null,heating_status:null,reasons:["no_measured_onset"]}]);
     const learning={measured_runs:{...fit.model.last_fit_attempt.learning.measured_runs,fitted_observations:0,residual_degrees_of_freedom:0}};
     const failed={...fit.model,sample_count:0,last_fit_attempt:{learning},heating_bands:{...fit.model.heating_bands,
       reference:undefined,reference_revision:undefined,shared_attempt:{...fit.model.heating_bands.shared_attempt,status:"unidentified"}}};

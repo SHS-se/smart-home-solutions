@@ -52,12 +52,21 @@ export interface MeasuredRoomRun {
   reasons: string[];
 }
 
+/** Where one measured point sits against the published line of its own measure. */
+export type MeasuredPointStatus = "consistent" | "above_line" | "below_line";
+/** Robust scales from its line beyond which a point is flagged. */
+export const MEASURED_LINE_FLAG_SCALES = 3;
+
 export interface MeasuredRoomAssessment extends MeasuredRoomRun {
   reference_heating_c_per_kwh: number | null;
   reference_cooling_c_per_h: number | null;
+  /** Distance from the published `lines.heating`, in its units. */
   heating_residual: number | null;
+  /** Distance from the published `lines.cooling`, in its units. */
   cooling_residual: number | null;
-  disposition: "consistent" | "above_line" | "below_line" | "unmeasured";
+  /** Heating and cooling are judged independently; null where the run has no such point. */
+  heating_status: MeasuredPointStatus | null;
+  cooling_status: MeasuredPointStatus | null;
 }
 
 export interface MeasuredRoomCalibration {
@@ -68,7 +77,8 @@ export interface MeasuredRoomCalibration {
   observed_runs: number;
   heating_runs: number;
   cooling_runs: number;
-  flagged_runs: number;
+  heating_flagged_runs: number;
+  cooling_flagged_runs: number;
   unmeasured_runs: number;
   reference: { room_c: number; house_c: number };
   lines: {
@@ -98,6 +108,13 @@ export interface MeasuredRoomLedger {
 
 export const measuredRoomLineAt = (line: MeasuredRoomLine, outdoorC: number): number =>
   line.intercept + line.slope_per_c * (outdoorC - line.reference_outdoor_c);
+
+/** A point's status against the line it is drawn with; no other measure takes part. */
+export function measuredPointStatus(line: MeasuredRoomLine, outdoorC: number, value: number): MeasuredPointStatus {
+  const residual = value - measuredRoomLineAt(line, outdoorC);
+  return Math.abs(residual) <= MEASURED_LINE_FLAG_SCALES * line.robust_scale ? "consistent"
+    : residual > 0 ? "above_line" : "below_line";
+}
 
 /** Structural support is distinct from agreement or the number of closed runs. */
 export function hasMeasuredRoomSupport(value: unknown): boolean {
