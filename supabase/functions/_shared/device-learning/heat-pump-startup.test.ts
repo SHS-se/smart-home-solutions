@@ -107,3 +107,19 @@ Deno.test("the draw is checked even before any peak has been observed", () => {
   assertEquals(model.check.draw_error_w, 0);
   assertEquals([model.check.starts, model.check.running_peak_hours], [0, 0]);
 });
+
+Deno.test("quarters stored without peaks take the peak their hour was later sent with", () => {
+  const quarter = (q: number, peak: number | null): HeatPumpInterval =>
+    ({ start_ms: T0 + q * 900_000, duration_s: 900, energy_kwh: 0.2, peak_w: peak, outdoor_c: -9 });
+  const native: HeatPumpInterval = { start_ms: T0, duration_s: 3600, energy_kwh: 0.8, peak_w: 2871.9, outdoor_c: -9 };
+  // Energy still comes from the four quarters; only the missing peak comes from the hour.
+  assertEquals(heatPumpHours([quarter(0, null), quarter(1, null), quarter(2, null), quarter(3, null), native])
+    .map(h => [Math.round(h.mean_w), h.peak_w]), [[800, 2871.9]]);
+  assertEquals(heatPumpHours([quarter(0, 2100), quarter(1, 900), quarter(2, null), quarter(3, 800), native])
+    .map(h => h.peak_w), [2871.9]);
+  // Complete quarter peaks are finer than the hour and win.
+  assertEquals(heatPumpHours([quarter(0, 2100), quarter(1, 900), quarter(2, 850), quarter(3, 800), native])
+    .map(h => h.peak_w), [2100]);
+  assertEquals(heatPumpHours([quarter(0, null), quarter(1, 900), quarter(2, 850), quarter(3, 800)])
+    .map(h => h.peak_w), [null]);
+});

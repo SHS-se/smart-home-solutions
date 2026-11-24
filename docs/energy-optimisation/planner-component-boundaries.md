@@ -713,7 +713,9 @@ and a home with a heat pump then re-sends its retained history once to fill them
 in, so the re-send is never spent on a server that would drop them.
 
 `device-learning/heat-pump-startup.ts` assembles hours from four complete
-quarters or one native hour. An hour averaging under 100 W is standby; a running
+quarters or one native hour. Quarters stored before peaks were sent take the
+peak of the same hour when it arrives again as a native hour from older Recorder
+statistics; complete quarter peaks are finer and win. An hour averaging under 100 W is standby; a running
 hour after a standby hour is a start, and the two hours after it are its
 recovery. A missing or cooling hour is unknown, never standby, and the hours
 after it count as running only once a start inside it could no longer be

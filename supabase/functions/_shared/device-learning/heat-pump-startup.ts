@@ -125,8 +125,11 @@ export function heatPumpHours(intervals: readonly HeatPumpInterval[]): Hour[] {
     const quarters = [...entry.quarters.values()];
     if (quarters.length === 4) {
       const peaks = quarters.map(q => q.peak_w), outdoors = quarters.map(q => q.outdoor_c).filter(finite);
+      // Quarters uploaded before peaks were sent have none; the same hour sent
+      // again from older Recorder statistics carries its peak as a native hour.
+      const hourPeak = entry.hour && finite(entry.hour.peak_w) ? entry.hour.peak_w : null;
       hours.push({ start_ms: at, mean_w: quarters.reduce((sum, q) => sum + q.energy_kwh, 0) * 1000,
-        peak_w: peaks.every(finite) ? Math.max(...peaks as number[]) : null,
+        peak_w: peaks.every(finite) ? Math.max(...peaks as number[]) : hourPeak,
         outdoor_c: outdoors.length ? mean(outdoors) : null });
     } else if (entry.hour) {
       hours.push({ start_ms: at, mean_w: entry.hour.energy_kwh * 1000,
