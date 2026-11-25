@@ -5,7 +5,8 @@ import { ROOM_EXCHANGE_FAMILY } from "../supabase/functions/_shared/device-learn
 import { WEATHER_HEATING_METHOD } from "../supabase/functions/_shared/planner/weather-heating.ts";
 const home = "11111111-1111-4111-8111-111111111111";
 const method = "interval_mean_transition_holdout_v1";
-async function database() {
+const startupRecoveryMigration = "supabase/migrations/20261125150000_recover_heat_pump_startup_fits.sql";
+async function database(recoverStartup = true) {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA private; CREATE SCHEMA net; CREATE SCHEMA cron; CREATE SCHEMA extensions;
@@ -20,6 +21,7 @@ async function database() {
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
     CREATE TABLE energy_optimisation_devices(id uuid PRIMARY KEY,home_id uuid,customer_id uuid,
       device_key text,planning_role_override text,retired_at timestamptz,category text,statistic_id text,
+      load_type_override text,suggested_load_type text,
       first_seen_at timestamptz DEFAULT now(),mapping_status text,mapped_control_type text,control_type_override text,mapping_summary jsonb,
       UNIQUE(id,home_id,customer_id));
     CREATE TABLE energy_optimisation_device_slots(device_id uuid,home_id uuid,customer_id uuid,
@@ -40,6 +42,11 @@ async function database() {
     CREATE TABLE energy_room_profiles(home_id uuid PRIMARY KEY,rooms jsonb,connections jsonb DEFAULT '[]');
     CREATE TABLE energy_room_probe_slots(home_id uuid,room_key text,source_key text,start_ts timestamptz,temperature_c numeric);
     CREATE TABLE energy_history_notes(home_id uuid,event_type text,note_date date);
+    CREATE TABLE energy_heating_observations(home_id uuid,customer_id uuid,start_ts timestamptz,duration_s integer,
+      device_energy_kwh jsonb,outdoor_temperature_c double precision,cooling boolean,device_statistics jsonb,
+      learning_updated_at timestamptz);
+    CREATE TABLE private.energy_heating_meter_exclusions(home_id uuid,device_key text,statistic_id text,
+      valid_from timestamptz,valid_to timestamptz);
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
@@ -50,6 +57,8 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261113161000_learn_from_hourly_heating_history.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261117110000_learn_room_doorway_exchange.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261118120000_version_heating_bands.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261124190000_heat_pump_power_peaks.sql"));
+  if (recoverStartup) await db.exec(await Deno.readTextFile(startupRecoveryMigration));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -387,5 +396,110 @@ Deno.test("weather learner reads a full imported hour once and gives matching co
     assertEquals(await evidence("replacement"), [{ day: "2026-01-01", hours: 1, outdoor_c: -2, watts: 800 }]);
     await db.query("UPDATE energy_optimisation_devices SET retired_at=now() WHERE id=$1", [meter]);
     assertEquals(await evidence("original"), []);
+  } finally { await db.close(); }
+});
+
+
+Deno.test("a failed start-up fit publishes usable draw and retries durably until its model publishes", async () => {
+  const db = await database();
+  const key = "synthetic-startup-pump";
+  try {
+    await db.query("SELECT request_energy_device_learning($1,$1,$2::jsonb)", [home,
+      [{ kind: "device", key, input: { weather_heating_binding: "synthetic-binding" } }]]);
+    const first = await claim(db, key);
+    const row = { home_id: home, customer_id: home, device_key: key,
+      operating_points: { method: WEATHER_HEATING_METHOD, binding: "synthetic-binding", points: [] },
+      last_attempted_at: new Date().toISOString(),
+      last_fit_attempt: { learning: { method: WEATHER_HEATING_METHOD }, issues: ["heat_pump_startup_unavailable"] } };
+    assert(await publish(db, first, 0, row));
+    const readJob = async () => (await db.query<{ pending: boolean; released: boolean; delayed: boolean;
+      finished_at: string | null; last_error: string | null }>(`SELECT pending,lease_until IS NULL AS released,
+      wake_after>now()+interval '4 minutes' AS delayed,finished_at,last_error
+      FROM private.energy_learning_jobs WHERE id=$1`, [first.id])).rows[0];
+    assertEquals(await readJob(), { pending: true, released: true, delayed: true,
+      finished_at: null, last_error: "Heat pump start-up fit needs retry" });
+    assertEquals((await db.query<{ points: unknown }>("SELECT operating_points AS points FROM energy_optimisation_device_operating_points")).rows[0].points,
+      row.operating_points);
+    await db.exec("DELETE FROM net.wakes; SELECT private.sweep_energy_learning_jobs()");
+    assertEquals((await db.query("SELECT * FROM net.wakes")).rows.length, 0);
+    await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()-interval '1 second'; SELECT private.sweep_energy_learning_jobs()");
+    assertEquals((await db.query("SELECT * FROM net.wakes")).rows.length, 1);
+    const retry = await claim(db, key);
+    assert(retry.fence > first.fence);
+    assertEquals(await publish(db, first, 1, row), false);
+    // Another timeout remains pending too; retry is not just a one-off repair.
+    assert(await publish(db, retry, 1, row));
+    await db.exec("UPDATE private.energy_learning_jobs SET wake_after=now()-interval '1 second'");
+    const next = await claim(db, key);
+    const startup = { method: "heat_pump_startup_v1", bands: [{ band_c: -5, start_peak_max_w: 2900 }] };
+    const revision = (await db.query<{ model_revision: number }>("SELECT model_revision FROM energy_optimisation_device_operating_points")).rows[0].model_revision;
+    assert(await publish(db, next, revision, { ...row,
+      operating_points: { ...row.operating_points, heat_pump: startup },
+      last_fit_attempt: { learning: { method: WEATHER_HEATING_METHOD }, issues: [] } }));
+    const job = await readJob();
+    assertEquals(job.pending, false);
+    assertEquals(job.last_error, null);
+    assert(job.finished_at !== null);
+    assertEquals((await db.query<{ startup: unknown }>("SELECT operating_points->'heat_pump' AS startup FROM energy_optimisation_device_operating_points")).rows[0].startup, startup);
+  } finally { await db.close(); }
+});
+
+Deno.test("deployment recovers completed failed start-up jobs without restarting removed, retired or successful owners", async () => {
+  const db = await database(false);
+  try {
+    for (const [key, failed, retired, removed] of [["failed", true, false, false], ["successful", false, false, false],
+      ["retired", true, true, false], ["removed", true, false, true]] as const) {
+      await db.query(`INSERT INTO energy_optimisation_devices(id,home_id,customer_id,device_key,category,suggested_load_type,retired_at)
+        VALUES(gen_random_uuid(),$1,$1,$2,'heating','inverter',CASE WHEN $3 THEN now() END)`, [home, key, retired]);
+      await db.query(`INSERT INTO energy_optimisation_device_operating_points(home_id,customer_id,device_key,last_fit_attempt)
+        VALUES($1,$1,$2,$3)`, [home, key, { issues: failed ? ["heat_pump_startup_unavailable"] : [] }]);
+      await db.query(`INSERT INTO private.energy_learning_jobs(home_id,customer_id,owner_kind,owner_key,input,pending,finished_at,last_error)
+        VALUES($1,$1,'device',$2,'{}',false,now(),$3)`, [home, key, removed ? "Learning owner removed" : null]);
+    }
+    await db.exec(await Deno.readTextFile(startupRecoveryMigration));
+    assertEquals((await db.query("SELECT owner_key,pending,generation,fence FROM private.energy_learning_jobs ORDER BY owner_key")).rows,
+      [{ owner_key: "failed", pending: true, generation: 2, fence: 1 },
+        { owner_key: "removed", pending: false, generation: 1, fence: 0 },
+        { owner_key: "retired", pending: false, generation: 1, fence: 0 },
+        { owner_key: "successful", pending: false, generation: 1, fence: 0 }]);
+  } finally { await db.close(); }
+});
+
+Deno.test("indexed start-up history preserves native intervals, late corrections, holes and unavailable counters", async () => {
+  const db = await database();
+  const key = "synthetic-startup-pump";
+  try {
+    await db.query(`INSERT INTO energy_optimisation_devices(id,home_id,customer_id,device_key,category,load_type_override)
+      VALUES(gen_random_uuid(),$1,$1,$2,'heating','inverter')`, [home, key]);
+    const start = Date.UTC(2026, 0, 1);
+    const insert = async (minute: number, duration: number, energy: unknown, peak: number | null,
+      updated = "2026-01-02", customer = home) => {
+      await db.query(`INSERT INTO energy_heating_observations VALUES($1,$2,$3,$4,$5,-5,NULL,$6,$7)`,
+        [home, customer, new Date(start + minute * 60_000).toISOString(), duration,
+          { [key]: energy }, { [key]: "synthetic-meter" }, updated]);
+      if (peak !== null) await db.query(`INSERT INTO private.energy_heating_power_peaks VALUES($1,$1,$2,$3,$4,$5)`,
+        [home, key, new Date(start + minute * 60_000).toISOString(), duration, peak]);
+    };
+    await insert(0, 3600, 1, 2900);
+    await insert(0, 900, .1, 1200);
+    await insert(0, 900, .2, null, "2026-01-03"); // A late correction wins.
+    await insert(15, 900, null, null); // Unavailable counter remains unknown.
+    // The 30-minute quarter is absent; later observations still survive.
+    await insert(45, 900, .3, null);
+    await insert(60, 900, .4, 1600); // Newest completed quarter needs no later data.
+    await insert(75, 900, 99, null, "2026-01-04", "22222222-2222-4222-8222-222222222222");
+    await insert(90, 900, .5, null);
+    await db.query(`INSERT INTO private.energy_heating_meter_exclusions VALUES($1,$2,'synthetic-meter','2026-01-01T01:30Z','2026-01-01T01:45Z')`, [home, key]);
+    const read = async () => (await db.query<{ intervals: unknown }>(
+      "SELECT get_energy_heat_pump_intervals($1,$1,$2,'2026-01-01','2026-01-02') AS intervals", [home, key])).rows[0].intervals;
+    assertEquals(await read(), [
+      [start / 1000, 900, .2, -5, 1200, null], [start / 1000, 3600, 1, -5, 2900, null],
+      [(start + 45 * 60_000) / 1000, 900, .3, -5, null, null],
+      [(start + 60 * 60_000) / 1000, 900, .4, -5, 1600, null],
+    ]);
+    await insert(30, 900, .25, 1500); // Filling a hole repairs the next read automatically.
+    assertEquals((await read() as unknown[]).length, 5);
+    await db.exec("UPDATE energy_optimisation_devices SET load_type_override='resistive'");
+    assertEquals(await read(), null);
   } finally { await db.close(); }
 });

@@ -730,6 +730,11 @@ within the predicted highest.
 The model is recomputed by the device's daily weather-draw refit and stored as
 `operating_points.heat_pump`. It does not enter the planning snapshot, and the
 planner does not read it yet. A failed read keeps the previous model and never
-holds back the draw refit. Heat or cool mode is unknown for most old hourly
+holds back the draw refit. Device-key indexing keeps its history read out of
+unrelated rooms' observations. Publication of a draw with
+`heat_pump_startup_unavailable` leaves the same fenced learning job pending; the
+existing durable sweep retries it after five minutes, and only a complete fit
+finishes the job. Deployment also requeues completed partial fits for active
+heat pumps. Heat or cool mode is unknown for most old hourly
 history, so summer cooling still appears in the warm bands.
 
