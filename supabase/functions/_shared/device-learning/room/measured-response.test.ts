@@ -1,10 +1,11 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
-import { learnMeasuredRoomResponse, measuredLineResponse, prepareMeasuredRoomResponse, fitMeasuredRoomCell, parseMeasuredRoomCells, finalizeMeasuredRoomResponse, ROOM_MEASURED_CELL_COUNT } from "./measured-response.ts";
+import { learnMeasuredRoomResponse, prepareMeasuredRoomResponse, fitMeasuredRoomCell, parseMeasuredRoomCells, finalizeMeasuredRoomResponse, ROOM_MEASURED_CELL_COUNT } from "./measured-response.ts";
 import { syntheticMeasuredRoom, measuredSyntheticEvidence } from "./measured-response.fixture.ts";
 import { readThermalModel } from "../../planner/models/room/read-model.ts";
 import type { RoomMeanQuarter } from "./mean-observations.ts";
-import { hasMeasuredRoomSupport, type MeasuredRoomRun } from "../../planner/models/room/measured-evidence.ts";
-import { roomHeaterGain } from "../../planner/models/room/thermal.ts";
+import { hasMeasuredRoomSupport } from "../../planner/models/room/measured-evidence.ts";
+import { excludeUncontrolledRoomHeat } from "../../planner/models/room/thermal.ts";
+import { syntheticOperationRoom } from "./measured-calibration.fixture.ts";
 
 Deno.test("measured response identifies weather input gain and conserved delayed heat from native means", () => {
   const plant = syntheticMeasuredRoom(), fit = learnMeasuredRoomResponse(measuredSyntheticEvidence(plant.rows), 600);
@@ -50,6 +51,10 @@ Deno.test("rank deficiency publishes measured evidence without invented physical
   assertEquals(fit.result.ok, false);
   assertEquals(fit.result.learning_evidence.measured_runs.fitted_observations, 0);
   assertEquals(fit.run_ledger!.runs, []);
+  const calibration = fit.result.learning_evidence.measured_calibration;
+  assert(calibration.status === "unidentified");
+  assertEquals(calibration.reason, "no_native_pairs");
+  assertEquals(calibration.uncredited_background_w, null);
 });
 
 Deno.test("missing later irradiance preserves solar candidate shape and known heater memory", () => {
@@ -111,56 +116,36 @@ Deno.test("descriptive candidates cannot shrink causal holdout support or supply
   const algebraicOnly = finalizeMeasuredRoomResponse(prepared, descriptive);
   assertEquals(algebraicOnly.result.learning_evidence.chronological_model, null, "an algebraic balance is never a dynamical response");
   assertEquals(algebraicOnly.result.learning_evidence.descriptive_fit?.family, "equilibrium");
-  // The measured lines do not depend on the chronological candidates.
+  // Native operation calibration does not depend on the chronological candidates.
   assertEquals(algebraicOnly.result.ok && algebraicOnly.result.model, alone.result.model);
 });
 
-// Synthetic measured runs, independent of household observations.
-function syntheticRuns(cooling = true): MeasuredRoomRun[] {
-  return Array.from({ length: 12 }, (_, i) => {
-    const outdoor = -6 + i, start = i * 86_400_000;
-    return { id: String(start), from_ms: start, on_ms: start, off_ms: start + 3_600_000, to_ms: start + 4 * 3_600_000, energy_kwh: 1,
-      heating: { on_ms: start, peak_ms: start + 3_600_000, peak_end_ms: start + 4_500_000, energy_kwh: 1, hours: 1,
-        rise_c: 1 + .02 * outdoor, c_per_kwh: 1 + .02 * outdoor, room_start_c: 19, room_peak_c: 20, room_mean_c: 19.5,
-        outdoor_c: outdoor, house_c: 19, native_seconds: [900] },
-      cooling: cooling ? { from_ms: start + 7_200_000, to_ms: start + 14_400_000, hours: 2,
-        c_per_h: .01 * (20 - outdoor), room_c: 20, outdoor_c: outdoor, house_c: 19, energy_kwh: 0 } : null,
-      reasons: [] };
-  });
-}
-
-Deno.test("the planner response takes cooling loss from the cooling points and adds each run's loss back to its net rise once", () => {
-  const model = measuredLineResponse(syntheticRuns(), 1000);
-  assert(model && model.response_family === "finite" && readThermalModel(JSON.parse(JSON.stringify(model))));
-  for (const outdoor of [-6, 0, 5]) {
-    // Net rise 1 + .02·outdoor over a one-hour, 1 kWh run at 19.5 °C, plus that hour's loss .01·(19.5 − outdoor).
-    assertAlmostEquals(roomHeaterGain(model, outdoor) * 1000, 1 + .02 * outdoor + .01 * (19.5 - outdoor), 1e-6);
-  }
-  assertAlmostEquals(model.cooling_constant_per_h, .01, 1e-9, "cooling falls .01 °C/h per °C above outdoors");
-  assertEquals([model.house_coupling_per_h, model.heat_lag_h], [0, 0]);
-  assertAlmostEquals(model.background_gain_c_per_h, 0, 1e-9);
-  assertEquals(measuredLineResponse(syntheticRuns(false), 1000), null, "no cooling points, no line response");
-});
-
-Deno.test("cooling points separate rest-of-home exchange from outdoor loss and a constant term", () => {
-  const runs = syntheticRuns().map((run, i) => {
-    const room = 20 + (i % 3) * .5, house = 19 + (i % 4) * .4, outdoor = run.cooling!.outdoor_c;
-    return { ...run, cooling: { ...run.cooling!, room_c: room, house_c: house,
-      c_per_h: .012 * (room - outdoor) + .05 * (room - house) - .02 } };
-  });
-  const model = measuredLineResponse(runs, 1000);
-  assert(model && model.response_family === "finite");
-  assertAlmostEquals(model.cooling_constant_per_h, .012, 1e-9);
-  assertAlmostEquals(model.house_coupling_per_h!, .05, 1e-9);
-  assertAlmostEquals(model.background_gain_c_per_h, .02, 1e-9);
-});
-
-Deno.test("measured lines become the published planner response and the chronological fit stays as evidence", () => {
+Deno.test("native operation intervals supply the published planner response and the chronological fit stays as evidence", () => {
   const plant = syntheticMeasuredRoom(), fit = learnMeasuredRoomResponse(measuredSyntheticEvidence(plant.rows), 600);
   assert(fit.result.ok);
-  assertEquals(fit.result.learning_evidence.planner_response, "measured_lines");
+  assertEquals(fit.result.learning_evidence.planner_response, "measured_intervals");
   assert(fit.result.model.response_family === "finite");
   assert(fit.result.learning_evidence.chronological_model);
   assertEquals(fit.result.learning_evidence.measured_runs.fitted_observations, fit.result.model.sample_count);
   assert(hasMeasuredRoomSupport(fit.result.learning_evidence));
+  const calibration = fit.result.learning_evidence.measured_calibration;
+  assertEquals(calibration.status, "identified");
+  assertEquals(calibration.fitted_pairs, fit.result.model.sample_count);
+  assertAlmostEquals(calibration.uncredited_background_w!,
+    Math.max(0, fit.result.learning_evidence.forecast_nuisance.fitted_offset) / fit.result.model.gain_c_per_wh, 1e-9);
+});
+
+Deno.test("unidentified operation support explains the unchanged chronological choice", () => {
+  // This synthetic input never exceeds the existing 50 W operation threshold.
+  // The chronological diagnostic still has independently varying measured input.
+  const plant = syntheticOperationRoom({ count: 360, watts: hour => hour % 12 < 3 ? 40 : 0 });
+  const fit = learnMeasuredRoomResponse(measuredSyntheticEvidence(plant.rows), 600);
+  assert(fit.result.ok);
+  const learning = fit.result.learning_evidence, calibration = learning.measured_calibration;
+  assertEquals(learning.planner_response, "chronological_fit");
+  assert(calibration.status === "unidentified");
+  assertEquals(calibration.reason, "no_native_pairs");
+  assertEquals(calibration.uncredited_background_w, null);
+  assert(learning.chronological_model);
+  assertEquals(fit.result.model, excludeUncontrolledRoomHeat(learning.chronological_model));
 });

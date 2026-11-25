@@ -5,15 +5,16 @@ import type { ThermalFitResult } from "./regression.ts";
 import { roomIntervalHours, roomIntervalSeconds } from "./mean-evidence.ts";
 import { roomHeatingDirectionKnown } from "./operation-evidence.ts";
 import { MeanFeatureWorkspace } from "./mean-features.ts";
-import { leastSquares, factorLeastSquares } from "./mean-least-squares.ts";
+import { physicalSolve, finiteProfile } from "./mean-fit-numerics.ts";
 import { solveNonnegativeNuisance } from "./mean-nuisance.ts";
 import { roomMeanPair, roomEquilibriumMeanPair } from "./mean-pairs.ts";
 import { roomMeanObservation } from "../../planner/models/room/observation.ts";
 import { excludeUncontrolledRoomHeat, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
-import { ROOM_MEASURED_POLICY, measuredRoomLineAt, type MeasuredRoomCalibration, type MeasuredRoomLedger, type MeasuredRoomRun } from "../../planner/models/room/measured-evidence.ts";
+import { ROOM_MEASURED_POLICY, type MeasuredRoomCalibration, type MeasuredRoomLedger } from "../../planner/models/room/measured-evidence.ts";
 import { validateRoomResponseEvidence, type RoomResponseEvidence } from "./chronological-evidence.ts";
 import { measureRoomRuns, roomHeatingRuns } from "./run-measurements.ts";
-import { assessMeasuredRuns, fitMeasuredLine, robustResidualScale, huberWeight } from "./measured-lines.ts";
+import { assessMeasuredRuns, robustResidualScale, huberWeight } from "./measured-lines.ts";
+import { fitMeasuredRoomCalibration, type MeasuredRoomCalibrationFit, type MeasuredCalibrationEvidence } from "./measured-calibration.ts";
 
 const LAGS = [0, .5, 1, 1.5, 2, 2.5, 3, 4, 5] as const;
 // One candidate is the atomic checkpoint: lag × partition × weather × family.
@@ -124,30 +125,6 @@ function terms(view: View, candidate: Candidate, visit: (term: Term) => void): v
     ...equation(v, operators[kind], candidate.k, candidate.family, candidate.weather, candidate.solar) }));
 }
 
-/** A tiny box-constrained QR solve; active faces express physical coefficients. */
-function physicalSolve(matrix: number[][], target: number[], scales: number[], bounds: Map<number, readonly [number, number]>): number[] | null {
-  const factor = factorLeastSquares(matrix, target, scales);
-  if (!factor) return null;
-  const constraints = [...bounds], fixed = new Map<number, number>();
-  let best: number[] | null = null, objective = Infinity;
-  const trial = (at: number) => {
-    if (at < constraints.length) {
-      const [j, [lo, hi]] = constraints[at];
-      trial(at + 1); fixed.set(j, lo); trial(at + 1);
-      if (Number.isFinite(hi) && hi !== lo) { fixed.set(j, hi); trial(at + 1); }
-      fixed.delete(j); return;
-    }
-    const free = scales.map((_, j) => j).filter(j => !fixed.has(j));
-    const adjusted = factor.target.map((y, i) => y - [...fixed].reduce((sum, [j, value]) => sum + value * factor.matrix[i][j], 0));
-    const solved = free.length ? leastSquares(factor.matrix.map(row => free.map(j => row[j])), adjusted, free.map(j => scales[j])) : [];
-    if (!solved) return;
-    const beta = scales.map((_, j) => fixed.get(j) ?? solved[free.indexOf(j)]);
-    if (!beta.every(Number.isFinite) || constraints.some(([j, [lo, hi]]) => beta[j] < lo || beta[j] > hi)) return;
-    const error = factor.target.reduce((sum, y, i) => sum + (y - factor.matrix[i].reduce((s, x, j) => s + x * beta[j], 0)) ** 2, 0);
-    if (error < objective) { best = beta; objective = error; }
-  };
-  trial(0); return best;
-}
 function estimate(system: System, view: View, lag: number, k: number, family: Family, weather: boolean): Candidate | null {
   const gains = weather ? 2 : 1, exchange = gains + 1, size = gains + 2 + Number(view.solar), groups = new Map<number, number[]>();
   system.terms.forEach((term, i) => { if (term.z !== 0) { const indices = groups.get(term.segment) ?? []; indices.push(i); groups.set(term.segment, indices); } });
@@ -167,34 +144,6 @@ function estimate(system: System, view: View, lag: number, k: number, family: Fa
   const error = system.terms.reduce((sum, t) => sum + (t.y - t.x.reduce((s, x, j) => s + x * beta[j], 0) - t.z * (initial.get(t.segment) ?? 0)) ** 2, 0);
   return finite(error) ? { family, lag, k, solar: view.solar, weather, low: view.low, high: view.high,
     beta, initial: [...initial], n: system.count, dof, mse: error / system.count } : null;
-}
-/** Profile an unbounded positive exchange coordinate, including exact limits separately. */
-function finiteProfile(at: (k: number) => Candidate | null): Candidate | null {
-  const evaluate = (x: number) => { const k = Math.exp(x); return finite(k) && k > 0 ? at(k) : null; };
-  let center = 0, best = evaluate(center);
-  if (!best) for (let distance = 1; distance < 32 && !best; distance++) for (const x of [-distance, distance]) {
-    const candidate = evaluate(x); if (candidate) { center = x; best = candidate; break; }
-  }
-  if (!best) return null;
-  let lo = center - 1, hi = center + 1, bracket = false;
-  for (let step = 0; step < 64; step++) {
-    const left = evaluate(lo), right = evaluate(hi);
-    const tolerance = Number.EPSILON * 128 * Math.max(1, best.mse);
-    if (left && left.mse < best.mse - tolerance && (!right || left.mse <= right.mse)) {
-      best = left; hi = center; center = lo; lo--;
-    } else if (right && right.mse < best.mse - tolerance) { best = right; lo = center; center = hi; hi++; }
-    else { bracket = !!left && !!right && left.mse > best.mse + tolerance && right.mse > best.mse + tolerance; break; }
-  }
-  if (!bracket) return null;
-  const ratio = (Math.sqrt(5) - 1) / 2;
-  let l = hi - ratio * (hi - lo), r = lo + ratio * (hi - lo), left = evaluate(l), right = evaluate(r);
-  for (let i = 0; i < 28; i++) {
-    if (left && left.mse < best.mse) best = left;
-    if (right && right.mse < best.mse) best = right;
-    if ((left?.mse ?? Infinity) < (right?.mse ?? Infinity)) { hi = r; r = l; right = left; l = hi - ratio * (hi - lo); left = evaluate(l); }
-    else { lo = l; l = r; left = right; r = lo + ratio * (hi - lo); right = evaluate(r); }
-  }
-  return best;
 }
 function fittedResiduals(view: View, fit: Candidate): { indices: number[]; residuals: number[] } {
   const initial = new Map(fit.initial), indices: number[] = [], residuals: number[] = [];
@@ -251,82 +200,17 @@ function responseModel(fit: Candidate, ratedPowerW: number | null): ThermalZoneM
     time_constant_h: fit.k > 0 ? 1 / fit.k : null,
     heating_rate_c_per_h: ratedPowerW !== null && ratedPowerW > 0 ? gain * ratedPowerW : null };
 }
-/** Heater-off loss from the measured cooling points: fall rate =
- * outdoor loss × (room − outdoor) + rest-of-home exchange × (room − home) − constant.
- * Weighted by each point's measured hours. Couplings are nonnegative; a term the
- * points cannot separate (for example a constant room − home difference) is left out. */
-function coolingLoss(points: readonly { hours: number; c_per_h: number; room_c: number; outdoor_c: number; house_c: number | null }[]):
-  { outdoor: number; house: number; background: number; points: number } | null {
-  const withHouse = points.filter(point => point.house_c !== null);
-  for (const [outdoor, house] of [[true, true], [true, false], [false, true]] as const) {
-    const used = house ? withHouse : points;
-    const columns = (point: typeof points[number]) => [...(outdoor ? [point.room_c - point.outdoor_c] : []),
-      ...(house ? [point.room_c - point.house_c!] : []), -1];
-    const width = (outdoor ? 1 : 0) + (house ? 1 : 0) + 1;
-    if (used.length <= width) continue;
-    const a = Array.from({ length: width }, () => new Array<number>(width).fill(0)), b = new Array<number>(width).fill(0);
-    for (const point of used) {
-      const x = columns(point);
-      for (let i = 0; i < width; i++) {
-        b[i] += point.hours * x[i] * point.c_per_h;
-        for (let j = 0; j < width; j++) a[i][j] += point.hours * x[i] * x[j];
-      }
-    }
-    const solved = solveNormalEquations(a, b);
-    if (!solved) continue;
-    const coupling = { outdoor: outdoor ? solved[0] : 0, house: house ? solved[outdoor ? 1 : 0] : 0 };
-    if (coupling.outdoor < 0 || coupling.house < 0) continue;
-    return { ...coupling, background: solved[width - 1], points: used.length };
-  }
-  return null;
-}
-/** Gaussian elimination with partial pivoting; null when the normal equations are singular. */
-function solveNormalEquations(a: number[][], b: number[]): number[] | null {
-  const n = b.length, m = a.map(row => [...row]), y = [...b];
-  const scale = Math.max(...m.map((row, i) => Math.abs(row[i])), Number.MIN_VALUE);
-  for (let i = 0; i < n; i++) {
-    let pivot = i;
-    for (let r = i + 1; r < n; r++) if (Math.abs(m[r][i]) > Math.abs(m[pivot][i])) pivot = r;
-    if (Math.abs(m[pivot][i]) <= scale * 1e-10) return null;
-    [m[i], m[pivot]] = [m[pivot], m[i]]; [y[i], y[pivot]] = [y[pivot], y[i]];
-    for (let r = 0; r < n; r++) if (r !== i) {
-      const f = m[r][i] / m[i][i];
-      for (let c = i; c < n; c++) m[r][c] -= f * m[i][c];
-      y[r] -= f * y[i];
-    }
-  }
-  return y.map((value, i) => value / m[i][i]);
-}
-/** The planner's response from the measured runs. Heater-off loss comes from
- * the cooling points: outdoor loss, rest-of-home exchange and a constant term.
- * Each heating point's net rise per kWh gets the loss during its own run added
- * back once, and the heater gain line is fitted to those values. Validated on
- * 24 November 2026 against 30 days of metered room energy. No solar term or delay. */
-function lineCandidate(runs: readonly MeasuredRoomRun[]): Candidate | null {
-  const loss = coolingLoss(runs.flatMap(run => run.cooling ? [run.cooling] : []));
-  if (!loss) return null;
-  const rise = runs.flatMap(run => run.heating && run.heating.energy_kwh > 0 &&
-    (loss.house === 0 || run.heating.house_c !== null) ? [run.heating] : []);
-  const heating = fitMeasuredLine(rise.map(point => ({ x: point.outdoor_c, weight: point.energy_kwh,
-    y: point.c_per_kwh + (loss.outdoor * (point.room_mean_c - point.outdoor_c) +
-      loss.house * (point.room_mean_c - (point.house_c ?? point.room_mean_c)) - loss.background) * point.hours / point.energy_kwh })),
-  "rises", "c_per_kwh");
-  if (!heating) return null;
-  const low = Math.min(...rise.map(point => point.outdoor_c)), high = Math.max(...rise.map(point => point.outdoor_c));
-  const gain = (x: number) => Math.max(0, measuredRoomLineAt(heating, x)) / 1000;
-  const weather = high > low && heating.slope_per_c > 0;
-  const k = loss.outdoor + loss.house;
-  const beta = weather ? [gain(low), gain(high), loss.background, loss.outdoor] : [gain(heating.reference_outdoor_c), loss.background, loss.outdoor];
-  const parameters = (weather ? 2 : 1) + 1 + (loss.outdoor > 0 ? 1 : 0) + (loss.house > 0 ? 1 : 0);
-  const n = heating.points + loss.points, dof = n - parameters;
-  if (!(Math.max(beta[0], weather ? beta[1] : 0) > 0) || !(k > 0) || dof <= 0) return null;
-  return { family: "finite", lag: 0, k, solar: false, weather, low: weather ? low : heating.reference_outdoor_c,
-    high: weather ? high : heating.reference_outdoor_c, beta, initial: [], n, dof, mse: 0 };
-}
-/** The planner response the measured lines give for these runs, if they form one. */
-export function measuredLineResponse(runs: readonly MeasuredRoomRun[], ratedPowerW: number | null): ThermalZoneModel | null {
-  const fit = lineCandidate(runs);
-  return fit ? responseModel(fit, ratedPowerW) : null;
+/** Validation adapts the calibration's physical model, never its descriptive peak ledger. */
+function calibrationCandidate(calibration: Extract<MeasuredRoomCalibrationFit, { kind: "identified" }>): Candidate {
+  const { model, evidence } = calibration;
+  const low = model.gain_reference_outdoor_c!, slope = model.gain_outdoor_slope_per_c!;
+  const weather = slope > 0, gain = model.gain_c_per_wh;
+  // These coordinates reproduce the same gain line; validation does not select or fit it.
+  const beta = [...(weather ? [gain, gain * (1 + slope)] : [gain]),
+    model.background_gain_c_per_h, model.cooling_constant_per_h];
+  return { family: "finite", lag: 0, k: model.cooling_constant_per_h + model.house_coupling_per_h!,
+    solar: false, weather, low, high: weather ? low + 1 : low, beta, initial: [],
+    n: model.sample_count, dof: evidence.residual_degrees_of_freedom, mse: model.residual_std_c ** 2 };
 }
 function gainAt(fit: Candidate, outdoor: number): number {
   return fit.weather ? Math.max(0, fit.beta[0] + (fit.beta[1] - fit.beta[0]) * (outdoor - fit.low) / (fit.high - fit.low)) : fit.beta[0];
@@ -426,7 +310,9 @@ export interface MeasuredRoomLearningEvidence {
   selection_scope: "state_carrying";
   selected_lag_h: number | null;
   /** Which response the planner receives. The chronological fit stays as evidence. */
-  planner_response: "measured_lines" | "chronological_fit";
+  planner_response: "measured_intervals" | "chronological_fit";
+  measured_calibration: MeasuredCalibrationEvidence & ({ status: "identified" } | { status: "unidentified";
+    reason: Extract<MeasuredRoomCalibrationFit, { kind: "unidentified" }>["reason"] });
   /** The chronological fit as fitted, including any positive background. */
   chronological_model: ThermalZoneModel | null;
   chronological_validation: { observations: number; trajectory_mae_c: number | null; trajectory_bias_c: number | null };
@@ -458,20 +344,23 @@ export function finalizeMeasuredRoomResponse(prepared: PreparedMeasuredRoomRespo
   const { selected, validation } = selection;
   const descriptive = selectCandidate(full, evaluated);
   const chronological = selected ? responseModel(selected, prepared.ratedPowerW) : null;
-  // The planner plans with the measured lines whenever both can be formed;
-  // otherwise the chronological fit keeps the room planned.
+  // Native operation calibration supplies the measured response. The existing
+  // chronological choice remains available when physical parameters cannot be identified.
   const runs = measureRoomRuns(prepared.full.rows);
-  const lines = lineCandidate(runs);
-  if (lines) {
-    const fitted = [...validationErrors(prepared.full, lines, 0).values()];
-    lines.mse = fitted.length ? fitted.reduce((sum, x) => sum + x * x, 0) / fitted.length : 0;
+  const measured = fitMeasuredRoomCalibration(prepared.full.rows, prepared.ratedPowerW);
+  const measuredCandidate = measured.kind === "identified" ? calibrationCandidate(measured) : null;
+  if (measuredCandidate) {
+    const fitted = [...validationErrors(prepared.full, measuredCandidate, 0).values()];
+    measuredCandidate.mse = fitted.length ? fitted.reduce((sum, x) => sum + x * x, 0) / fitted.length : 0;
   }
-  const lineValidation = lines && split ? lineCandidate(measureRoomRuns(prepared.training.rows)) : null;
-  const planner = lines ?? selected;
-  const model = planner ? responseModel(planner, prepared.ratedPowerW) : null;
+  const trainingMeasured = measuredCandidate && split ? fitMeasuredRoomCalibration(prepared.training.rows, prepared.ratedPowerW) : null;
+  const measuredValidation = trainingMeasured?.kind === "identified" ? calibrationCandidate(trainingMeasured) : null;
+  const planner = measuredCandidate ?? selected;
+  const model = measured.kind === "identified" && measuredCandidate ? { ...measured.model, residual_std_c: Math.sqrt(measuredCandidate.mse) }
+    : planner ? responseModel(planner, prepared.ratedPowerW) : null;
   const assessed = assessMeasuredRuns(runs, model);
-  const checked = lines ? lineValidation : validation;
-  const errors = lines ? lineValidation ? [...validationErrors(validationView, lineValidation, split).values()] : [] : selection.errors;
+  const checked = measuredCandidate ? measuredValidation : validation;
+  const errors = measuredCandidate ? measuredValidation ? [...validationErrors(validationView, measuredValidation, split).values()] : [] : selection.errors;
   const projectedValues = checked ? [...validationErrors(validationView, checked, split, true).values()] : [];
   const projectedMetrics = {
     projected_trajectory_mae_c: projectedValues.length ? projectedValues.reduce((sum, x) => sum + Math.abs(x), 0) / projectedValues.length : null,
@@ -485,7 +374,9 @@ export function finalizeMeasuredRoomResponse(prepared: PreparedMeasuredRoomRespo
   const offset = planner ? planner.beta[planner.weather ? 2 : 1] : 0;
   const learning: MeasuredRoomLearningEvidence = { method: "measured_run_native_mean_v1", implementation: ROOM_MEASURED_POLICY,
     observation: "interval_mean", selection: "chronological_trajectory_mse", selection_scope: "state_carrying", selected_lag_h: selected?.lag ?? null,
-    planner_response: lines ? "measured_lines" : "chronological_fit",
+    planner_response: measuredCandidate ? "measured_intervals" : "chronological_fit",
+    measured_calibration: measured.kind === "identified" ? { ...measured.evidence, status: "identified" }
+      : { ...measured.evidence, status: "unidentified", reason: measured.reason },
     chronological_model: chronological,
     chronological_validation: { observations: selection.errors.length,
       trajectory_mae_c: selection.errors.length ? selection.errors.reduce((sum, x) => sum + Math.abs(x), 0) / selection.errors.length : null,

@@ -635,20 +635,43 @@ that line the point occupies, not its unobserved cause. Flags do not remove
 points from learning. Room/house reference corrections use identified
 exchange coefficients and are separate from the raw points.
 
-User requirement, 24 November 2026: the planner plans each room from its
-measured runs, because they stay sane on sparse data. Heater-off loss is fitted
-to the cooling points as outdoor loss times (room − outdoor), plus rest-of-home
-exchange times (room − home), minus a constant term, weighted by measured hours
-with nonnegative couplings. Each heating point's net rise per kWh gets the loss
-during its own run added back once, and the heater gain line (with its outdoor
-slope) is fitted to those values, weighted by energy. There is no solar term or
-delay, and a positive constant receives no future credit. On 30 days of metered
-room energy this matched the meter far better than the net rise line alone,
-which counted losses twice, or the chronological fit. Hold-out validation
-describes this response, fitted on the training prefix. Where the cooling or
-heating points cannot form it, the chronological fit below keeps the room
-planned. The chronological fit and its validation stay in the learning evidence
-either way.
+User requirement, 25 November 2026: stop calibrating heater gain against a
+hindsight peak, and use the whole measured cooling trajectory. This supersedes
+the 24 November summary-point calibration. `measured-calibration.ts` fits one
+immediate physical response from adjacent native interval means and their actual
+metered input. Its nonnegative outdoor and house exchange coefficients produce
+slower cooling as temperature differences shrink. Signed background and a
+nonnegative, nondecreasing weather-dependent heater gain are fitted jointly;
+even an OFF-class interval retains its measured standby watts. The exact
+interval-mean kernels handle hourly and quarter-hour observations without
+inventing boundary temperatures. No peak or settling window determines heater
+attribution. The plotted onset-to-peak points and short cooling summaries remain
+descriptive measurements with their existing independent lines and flags.
+
+Input-defined operation spans include an observed ON fragment and its entire
+known-input coast. Each span's powered and coast phases is weighted by the
+span's measured ON energy, with native duration weights within each phase, so a
+long passive season cannot drown the powered observations. Phase denominators
+are computed before thermometer eligibility; missing readings remove weight
+without concentrating it into the remaining equations. Passive history without
+an observed ON anchor remains in the archive and chronological diagnostic.
+
+The fit uses scaled QR and robust reweighting with positive weight for every
+usable operation pair. Missing input, direction, temperature or adjacency
+removes only the affected equation; an unfinished run and a partial coast remain
+usable. Rank and residual degrees of freedom establish identification without
+forecast-error or missing-data thresholds. Separate evidence records fit status,
+calibration support and conditional residuals, including warming just after
+switch-off and the reference watts of excluded positive background.
+There is no solar term or delay, and a positive constant receives no future
+planning credit. Hold-out validation uses a separately fitted training prefix.
+Where the interval calibration cannot form a response, the existing chronological
+fit below keeps the room planned. Its model and validation remain in evidence.
+Scheduled electricity and metered electricity are comparable only alongside
+achieved comfort: no heating while a room misses its requested target is not a
+measurement of the electricity required to meet that target. An unheated holdout
+tests passive temperature prediction, not heater gain. A zero-lag response also
+cannot identify every delayed heater's intrinsic gain from these measurements.
 
 User requirement, 24 November 2026: a changed room learner refits every room
 before it plans. The learner's version is a digest of its source
@@ -687,6 +710,11 @@ retains binding, source-policy, owner-generation, fence and model-revision check
 A failed attempt retains the accepted model and its ledger, with attempted
 measurements stored under a separate page identity. Existing accepted policies
 remain readable only for continuity until a replacement publishes.
+
+The interval calibration runs during finalization and does not change the 108
+diagnostic cells. The CPU gate measures the complete cold finalization request
+over 400 days, including decoding, full and training fits, holdout comparisons,
+ledger construction and publication serialization, under the existing budget.
 
 The Model tab reads canonical points, curves, room-reference corrections and
 revision-scoped paginated assessments. It does no browser fitting. Actual cooling

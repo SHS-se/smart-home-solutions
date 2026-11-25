@@ -139,7 +139,27 @@ const checkpointBytes = (value: RoomNumericCheckpoint) => new TextEncoder().enco
 async function roomNumericalInputs() {
   const source = await syntheticRoomArchive(40, true);
   const first = await checkpointRoomWorker(replayRoomCapture(source.buffer));
-  return { initial: checkpointBytes(first), resumed: checkpointBytes(await resumedRoomCheckpoint(first)) };
+  const completed = await resumedRoomCheckpoint(first, 108);
+  const resumed = { ...completed, progress: { ...completed.progress, cells: completed.progress.cells.slice(0, 21), cursor: 21 } };
+  return { initial: checkpointBytes(first), resumed: checkpointBytes(resumed), completed: checkpointBytes(completed) };
+}
+
+/** The full 400-day finalization request, including decode, both measured fits,
+ * chronological holdout comparisons, ledger creation and publication JSON. */
+async function roomFinalizeSample(): Promise<Sample> {
+  const checkpoint: RoomNumericCheckpoint = await new Response(Deno.stdin.readable).json();
+  assertEquals(checkpoint.progress.cursor, 108);
+  const replay = replayRoomCapture(checkpoint);
+  const sample = await measure(async () => {
+    const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
+      method: "POST", headers: { "x-energy-learning-token": "synthetic" },
+      body: JSON.stringify({ job_id: "synthetic" }),
+    }), replay, () => ROOM_CAPTURE_NOW);
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { published: true });
+    replay.checkPublished();
+  });
+  return { ...sample, max_rss_kib: resourceUsage().maxRSS };
 }
 
 async function roomNumericalSample(resetPolicy = false) {
@@ -257,7 +277,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture" | "room-numerical" | "room-policy-reset",
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration" | "room-capture" | "room-numerical" | "room-policy-reset" | "room-finalize",
   input?: Uint8Array<ArrayBuffer>): Promise<Sample> {
   const child = new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
@@ -298,7 +318,9 @@ if (Deno.args.includes("--room-capture-fixture")) {
   await new Blob([bytes]).stream().pipeTo(Deno.stdout.writable);
 } else if (Deno.args.includes("--room-numerical-fixture")) {
   const inputs = await roomNumericalInputs();
-  await new Blob([inputs[Deno.args.includes("--resumed") ? "resumed" : "initial"]]).stream().pipeTo(Deno.stdout.writable);
+  await new Blob([inputs[Deno.args.includes("--completed") ? "completed" : Deno.args.includes("--resumed") ? "resumed" : "initial"]]).stream().pipeTo(Deno.stdout.writable);
+} else if (Deno.args.includes("--room-finalize")) {
+  console.log(JSON.stringify(await roomFinalizeSample()));
 } else if (Deno.args.includes("--room-numerical") || Deno.args.includes("--room-policy-reset")) {
   console.log(JSON.stringify(await roomNumericalSample(Deno.args.includes("--room-policy-reset"))));
 } else if (Deno.args.includes("--room-capture")) {
@@ -329,7 +351,7 @@ if (Deno.args.includes("--room-capture-fixture")) {
   // and gzip frames across 400 days. Fixture bytes are never generated in a measured worker.
   const archive = await syntheticRoomArchive(9600);
   const numericInputs = await roomNumericalInputs();
-  const initialRoomFits: number[] = [], resumedRoomFits: number[] = [], roomPolicyResets: number[] = [];
+  const initialRoomFits: number[] = [], resumedRoomFits: number[] = [], roomPolicyResets: number[] = [], roomFinalizations: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -347,6 +369,8 @@ if (Deno.args.includes("--room-capture-fixture")) {
     const initialFit = await coldSample("room-numerical", numericInputs.initial);
     const resumedFit = await coldSample("room-numerical", numericInputs.resumed);
     const policyReset = await coldSample("room-policy-reset", numericInputs.resumed);
+    const finalized = await coldSample("room-finalize", numericInputs.completed);
+    roomFinalizations.push(finalized.cpu_ms);
     roomPolicyResets.push(policyReset.cpu_ms);
     initialRoomFits.push(initialFit.cpu_ms);
     resumedRoomFits.push(resumedFit.cpu_ms);
@@ -358,7 +382,7 @@ if (Deno.args.includes("--room-capture-fixture")) {
     varyingRooms.push(varying.cpu_ms);
     roomTargets.push(roomTarget.cpu_ms);
     varyingRoomTargets.push(varyingRoomTarget.cpu_ms);
-    console.log(JSON.stringify({ run, room_initial_fit_cpu_ms: initialFit.cpu_ms, room_resumed_fit_cpu_ms: resumedFit.cpu_ms, room_policy_reset_cpu_ms: policyReset.cpu_ms,
+    console.log(JSON.stringify({ run, room_initial_fit_cpu_ms: initialFit.cpu_ms, room_resumed_fit_cpu_ms: resumedFit.cpu_ms, room_policy_reset_cpu_ms: policyReset.cpu_ms, room_finalize_cpu_ms: finalized.cpu_ms,
       room_initial_fit_rss_kib: initialFit.max_rss_kib, room_resumed_fit_rss_kib: resumedFit.max_rss_kib,
       room_capture_cpu_ms: roomCapture.cpu_ms, room_capture_rss_kib: roomCapture.max_rss_kib,
       reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
@@ -388,6 +412,9 @@ if (Deno.args.includes("--room-capture-fixture")) {
   const roomPolicyReset = median(roomPolicyResets) * speed;
   console.log(JSON.stringify({ median_room_policy_reset_cpu_ms: median(roomPolicyResets), baseline_room_policy_reset_cpu_ms: roomPolicyReset }));
   assert(roomPolicyReset < BUDGET_MS, `Cold room policy reset used ${roomPolicyReset.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
+  const roomFinalized = median(roomFinalizations) * speed;
+  console.log(JSON.stringify({ median_room_finalize_cpu_ms: median(roomFinalizations), baseline_room_finalize_cpu_ms: roomFinalized }));
+  assert(roomFinalized < BUDGET_MS, `Cold room finalization used ${roomFinalized.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
   const prepared = median(preparations) * speed;
   console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
   assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

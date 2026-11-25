@@ -70,7 +70,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
   const context = { binding: "synthetic", observed_since: at(0) };
   const claim = { id: "synthetic", home_id: "synthetic-home", customer_id: "synthetic-customer", owner_kind: "room",
     owner_key: "synthetic", generation: 1, fence: 1, input: {}, room_history_to: at(ROWS) };
-  let saved = false, released = false, reset = false;
+  let saved = false, released = false, reset = false, published = false;
   return {
     rpc(name: string, args: Record<string, unknown>) {
       let data: unknown;
@@ -125,6 +125,18 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           else delete progress.metadata.heat_state;
           saved = true; data = true; break;
         }
+        case "complete_energy_room_fit": {
+          assert(checkpoint);
+          assertEquals(args.p_expected_cursor, ROOM_MEASURED_CELL_COUNT);
+          assertEquals(checkpoint.progress.cursor, ROOM_MEASURED_CELL_COUNT);
+          // Keep serialization and the accepted ledger in the measured request.
+          const copy = JSON.parse(JSON.stringify(args));
+          assertEquals(copy.p_revision, checkpoint.progress.base_revision);
+          assert(copy.p_model.trained);
+          assert(copy.p_model.heating_bands.reference.learning_evidence.measured_calibration);
+          assert(copy.p_run_ledger.runs.length > 0);
+          published = true; data = true; break;
+        }
         case "release_energy_room_learning_lane": released = true; data = true; break;
         default: throw new Error(`Unexpected room capture RPC: ${name}`);
       }
@@ -132,19 +144,19 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
     },
     check() { assert(saved && released && checkpoint && !reset); return checkpoint; },
     checkReset() { assert(reset && released && !saved && checkpoint === null); },
+    checkPublished() { assert(published && released && !saved && !reset); },
   };
 }
 
 /** Resume immediately before an expensive weather-dependent finite/full cell
  * at a nonzero lag. Every preceding cell is genuine production output, built
  * outside the measured request; the checkpoint has no latent scratch state. */
-export async function resumedRoomCheckpoint(first: RoomNumericCheckpoint): Promise<RoomNumericCheckpoint> {
+export async function resumedRoomCheckpoint(first: RoomNumericCheckpoint, cursor = 21): Promise<RoomNumericCheckpoint> {
   const { metadata } = first.progress, view = metadata.capture;
   const rows = await decodeRoomResponseFitCapture(first.capture, view.fromAt, metadata.sha256);
   const prepared = prepareMeasuredRoomResponse(roomResponseEvidence(rows, view.trainingView), view.ratedPowerW);
   assertEquals(ROOM_MEASURED_CELL_COUNT, 108);
   // lag .5, full partition, weather-dependent finite family.
-  const cursor = 21;
   const cells = Array.from({ length: cursor }, (_, index) => fitMeasuredRoomCell(prepared, index));
   assertEquals(cells[18].fits[0]?.family, "finite");
   assertEquals(cells[18].fits[0]?.lag, .5);
