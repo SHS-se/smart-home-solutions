@@ -1023,8 +1023,9 @@ fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool
             .iter()
             .enumerate()
             .map(|(i, q)| {
-                let target = q.room_target.as_ref().expect("shared room").preferred_c;
-                (target - plan.temperature_c[i]).max(0.) * q.physics.hours
+                // Temperatures are interval endpoints. Use the same boundary
+                // requirement as search, including the next comfort start.
+                (q.required_c - plan.temperature_c[i]).max(0.) * q.physics.hours
             })
             .sum::<f64>()
     };
@@ -1035,14 +1036,7 @@ fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool
     if cost(proposal) <= cost(reference) + 1e-8 {
         return true;
     }
-    let short = |plan: &Plan, i: usize| {
-        let target = input.quarters[i]
-            .room_target
-            .as_ref()
-            .expect("shared room")
-            .preferred_c;
-        plan.temperature_c[i] < target - 1e-6
-    };
+    let short = |plan: &Plan, i: usize| plan.temperature_c[i] < input.quarters[i].required_c - 1e-6;
     let quarters = 0..input.quarters.len();
     quarters
         .clone()

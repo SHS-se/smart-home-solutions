@@ -39,6 +39,10 @@ quarter the literal schedule misses. Spending more to narrow a gap without
 closing any quarter still yields to the literal schedule. This replaces the
 21 November rule that every change must cost no more, which removed all
 preheating for comfort deadlines.
+Room projections contain interval-end temperatures. Both search and the literal
+comparison must judge those endpoints against the boundary comfort minimum,
+including the next quarter's starting minimum. Catching up during the first
+comfort quarter does not meet its starting deadline.
 
 User requirement, 21 November 2026: a room fit with too little measured heating
 or too few observations must not drive modeled preheating. If a selected fit

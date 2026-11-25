@@ -9,7 +9,7 @@
     "generation": 1,
     "mode": "controlling",
     "scope_revision": "fixture-whole-house",
-    "model_revision": "sha256:8b36b07e978ccd9a7218aa7076049fac8bc7329d902b72c36e375939ceda21e4",
+    "model_revision": "sha256:4daaef2f43ddca0bdc614852cda13dccd20da04fb3edc6736a8f0ed14ac0ecf9",
     "energy_basis": "stored_energy_mwh",
     "capacity_mwh": 18080000,
     "minimum_mwh": 904000,

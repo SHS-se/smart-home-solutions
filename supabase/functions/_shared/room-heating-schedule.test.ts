@@ -3,6 +3,7 @@ import { dispatchedEvSnapshot, rulesFixtureInput } from "../../../scripts/genera
 import { generateRulesPlan } from "./rules-planner.ts";
 import { prepareRoomServices, type RoomPrices } from "./rules-room-services.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
+import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 
 const COMFORT_FROM = 24;
 const SETBACK = 18, COMFORT = 22;
@@ -402,7 +403,39 @@ Deno.test("schedule comparison pays to preheat for a comfort deadline the litera
   const result = prepareRoomServices(snapshot, [], undefined, prices(snapshot.slots.map(() => 2)));
   assert(result.room_power.bathroom.slice(0, deadline).some(watts => watts > 0), "heat starts before the deadline");
   assert(result.commands.rack.slice(0, deadline).some(command => command.type === "room_relay" && command.target_c > 18));
-  assert(result.temperature.bathroom[deadline]! >= 21 - 1e-3, "the room is warm when comfort starts");
+  assert(result.temperature.bathroom[deadline - 1]! >= 21 - 1e-3, "the preceding quarter ends warm when comfort starts");
+});
+
+Deno.test("schedule comparison preserves an exact comfort deadline even when literal heating catches up within its first quarter", () => {
+  // Independent synthetic lossless plant: 600 W supplies 0.1 °C per minute.
+  // Literal targets [20, 21] recover within the second quarter, but miss its
+  // starting boundary. The more expensive first quarter must still preheat.
+  const step = { decay: 1, offset_c: 0, stored_heat_release: 0, gain_c_per_w: .01 / 60,
+    stored_heat_gain_c_per_w: 0, carry: 0 };
+  const actuator = { relay: true, power_w: 600, sensor_offset_c: 0, current_temperature_c: 20,
+    minimum_c: 0, maximum_c: 100, step_c: .1, target_temperature_c: 20,
+    entity_id: "synthetic-heater", hvac_action: "idle" as const };
+  const quarters: RoomQuarter[] = [20, 21].map((preferred, i) => ({
+    hours: .25, steps: 15, step, transition: { ...step, gain_c_per_w: .01 * .25 },
+    required_c: 21, maximum_c: 22, maximum_w: 600, relay_budget_w: 600,
+    relay_w: [], fixed_relays: [], fixed_targets_c: [null],
+    room_target: { preferred_c: preferred, fixed_c: null, fixed_switches: [null] },
+    import_sek_per_kwh: i === 0 ? 2 : 1, export_sek_per_kwh: 1, surplus_w: 0,
+  }));
+  const plan = planRoomHeating(20, [actuator], quarters);
+  assert(plan.temperature_c[0] >= 21 - 1e-9, "21 °C must be reached before the first comfort quarter starts");
+  assert(plan.power_w[0] > 0, "the price premium cannot postpone a comfort deadline");
+  let temperature = 20, on = false;
+  for (let i = 0; i < quarters.length; i++) {
+    let wh = 0;
+    for (let minute = 0; minute < 15; minute++) {
+      on = temperature < plan.room_targets_c![i] + (on ? .25 : 0);
+      if (on) { temperature += .1; wh += 10; }
+    }
+    assertAlmostEquals(temperature, plan.temperature_c[i], 1e-9);
+    assertAlmostEquals(wh * 4, plan.power_w[i], 1e-9);
+    assert(temperature >= 21 - 1e-9);
+  }
 });
 
 Deno.test("schedule comparison accepts cheaper heating that improves scheduled comfort", () => {
