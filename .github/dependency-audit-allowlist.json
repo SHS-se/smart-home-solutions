@@ -1,9 +1,3 @@
 {
-  "advisories": [
-    {
-      "id": "GHSA-fc5q-39xc-vjpf",
-      "reason": "No patched release is available. In this repository picomatch is a transitive dependency of the Vite build tooling, matches repository-controlled paths and patterns, and is absent from the deployed frontend bundle and Edge Functions.",
-      "expires": "2026-11-24"
-    }
-  ]
+  "advisories": []
 }
