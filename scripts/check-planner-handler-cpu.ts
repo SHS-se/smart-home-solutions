@@ -1,5 +1,5 @@
 import { connectedAdmissionCpuInput, runConnectedAdmissionCpu, checkConnectedAdmissionCpu, type ConnectedAdmissionCpuFixture } from "../tests/connected-room-admission-cpu.fixture.ts";
-import { CONNECTED_REPLICA_CPU_PHASES, CONNECTED_REPLICA_CPU_OWNER, connectedReplicaCpuInputs, connectedReplicaCpuReplay, connectedPreparationCpuInputs, connectedStiffCpuInputs, type ConnectedReplicaCpuPhase, type ConnectedReplicaCpuFixture } from "../tests/connected-room-replica-cpu.fixture.ts";
+import { CONNECTED_REPLICA_CPU_PHASES, CONNECTED_REPLICA_CPU_OWNER, connectedReplicaCpuInputs, connectedDenseReplicaCpuInput, connectedReplicaCpuReplay, connectedPreparationCpuInputs, connectedStiffCpuInputs, type ConnectedReplicaCpuPhase, type ConnectedReplicaCpuFixture } from "../tests/connected-room-replica-cpu.fixture.ts";
 import { CONNECTED_CAPTURE_PHASES, CONNECTED_CPU_OWNER, connectedCaptureCpuInputs, type ConnectedCapturePhase, connectedCaptureReplay, type ConnectedCpuCheckpoint } from "../tests/connected-room-capture-cpu.fixture.ts";
 
 /** Run separately from parallel unit tests: measure the complete cold worker,
@@ -320,13 +320,20 @@ async function connectedAdmissionSample():Promise<Sample> {
 
 async function connectedReplicaSample():Promise<Sample> {
   const fixture:ConnectedReplicaCpuFixture=await new Response(Deno.stdin.readable).json();
-  const replay=connectedReplicaCpuReplay(fixture);
+  const requests = fixture.subsequent
+    ? [fixture, {...fixture, phase: "resumed" as const, saved: fixture.subsequent}]
+    : [fixture];
+  const actions = requests.map(request => ({request, replay: connectedReplicaCpuReplay(request)}));
   const sample=await measure(async()=>{
-    const response=await handleEnergyPlanningStep(new Request("https://cpu.test/plan",{method:"POST",headers:{"x-shs-planning-secret":"cpu-test"},body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner:CONNECTED_REPLICA_CPU_OWNER,action:fixture.phase==="initial"||fixture.phase==="resumed"?{kind:"replica",replica:0}:{kind:"advance"}})}),"cpu-test",()=>replay.db);
-    assertEquals(response.status,200,await response.clone().text());
-    assert((await response.json()).dispatch);
+    for (const { request, replay } of actions) {
+      const action = request.phase === "initial" || request.phase === "resumed" ? {kind:"replica",replica:0} : {kind:"advance"};
+      const response=await handleEnergyPlanningStep(new Request("https://cpu.test/plan",{method:"POST",
+        headers:{"x-shs-planning-secret":"cpu-test"},body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner:CONNECTED_REPLICA_CPU_OWNER,action})}),"cpu-test",()=>replay.db);
+      assertEquals(response.status,200,await response.clone().text());
+      assert((await response.json()).dispatch);
+    }
   });
-  await replay.check();
+  for (const {replay} of actions) await replay.check();
   return sample;
 }
 
@@ -397,6 +404,7 @@ async function coldSample(kind:
     | "connected"
     | "connected-wide"
     | "connected-stiff"
+    | "connected-dense-pair"
     | "connected-admission"
     | `connected-capture-${ConnectedCapturePhase}`
     | `connected-replica-${ConnectedReplicaCpuPhase | "prepare"}`,
@@ -444,6 +452,10 @@ if(Deno.args.includes("--connected-admission-fixture")) {
   await new Blob([connectedAdmissionCpuInput()]).stream().pipeTo(Deno.stdout.writable);
 } else if(Deno.args.includes("--connected-admission")) {
   console.log(JSON.stringify(await connectedAdmissionSample()));
+} else if(Deno.args.includes("--connected-dense-fixture")) {
+  await new Blob([await connectedDenseReplicaCpuInput()]).stream().pipeTo(Deno.stdout.writable);
+} else if(Deno.args.includes("--connected-dense-pair")) {
+  console.log(JSON.stringify(await connectedReplicaSample()));
 } else if(Deno.args.includes("--connected-replica-fixture")) {
   const inputs=await connectedReplicaCpuInputs(),phase=(Deno.args[1]??"initial") as ConnectedReplicaCpuPhase;
   await new Blob([inputs[phase]]).stream().pipeTo(Deno.stdout.writable);
@@ -590,6 +602,12 @@ if(Deno.args.includes("--connected-admission-fixture")) {
       varying_rooms_wasm_memory_bytes: varying.wasm_memory_bytes,
     }));
   }
+  const speed = BASELINE_REFERENCE_MS / median(references);
+  const denseInput=await connectedDenseReplicaCpuInput(),denseSamples:number[]=[];
+  for(let run=0;run<RUNS;run++)denseSamples.push((await coldSample("connected-dense-pair",denseInput)).cpu_ms);
+  const denseCpu=median(denseSamples)*speed;
+  console.log(JSON.stringify({stage:"connected-dense-cold-and-warm",baseline_cpu_ms:denseCpu}));
+  assert(denseCpu<PREPARATION_BUDGET_MS,`Dense connected cold and warm actions used ${denseCpu.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);
   const replicaInputs=await connectedReplicaCpuInputs();
   const replicaSamples=Object.fromEntries(CONNECTED_REPLICA_CPU_PHASES.map(phase=>[phase,[] as number[]])) as Record<ConnectedReplicaCpuPhase,number[]>;
   for(let run=0;run<RUNS;run++)for(const phase of CONNECTED_REPLICA_CPU_PHASES) {
@@ -597,7 +615,6 @@ if(Deno.args.includes("--connected-admission-fixture")) {
     replicaSamples[phase].push(sample.cpu_ms);
     console.log(JSON.stringify({run,stage:`connected-replica-${phase}`,...sample}));
   }
-  const speed = BASELINE_REFERENCE_MS / median(references);
   const admission=median(admissionSamples)*speed;
   console.log(JSON.stringify({median_connected_admission_cpu_ms:median(admissionSamples),baseline_connected_admission_cpu_ms:admission}));
   assert(admission<PREPARATION_BUDGET_MS,`Cold accepted connected-model admission used ${admission.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);

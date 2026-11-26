@@ -86,7 +86,9 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     if (!hypotheses) return { dispatch: null };
     const advanced = planner.roomNetworkReplicaAdvance({ ...header, replica: action.replica,
       target_local_draws: saved.target_local_draws,
-      max_work: Math.max(1, Math.min(131072, Math.floor(49152 * (9 / header.network.nodes.length) ** 2))),
+      // A warm Edge execution may serve another replica before retiring. Leave
+      // CPU for that action and the compressed checkpoint after each native slice.
+      max_work: Math.max(1, Math.min(131072, Math.floor(12288 * (9 / header.network.nodes.length) ** 2))),
       work, selected_hypotheses: hypotheses }, trace);
     const dispatch = await rpc<OwnedPlanningDispatch | null>("checkpoint_energy_forecast_replica", {
       p_replica: action.replica, p_slice_fence: saved.slice_fence, p_cursor: saved.cursor,

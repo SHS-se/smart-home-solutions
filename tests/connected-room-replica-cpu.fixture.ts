@@ -1,7 +1,7 @@
 /** Independently synthetic15-node/72-hour runtime fixtures. No household data. */
 import { assert, assertEquals } from "@std/assert";
 import { cpuConnectedRoomPlanningSource } from "./planner-handler-cpu.fixture.ts";
-import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
+import { captureRulesPlanningInput, type CapturedRulesInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { prepareCapturedRoomProposals } from "../supabase/functions/_shared/rules-planning-execution.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { nativePlanner } from "../supabase/functions/_shared/planner-wasm/runtime.ts";
@@ -15,6 +15,10 @@ import type {
   NativeRoomNetworkReplicaWork,
   NativeRoomReplica,
 } from "../supabase/functions/_shared/room-network-contract.ts";
+import { connectedAdmissionCpuInput, runConnectedAdmissionCpu } from "./connected-room-admission-cpu.fixture.ts";
+import { applyConnectedRoomCapture } from "../supabase/functions/_shared/room-model-capture.ts";
+import type { ConnectedRoomForecastRequest } from "../supabase/functions/_shared/rules-connected-room-services.ts";
+
 export const CONNECTED_REPLICA_CPU_PHASES = [
   "catalog",
   "initial",
@@ -32,6 +36,7 @@ export const CONNECTED_REPLICA_CPU_OWNER = {
 export interface ConnectedReplicaCpuFixture {
   phase: ConnectedReplicaCpuPhase | "prepare";
   saved: Record<string, unknown>;
+  subsequent?: Record<string, unknown>;
   hypotheses: NativeRoomNetworkHypothesis[][];
 }
 /** All ordered prepare stages, encoded before the measured cold workers. */
@@ -80,9 +85,21 @@ export async function connectedPreparationCpuInputs(): Promise<
 /** Full72-hour stiff physics, sampled as bounded initial/resumed requests.
  * Whole-forecast convergence is a separate explicit diagnostic, not this gate. */
 export async function connectedStiffCpuInputs() {
-  const prepared = await preparationFixtures(true, false),
-    input = prepared.next.forecast!.nativeInput,
-    planner = nativePlanner();
+  const prepared = await preparationFixtures(true, false);
+  const pair = await replicaCpuPair(prepared.next.forecast!.nativeInput, 24576);
+  return {
+    preparations: prepared.fixtures,
+    initial: encodeReplicaFixture(pair.initial),
+    resumed: encodeReplicaFixture({...pair.initial, phase: "resumed", saved: pair.resumed}),
+  };
+}
+
+function encodeReplicaFixture(fixture: ConnectedReplicaCpuFixture) {
+  return new TextEncoder().encode(JSON.stringify(fixture));
+}
+
+async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"], partialWork: number) {
+  const planner = nativePlanner();
   const node_headers = input.beliefs.map((belief) =>
     planner.roomNetworkHeader({ belief })
   );
@@ -116,7 +133,7 @@ export async function connectedStiffCpuInputs() {
     ...header,
     replica: 0,
     target_local_draws: 16,
-    max_work: 24576,
+    max_work: partialWork,
     selected_hypotheses: records,
   }).work;
   const saved = {
@@ -135,28 +152,37 @@ export async function connectedStiffCpuInputs() {
     header: await packOwnedPlanningValue(header),
     work: null,
   };
-  const encode = (
-    phase: "initial" | "resumed",
-    state: Record<string, unknown>,
-  ) =>
-    new TextEncoder().encode(
-      JSON.stringify(
-        {
-          phase,
-          saved: state,
-          hypotheses: input.beliefs.map((b) => b.hypotheses),
-        } satisfies ConnectedReplicaCpuFixture,
-      ),
-    );
   return {
-    preparations: prepared.fixtures,
-    initial: encode("initial", saved),
-    resumed: encode("resumed", {
-      ...saved,
-      cursor: partial.cursor,
-      work: await packOwnedPlanningValue(partial),
-    }),
+    initial: {phase: "initial", saved, hypotheses: input.beliefs.map(b => b.hypotheses)} satisfies ConnectedReplicaCpuFixture,
+    resumed: {...saved, cursor: partial.cursor, work: await packOwnedPlanningValue(partial)},
   };
+}
+
+/** A cold request and a resumed request on the same warm worker. The source
+ * is the independently generated 13-room, 13,312-particle admission fixture. */
+export async function connectedDenseReplicaCpuInput() {
+  const fixture = JSON.parse(new TextDecoder().decode(connectedAdmissionCpuInput()));
+  const {serialized} = await runConnectedAdmissionCpu(fixture);
+  const capture = JSON.parse(serialized).input as CapturedRulesInput;
+  const nodes = capture.snapshot.room_network_capture!.rooms.map(room => {
+    const response = room.connected_exchange!, belief = response.process_belief!;
+    const posterior = belief.hypotheses[0].posterior;
+    return {
+      key: room.key, model: {...response, reference_state: posterior, process_belief: undefined},
+      posterior, process_belief: belief, initial_state: "identified_joint" as const,
+      start_temperature_c: posterior.temperature_c, start_stored_heat_c: posterior.stored_heat_c,
+    };
+  });
+  assertEquals(nodes.length, 13);
+  assertEquals(nodes.reduce((n,node) => n + node.process_belief.hypotheses.length, 0), 13312);
+  capture.snapshot = applyConnectedRoomCapture(capture.snapshot, nodes, []);
+  let next = prepareCapturedRoomProposals(capture, null);
+  while (!next.forecast) {
+    assert(next.room_progress);
+    next = prepareCapturedRoomProposals(capture, next.room_progress);
+  }
+  const pair = await replicaCpuPair(next.forecast.nativeInput, 5889);
+  return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */
 export async function connectedReplicaCpuInputs(): Promise<
@@ -372,6 +398,10 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture) {
           NativeRoomNetworkReplicaWork
         >(checkpoint.p_work as string);
         assert(work.cursor > Number(fixture.saved.cursor));
+        if (fixture.phase === "initial" && fixture.subsequent) {
+          assertEquals(work.cursor, fixture.subsequent.cursor);
+          assertEquals(work, await unpackOwnedPlanningValue(fixture.subsequent.work as string));
+        }
         const path = work.path as
           | { states: Array<{ temperatures: number[] }> }
           | null;
