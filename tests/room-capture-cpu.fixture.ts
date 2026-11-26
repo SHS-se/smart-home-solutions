@@ -11,7 +11,9 @@ import type { ThermalQuarterRow } from "../supabase/functions/_shared/thermal-tr
 import { syntheticRoomConnectionCapture } from "../supabase/functions/_shared/device-model-learning/room-evidence.fixture.ts";
 
 const ROWS = 400 * 96;
-const TRAINING_ROWS = ROWS * 2 / 3;
+const FITTING_ROWS = 30 * 96;
+const FITTING_START = ROWS - FITTING_ROWS;
+const TRAINING_ROWS = FITTING_ROWS * 2 / 3;
 const START = Date.UTC(2024, 0, 1);
 const at = (index: number) => new Date(START + 900_000 * index).toISOString();
 export const ROOM_CAPTURE_NOW = Date.parse(at(ROWS));
@@ -20,8 +22,8 @@ export const ROOM_CAPTURE_NOW = Date.parse(at(ROWS));
  * reports a long constant temperature at the end of training. Its normal
  * cadence becomes observable only later, so the two views must differ. */
 function syntheticQuarter(i: number, measured?: RoomMeanQuarter): ThermalQuarterRow {
-  const replacement = i >= TRAINING_ROWS - 48;
-  const frozen = replacement && i < TRAINING_ROWS;
+  const replacement = i >= FITTING_START + TRAINING_ROWS - 48;
+  const frozen = replacement && i < FITTING_START + TRAINING_ROWS;
   // Synthetic unmetered heat varies independently of the metered heater.
   const pulse = (i % 149 - 37) / 11;
   const temperature = frozen ? 20 : measured
@@ -84,7 +86,9 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
         case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64),
           connected: syntheticRoomConnectionCapture("b".repeat(64)), next: null }; break;
         case "load_energy_room_evidence_blocks":
-          assertEquals([args.p_from_at, args.p_to_at], [at(0), at(ROWS)]);
+          assertEquals([args.p_from_at, args.p_to_at], [at(FITTING_START), at(ROWS)]);
+          // Retain the larger 400-day decoding stress, even though only the
+          // requested 30 days may enter the numerical fitting checkpoint.
           data = JSON.parse(new TextDecoder().decode(archive));
           archive = new ArrayBuffer(0);
           observeMemory?.();
@@ -95,7 +99,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           observeMemory?.();
           assertEquals(copy.p_expected_cursor, -1);
           assertEquals(copy.p_metadata.policy_fingerprint, "b".repeat(64));
-          assertEquals(copy.p_metadata.row_count, ROWS);
+          assertEquals(copy.p_metadata.row_count, FITTING_ROWS);
           assertEquals(copy.p_metadata.version, ROOM_FIT_CAPTURE_VERSION);
           assert(copy.p_metadata.capture.implementation.includes(ROOM_MEASURED_POLICY));
           assertEquals(copy.p_metadata.capture.trainingView.length, TRAINING_ROWS);
@@ -169,10 +173,10 @@ export async function resumedRoomCheckpoint(first: RoomNumericCheckpoint, cursor
 /** A missing meter every 997 quarters removes the adjacent transitions. Only
  * the full-history freshness check identifies the replacement probe freeze. */
 export function syntheticFitTransitions(partition: "full" | "training") {
-  const length = partition === "training" ? TRAINING_ROWS : ROWS;
+  const length = FITTING_START + (partition === "training" ? TRAINING_ROWS : FITTING_ROWS);
   let count = 0, previous = false;
-  for (let i = 0; i < length; i++) {
-    const frozen = partition === "full" && i >= TRAINING_ROWS - 48 && i < TRAINING_ROWS;
+  for (let i = FITTING_START; i < length; i++) {
+    const frozen = partition === "full" && i >= FITTING_START + TRAINING_ROWS - 48 && i < FITTING_START + TRAINING_ROWS;
     const observed = i % 997 !== 0 && !frozen;
     if (previous && observed) count++;
     previous = observed;

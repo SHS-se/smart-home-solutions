@@ -157,7 +157,7 @@ async function roomNumericalInputs() {
   return { initial: checkpointBytes(first), resumed: checkpointBytes(resumed), completed: checkpointBytes(completed) };
 }
 
-/** The full 400-day finalization request, including decode, both measured fits,
+/** The full 30-day finalization request, including decode, both measured fits,
  * chronological holdout comparisons, ledger creation and publication JSON. */
 async function roomFinalizeSample(): Promise<Sample> {
   const checkpoint: RoomNumericCheckpoint = await new Response(Deno.stdin.readable).json();

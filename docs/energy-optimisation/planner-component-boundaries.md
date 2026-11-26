@@ -193,12 +193,14 @@ Room learning admits one worker invocation per home, with a fair turn between
 ready rooms. A successful band publication continues the same fenced job when
 ready seasonal windows remain; a new planning request is not required. The
 database fixes `room_history_to` once per room generation. Both its history
-ceiling and 400-day floor remain fixed across claims, retries and continuations;
+ceiling and 30-day floor remain fixed across claims, retries and continuations;
 newer measurements stay stored for the next ordinary refit. Whole native
 intervals must end within that scope. Corrections and late arrivals inside the
 scope still qualify normally. Audit timestamps, solar retry readiness and
 leases use the current wall clock. Migration preserves in-flight captures and
 their numerical prefixes; this scope never restricts uploads or live planning.
+The 30-day fitting window applies to every room, including observed neighbours;
+older source archives remain stored but do not enter a new room fit.
 The
 worker releases its home reservation before the next window can be claimed,
 and lease expiry recovers a terminated continuation. Its separate reservation survives source changes that invalidate
@@ -803,8 +805,10 @@ remain readable only for continuity until a replacement publishes.
 
 The interval calibration runs during finalization and does not change the 108
 diagnostic cells. The CPU gate measures the complete cold finalization request
-over 400 days, including decoding, full and training fits, holdout comparisons,
-ledger construction and publication serialization, under the existing budget.
+over the 30-day fitting window, including decoding, full and training fits,
+holdout comparisons, ledger construction and publication serialization, under
+the existing budget. Source decoding retains its larger 400-day stress fixture;
+only its last 30 days may enter the numerical checkpoint.
 
 The Model tab reads canonical points, curves, room-reference corrections and
 revision-scoped paginated assessments. It does no browser fitting. Actual cooling

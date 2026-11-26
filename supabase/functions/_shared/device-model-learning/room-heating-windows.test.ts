@@ -3,6 +3,7 @@ import { prepareStoredRoomHeating, finalizeStoredRoomResponse, roomResponseEvide
   bandObservations, readRoomQuarters, nativeRoomReadWindows, parseRoomSharedMetadata } from "./room.ts";
 import { learnMeasuredRoomResponse as learnRoomResponse } from "../device-learning/room/measured-response.ts";
 import { compactCapture, evidenceStore } from "./room-evidence.fixture.ts";
+import { encodeRoomEvidenceCapture } from "./room-evidence-capture.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import { thermalQuarter, type ThermalQuarterRow } from "../thermal-training.ts";
 import type { RoomHeatingReference, RoomHeatingBands } from "../planner/heating-bands.ts";
@@ -16,6 +17,31 @@ const acceptedModel = { gain_c_per_wh: .003, cooling_constant_per_h: .03, backgr
   thermal_capacity_wh_per_c: 333, heat_loss_w_per_c: 10, time_constant_h: 33, heating_rate_c_per_h: 1,
   r2: .9, sample_count: 10, residual_std_c: .1 };
 const ranges = [{ from_at: at(0), to_at: at(120) }, { from_at: at(120), to_at: at(240) }];
+
+Deno.test("room refits use only the last 30 days even when an older accepted model and source archive exist", async () => {
+  const rows = history(start, 45 * 24), end = at(45 * 24);
+  for (const observedSince of [at(0), at(40 * 24)]) {
+    const db = evidenceStore(rows, []);
+    for (let day = 0; day < 45; day += 10) {
+      const range = { from_at: at(day * 24), to_at: at(Math.min(day + 10, 45) * 24) };
+      const capture = await encodeRoomEvidenceCapture(rows.filter(row => row.start_ts >= range.from_at && row.start_ts < range.to_at),
+        range.from_at, range.to_at);
+      db.blocks.set(range.from_at, { ...range, sha256: capture.sha256, row_count: capture.row_count, capture: capture.base64 });
+    }
+    const previous = { model_revision: 1, heating_bands: { binding: context.binding, since: at(0),
+      reference_revision: "accepted", reference: { scope: { kind: "general" }, model: acceptedModel },
+      active: [], candidates: [], attempted: {} } };
+    const result = await prepareStoredRoomHeating(db, owner, { ...context, observed_since: observedSince }, previous, null,
+      { historyTo: Date.parse(end), wallNow: Date.parse(end) });
+    assert(result.kind === "shared");
+    assertEquals(result.work.metadata.fromAt, at(15 * 24));
+    assertEquals(result.work.metadata.historyTo, end);
+    assertEquals(result.work.rows.map(row => row.start_ms), rows.slice(15 * 24).map(row => Date.parse(row.start_ts)));
+    assertEquals(db.reads.find(read => read.name === "get_energy_room_evidence_work")?.args.p_from_at, at(15 * 24));
+    assertEquals(db.blocks.size, 5, "fitting scope does not delete older measured history");
+    assertEquals(result.work.metadata.acceptedReference, previous.heating_bands.reference);
+  }
+});
 /** Synthetic hourly means integrated independently with one-minute steps. */
 function history(start: number, count = 240, gain = .002, weather = -7): ThermalQuarterRow[] {
   let temperature = 20;

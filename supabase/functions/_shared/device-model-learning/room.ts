@@ -175,7 +175,7 @@ export async function prepareStoredRoomHeating(
     storedLibrary && typeof storedLibrary === "object" && "reference" in storedLibrary
     ? storedLibrary.reference : undefined;
   const historyTo = new Date(clock.historyTo).toISOString(), attemptedAt = new Date(clock.wallNow).toISOString();
-  const floorMs = clock.historyTo - 400 * 86_400_000;
+  const floorMs = clock.historyTo - 30 * 86_400_000;
   const since = current?.binding === context.binding
     ? new Date(Math.min(Date.parse(current.since), Date.parse(context.observed_since ?? current.since))).toISOString()
     : context.observed_since ?? new Date(floorMs).toISOString();
