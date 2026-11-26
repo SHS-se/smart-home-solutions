@@ -161,11 +161,8 @@ const ComfortSchedulesTab: React.FC<{
     const rowsByRoom = new Map(
       (scheduleResult.data ?? []).map(row => [row.room_key, row]),
     );
-    for (const row of rowsByRoom.values()) {
-      if (!grouped.has(row.room_key)) grouped.set(row.room_key, {
-        id: row.room_key, name: row.room_name, controlledDevices: [],
-      });
-    }
+    // Stored schedules survive equipment changes; only current planned controls
+    // make a room available in the comfort editor.
     const nextZones = [...grouped.values()].sort((left, right) => left.name.localeCompare(right.name));
     const nextStored: Record<string, StoredComfortSchedule> = {};
     const nextDrafts: Record<string, ZoneComfortSchedule> = {};

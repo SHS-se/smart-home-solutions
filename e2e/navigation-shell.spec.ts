@@ -415,6 +415,14 @@ async function login(page: Page) {
 }
 
 async function mockComfortLink(context: BrowserContext) {
+  // Synthetic rooms include an old schedule with no current heater.
+  const schedules = ['Library', 'Studio', 'Unheated store'].map(name => ({
+    id: name,
+    room_key: name.toLowerCase(), room_name: name,
+    weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('low-temp'),
+    off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21,
+    source: 'portal', updated_at: '2026-01-01T00:00:00Z',
+  }));
   const homes = [
     { id: PRIMARY_HOME_ID, customer_id: CUSTOMER_ID, name: 'Primary home' },
     { id: LINKED_HOME_ID, customer_id: CUSTOMER_ID, name: 'Linked home' },
@@ -425,14 +433,15 @@ async function mockComfortLink(context: BrowserContext) {
   });
   await context.route('**/rest/v1/energy_optimisation_comfort_schedules?**', route => {
     const home = new URL(route.request().url()).searchParams.get('home_id');
-    return route.fulfill({ json: home === `eq.${LINKED_HOME_ID}` ? ['Library', 'Studio'].map(name => ({
-      id: name,
-      room_key: name.toLowerCase(), room_name: name,
-      weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('low-temp'),
-      off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21,
-      source: 'portal', updated_at: '2026-01-01T00:00:00Z',
+    return route.fulfill({ json: home === `eq.${LINKED_HOME_ID}` ? schedules : [] });
+  });
+  await context.route('**/rest/v1/energy_optimisation_devices?**', route => {
+    const home = new URL(route.request().url()).searchParams.get('home_id');
+    return route.fulfill({ json: home === `eq.${LINKED_HOME_ID}` ? schedules.slice(0, 2).map(room => ({
+      mapping_summary: { room_key: room.room_key, room_name: room.room_name, controlled_devices: [`${room.room_name} heater`] },
     })) : [] });
   });
+  return schedules;
 }
 
 test.describe('staff navigation shell', () => {
@@ -452,6 +461,40 @@ test.describe('staff navigation shell', () => {
     await page.goto(COMFORT_LINK.replace('room=studio', 'room=missing'));
     await expect(page.getByText('Rummet i länken har inget komfortschema här.')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Valt rum' }).getByRole('heading')).toHaveCount(0);
+  });
+
+  test('comfort lists heated rooms only and their schedules can be painted and saved', async ({ page, context }) => {
+    const schedules = await mockComfortLink(context);
+    let saves = 0;
+    await context.route('**/rest/v1/rpc/set_energy_room_comfort_schedule', route => {
+      const data = route.request().postDataJSON();
+      expect(data.p_home_id).toBe(LINKED_HOME_ID);
+      expect(data.p_room_key).toBe('studio');
+      const room = schedules.find(room => room.room_key === data.p_room_key)!;
+      room.weekday_modes = data.p_weekday_modes;
+      room.weekend_modes = data.p_weekend_modes;
+      saves++;
+      return route.fulfill({ json: room });
+    });
+    await login(page);
+    await page.goto(COMFORT_LINK);
+    const rooms = page.getByRole('navigation', { name: 'Rum', exact: true });
+    await expect(rooms.getByRole('button')).toHaveText(['Library', 'Studio']);
+    const selected = page.getByRole('region', { name: 'Valt rum' });
+    const weekdays = selected.getByRole('grid', { name: 'Vardagar · Studio' });
+    await selected.getByRole('button', { name: 'Sänkt temperatur', exact: true }).click();
+    await weekdays.getByRole('gridcell').nth(0).click();
+    await expect(weekdays.getByRole('gridcell').nth(0)).toHaveAttribute('aria-label', /Sänkt temperatur/);
+    await selected.getByRole('button', { name: 'Spara', exact: true }).click();
+    await expect(selected.getByRole('button', { name: 'Spara', exact: true })).toBeDisabled();
+    expect(saves).toBe(1);
+    await page.reload();
+    await expect(weekdays.getByRole('gridcell').nth(0)).toHaveAttribute('aria-label', /Sänkt temperatur/);
+    await expect(rooms.getByRole('button')).toHaveText(['Library', 'Studio']);
+
+    await page.goto(COMFORT_LINK.replace('room=studio', 'room=unheated%20store'));
+    await expect(page.getByText('Rummet i länken har inget komfortschema här.')).toBeVisible();
+    await expect(selected.getByRole('grid')).toHaveCount(0);
   });
 
   for (const kind of ['device'] as const) {

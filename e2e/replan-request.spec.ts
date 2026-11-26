@@ -1035,6 +1035,9 @@ test.describe('requesting a replan', () => {
   test('room Model shows the shared response with its fit warnings and source-reporting checks', async ({ page, context }) => {
     // Synthetic coefficients and room names exercise the published response contract.
     const key = 'synthetic-studio';
+    await context.route('**/rest/v1/energy_optimisation_devices?**', route => route.fulfill({ json: [{
+      mapping_summary: { room_key: key, room_name: 'Test studio', controlled_devices: ['Test heater'] },
+    }] }));
     let sourceEvidenceAvailable = true;
     const model = { response_family: 'finite', gain_c_per_wh: .001, cooling_constant_per_h: .08, house_coupling_per_h: .12,
       background_gain_c_per_h: .1, thermal_capacity_wh_per_c: 1000, heat_loss_w_per_c: 200, time_constant_h: 7,
