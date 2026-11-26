@@ -1744,6 +1744,40 @@ Deno.test('completed admission is frozen by reference with its exact JSON text a
     assertEquals(await rpc(db,'publish_energy_planning_job',premature),null);
     await assertRejects(()=>rpc(db,'publish_energy_planning_job',{...premature,execution_input:{}}),Error,'Invalid frozen publication reference');
     await assertRejects(()=>rpc(db,'publish_energy_planning_job',{...premature,current:{snapshot:{}}}),Error,'Invalid frozen publication reference');
+    // Simulate an already assembled job present when the seal migration is applied.
+    await db.query("UPDATE private.energy_planning_runtime SET phase='ready',cursor=9 WHERE job_id=$1",[owner.id]);
+    await db.query("UPDATE private.energy_planning_execution SET state=json_build_object('revision','synthetic-revision','runtime','runtime','progress',json_build_object('stage','solve')) WHERE job_id=$1",[owner.id]);
+    await db.exec(await migration('20261126200000_seal_owned_planning_snapshots'));
+    const value = async <T>(expression:string,args:unknown[]) =>
+      (await db.query<{v:T}>(`SELECT ${expression} AS v`,args)).rows[0].v;
+    const dispatch = () => value<{phase:string}>('private.owned_planning_dispatch($1)',[owner.id]);
+    assertEquals((await dispatch()).phase,'seal');
+    const getResult = () => value<{snapshot:unknown;snapshot_hash:string;input?:unknown}|null>('load_energy_owned_planning_result($1,$2,$3)',scope);
+    assertEquals(await getResult(),null);
+    const read = (args:unknown[]) => value('read_energy_owned_snapshot_for_hash($1,$2,$3,$4)',args);
+    const exact = await read([...scope,9]);
+    assertEquals(exact,JSON.parse(input).snapshot);
+    const {sha256Hex} = await import('../supabase/functions/_shared/ha-device-auth.ts');
+    const digest = await sha256Hex(JSON.stringify(exact));
+    const seal = (args:unknown[]) => value<{phase:string}|null>('seal_energy_owned_planning_snapshot($1,$2,$3,$4,$5,$6,$7)',args);
+    const valid = [...scope,9,'synthetic-revision','runtime',digest];
+    for(const [index,invalid] of [[0,other],[2,null],[2,owner.fence+1],[3,8],[4,'wrong'],[5,'wrong']] as const) {
+      const changed=[...valid]; changed[index]=invalid;
+      assertEquals(await seal(changed),null);
+    }
+    assertEquals(await read([other,owner.id,owner.fence,9]),null);
+    assertEquals(await read([home,owner.id,null,9]),null);
+    await assertRejects(()=>seal([...valid.slice(0,-1),'invalid']),Error,'Invalid snapshot hash');
+    assertEquals((await seal(valid))?.phase,'ready');
+    assertEquals(await seal([...valid.slice(0,-1),'f'.repeat(64)]),null,'duplicate cannot replace digest');
+    assertEquals(await read([...scope,9]),null);
+    const sealed=await getResult();
+    assertEquals(sealed?.snapshot,{snapshot_id:snapshot});
+    assertEquals(sealed?.snapshot_hash,digest);
+    assertEquals(sealed?.input,undefined);
+    for(const [current,run] of [[digest,'f'.repeat(64)],['f'.repeat(64),digest]]) {
+      assertEquals(await rpc(db,'publish_energy_planning_job',{...premature,current:{input_hash:current},run:{input_hash:run}}),null);
+    }
     const capture = {model_version:version,snapshot:{snapshot_id:nextManual,room_network_capture:null}};
     const second = await rpc<Receipt>(db,'accept_energy_planning_job',{...capturedSubmission(nextManual,{model_version:version,accepted_reference_revision:0}),input:capture});
     const secondOwner = (await attemptClaim(db,second.job_id))!;
@@ -1880,6 +1914,7 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
       SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
     await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
     await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
+    await db.exec(await migration('20261126200000_seal_owned_planning_snapshots'));
     const connected = connectedRoomSnapshot(); connected.snapshot_id = snapshot;
     connected.operating_scope = { modes: { $battery:'controlling',$pool:'controlling',$ev:'controlling','synthetic-a':'controlling' },
       device_owners: { 'synthetic-a-heater':'synthetic-a' }, external_demands: {} };
@@ -1945,6 +1980,7 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     assertEquals(stageCheckpoints.filter(stage=>stage.pending).length,1);
     assert(!calls.includes('load_energy_planning_attempt'),'parent never loads expanded admission per poll');
     assertEquals(JSON.parse(JSON.stringify(input)),original);
+    assertEquals(calls.filter(name=>name==='seal_energy_owned_planning_snapshot').length,1);
     assertEquals(publication!.use_frozen_execution,true);
     assertEquals(publication!.execution_input,undefined);
     assertEquals((publication!.current as {snapshot?:unknown}).snapshot,undefined);

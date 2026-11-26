@@ -201,7 +201,7 @@ export async function advanceOwnedPlanning(owner: OwnedPlanningOwner, connection
     callsRemaining--;
     const body = await callPlanningWorker("owned", undefined, bounded, { owner, action }, fetcher);
     const d = body.dispatch;
-    if (d !== null && (!d || !["capture","prepare","catalog","integrate","qualify","solve","assemble","ready"].includes(d.phase) ||
+    if (d !== null && (!d || !["capture","prepare","catalog","integrate","qualify","solve","assemble","seal","ready"].includes(d.phase) ||
       !Number.isSafeInteger(d.cursor) || d.cursor < 0 || !Number.isSafeInteger(d.round) || d.round < 0 ||
       !Number.isSafeInteger(d.target) || d.target < 1 || !Array.isArray(d.replicas) ||
       d.replicas.some(r => !Number.isInteger(r) || r < 0 || r > 3) || new Set(d.replicas).size !== d.replicas.length)) {

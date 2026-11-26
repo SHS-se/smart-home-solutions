@@ -84,6 +84,14 @@ interface LoadedJob {
   input: CapturedRulesInput;
   context: PlanningContext & { model_version: string };
 }
+type OperationalSnapshot = Omit<CapturedRulesInput["snapshot"], "room_network" | "room_network_capture">;
+interface OwnedPlanningResult {
+  snapshot: OperationalSnapshot;
+  snapshot_hash: string;
+  result: string;
+  identity: string | null;
+  context: LoadedJob["context"];
+}
 export class PlanningJobError extends PlanningError {
   constructor(code: string, message: string, status = 500) {
     super(message, code, status, status >= 500 ? "retry" : "terminal"); this.name = "PlanningJobError";
@@ -190,8 +198,9 @@ export class PlanningJobs {
     }
     let generated: PublishedPlan;
     let publication: { current: Record<string, unknown>; run: Record<string, unknown> };
-    let loaded: LoadedJob;
-    let assembledJob: ClaimedJob & LoadedJob;
+    let context: LoadedJob["context"];
+    let snapshot: OperationalSnapshot;
+    let ordinaryInput: CapturedRulesInput | undefined;
     const horizonEnd = Date.parse(metadata.horizon_end ?? "");
     const requireRemainingHorizon = () => {
       if (horizonEnd <= this.now()) throw new PlanningError(
@@ -200,6 +209,7 @@ export class PlanningJobs {
     try {
       requireRemainingHorizon();
       let planned: OptimisationResult;
+      let inputHash: string;
       if (metadata.connected) {
         const advanced = await advanceOwnedPlanning(owner, { ...connection, requestId: metadata.context.request_id,
           deadline: started + 25_000 }, fetcher);
@@ -209,11 +219,13 @@ export class PlanningJobs {
           });
           return deliver(this.delivery(released) ?? await this.readForHome(homeId, job.id) ?? receipt);
         }
-        const complete = await this.rpc<(LoadedJob & { result: string; identity: string | null }) | null>("load_energy_owned_planning_result", {
+        const complete = await this.rpc<OwnedPlanningResult | null>("load_energy_owned_planning_result", {
           p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
         });
         if (!complete) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
-        loaded = complete;
+        snapshot = complete.snapshot;
+        context = complete.context;
+        inputHash = complete.snapshot_hash;
         try { planned = await unpackOwnedPlanningValue<OptimisationResult>(complete.result); }
         catch (error) {
           if (!(error instanceof OwnedPlanningArtifactError)) throw error;
@@ -228,20 +240,20 @@ export class PlanningJobs {
           p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
         });
         if (!ordinary) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
-        loaded = ordinary;
-        planned = await generateRemoteRulesPlan(loaded.input, { ...connection, requestId: loaded.context.request_id,
+        ordinaryInput = ordinary.input;
+        snapshot = ordinaryInput.snapshot;
+        context = ordinary.context;
+        inputHash = await sha256Hex(JSON.stringify(snapshot));
+        planned = await generateRemoteRulesPlan(ordinaryInput, { ...connection, requestId: context.request_id,
           deadline: started + 25_000 }, fetcher);
       }
-      assembledJob = { ...job, ...loaded };
       generated = planned.plan;
-      const snapshot = loaded.input.snapshot;
-      const inputHash = await sha256Hex(JSON.stringify(snapshot));
-      const ack = { generation_request_id: loaded.context.request_id,
+      const ack = { generation_request_id: context.request_id,
         plan_schema_version: generated.schema_version, ha_ack_status: "pending",
-        ha_acknowledged_at: null, ha_integration_version: loaded.context.integration_version,
+        ha_acknowledged_at: null, ha_integration_version: context.integration_version,
         ha_ack_request_id: null, ha_ack_error: null };
       const current = {
-        ...ack, fixed_plan_generation_revision: loaded.context.fixed_revision, replan_error: null,
+        ...ack, fixed_plan_generation_revision: context.fixed_revision, replan_error: null,
         home_id: job.home_id, customer_id: job.customer_id, snapshot_id: snapshot.snapshot_id,
         plan_id: generated.plan_id, input_hash: inputHash, captured_at: snapshot.captured_at,
         issued_at: generated.issued_at, valid_until: generated.valid_until, binding_until: generated.binding_until,
@@ -254,7 +266,7 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         // Which devices SHS was actually controlling when this plan was made. The
         // savings track record counts only months under control; nothing else records it.
-        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, model_revisions: loaded.context.model_revisions, model_capture_status: loaded.context.model_capture_status, operating_modes: snapshot.operating_scope?.modes ?? null,
+        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: context.planning_trigger, planning_job_id: job.id, model_revisions: context.model_revisions, model_capture_status: context.model_capture_status, operating_modes: snapshot.operating_scope?.modes ?? null,
           ...(planned.heating_model_use ? { heating_model_use: planned.heating_model_use } : {}) },
         validation_errors: generated.validation_errors };
       for (const warning of generated.planning_warnings ?? []) {
@@ -269,14 +281,14 @@ export class PlanningJobs {
     }
     const assembledAt = performance.now();
     const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication,
-      ...(metadata.connected ? { use_frozen_execution: true } : { execution_input: loaded.input }), runtime_version: Deno.version.v8 }, homeId, job.id, generated);
-    console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state, planning_trigger: loaded.context.planning_trigger,
+      ...(metadata.connected ? { use_frozen_execution: true } : { execution_input: ordinaryInput }), runtime_version: Deno.version.v8 }, homeId, job.id, generated);
+    console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state, planning_trigger: context.planning_trigger,
       read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
       load_ms: Math.round(loadAt - claimAt), solve_ms: Math.round(assembledAt - loadAt),
       publication_ms: Math.round(performance.now() - assembledAt),
       elapsed_ms: Math.round(performance.now() - started) });
     if (published?.state === "published") {
-      const archive = this.archive(assembledJob, generated).catch(error => {
+      const archive = this.archive(job, snapshot, generated).catch(error => {
         console.error("[ENERGY-PLANNING-JOB] archive failed", { job_id: job.id, detail: describeThrown(error) });
       });
       if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(archive);
@@ -309,14 +321,13 @@ export class PlanningJobs {
     }
   }
 
-  private async archive(job: ClaimedJob & LoadedJob, plan: OptimisationPlan): Promise<void> {
+  private async archive(job: ClaimedJob, snapshot: OperationalSnapshot, plan: OptimisationPlan): Promise<void> {
     await recordPlanningActivity(this.db, job.home_id, job.customer_id, {
       receipt_id: plan.plan_id, source: 'planner', warnings: plan.planning_warnings,
     });
     await archiveAccuracyForecast(this.db, job.home_id, job.customer_id, plan).catch(error => {
       console.error('[FORECAST-ACCURACY] forecast archive failed', {home_id: job.home_id, plan_id: plan.plan_id, detail: describeThrown(error)});
     });
-    const snapshot = job.input.snapshot;
     const estimates = priceEstimateRows({ homeId: job.home_id, timezone: snapshot.timezone,
       issuedAt: plan.issued_at, slots: snapshot.slots,
       shadowImportSekPerKwh: plan.price_outlook?.shadow_import_sek_per_kwh, basis: plan.price_outlook?.level_basis,

@@ -14,6 +14,7 @@ import type { NativeRoomNetworkBelief, NativeRoomNetworkNodeHeader, NativeRoomNe
   NativeRoomNetworkReplicaWork, NativeRoomNetworkSelectedHypothesis } from "./room-network-contract.ts";
 import { OWNED_PLANNING_REVISION, type OwnedPlanningAction, type OwnedPlanningDispatch,
   type OwnedPlanningOwner, type OwnedPlanningResponse } from "./owned-planning-contract.ts";
+import { sha256Hex } from "./ha-device-auth.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import { PlanningError } from "./planning-errors.ts";
 import type { PlanningTrace } from "./planning-trace.ts";
@@ -97,10 +98,18 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     });
     return { dispatch };
   }
-  const saved = await rpc<Stage | null>("load_energy_owned_planning_stage", {
-    p_revision: `${OWNED_PLANNING_REVISION}:${CONNECTED_CAPTURE_IMPLEMENTATION}:${RULES_MODEL_VERSION}`, p_runtime: Deno.version.v8,
-  });
+  const version = { p_revision: `${OWNED_PLANNING_REVISION}:${CONNECTED_CAPTURE_IMPLEMENTATION}:${RULES_MODEL_VERSION}`, p_runtime: Deno.version.v8 };
+  const saved = await rpc<Stage | null>("load_energy_owned_planning_stage", version);
   if (!saved?.dispatch) return { dispatch: null };
+  if (saved.dispatch.phase === "seal") {
+    const cursor = { p_cursor: saved.dispatch.cursor };
+    const snapshot = await rpc<CapturedRulesInput["snapshot"] | null>("read_energy_owned_snapshot_for_hash", cursor);
+    if (!snapshot) return { dispatch: null };
+    const digest = await sha256Hex(JSON.stringify(snapshot));
+    return { dispatch: await rpc<OwnedPlanningDispatch | null>("seal_energy_owned_planning_snapshot", {
+      ...cursor, ...version, p_snapshot_hash: digest,
+    }) };
+  }
   if (saved.dispatch.phase === "integrate") {
     return { dispatch: await rpc<OwnedPlanningDispatch | null>("advance_energy_forecast_barrier") };
   }

@@ -129,8 +129,12 @@ not require live observations. When the admission already contains the completed
 network and has no source-capture descriptor, the fenced worker requests that SQL
 freeze the stored admission directly. SQL keeps its exact JSON text and verifies
 the capture phase and fences before advancing the execution cursor. The worker
-checkpoints only the resolved trajectory counts at solve. Publication selects
-that frozen input by the ready job and fence. The public current snapshot carries
+checkpoints only the resolved trajectory counts at solve. After assembly, a
+separate owned worker hashes the frozen snapshot with the replay serializer
+and seals its SHA-256 under the live job fence and execution cursor. Ingestion
+loads the assembled result, sealed hash and operational snapshot. Publication
+checks the current and run hashes against that seal and selects the frozen
+execution by the ready job and fence. The public current snapshot carries
 all operational fields. The private current-input archive additionally owns
 `room_network` and its numerical evidence. The public input hash identifies the
 full archived snapshot and both download paths use that archive.
