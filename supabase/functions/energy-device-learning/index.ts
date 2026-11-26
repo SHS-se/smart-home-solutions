@@ -3,4 +3,4 @@ import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { handleDeviceLearning } from "../_shared/device-learning-worker.ts";
 Deno.serve(withTrafficMetrics("energy-device-learning", (request, traffic) => handleDeviceLearning(request,
   createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { auth: { persistSession: false }, global: { fetch: traffic.fetch } }), Date.now, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))));
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } }))));

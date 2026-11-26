@@ -21,16 +21,13 @@ type LearningClaim = LearningOwner & (
 );
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
-export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now, serviceRole?: string): Promise<Response> {
+export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
-  const privileged = Boolean(serviceRole && request.headers.get("authorization") === `Bearer ${serviceRole}`);
-  if (!privileged) {
-    const { data: authorized, error: authError } = await db.rpc("verify_energy_learning_token", {
-      p_token: request.headers.get("x-energy-learning-token") ?? "",
-    });
-    if (authError) return Response.json({ error: "authentication_unavailable" }, { status: 503 });
-    if (!authorized) return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const { data: authorized, error: authError } = await db.rpc("verify_energy_learning_token", {
+    p_token: request.headers.get("x-energy-learning-token") ?? "",
+  });
+  if (authError) return Response.json({ error: "authentication_unavailable" }, { status: 503 });
+  if (!authorized) return Response.json({ error: "unauthorized" }, { status: 401 });
   const capability = roomLearningWorkerCapabilities();
   const trace: RoomSliceTrace = {};
   const started = performance.now();
@@ -42,7 +39,6 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     if (raw.length > 1024) return Response.json({ error: "request_too_large" }, { status: 413 });
     const { job_id, action } = JSON.parse(raw);
     if (action === "capabilities") return Response.json(capability);
-    if (privileged) return Response.json({ error: "capabilities_only" }, { status: 403 });
     if (typeof job_id !== "string" || !job_id) return Response.json({ error: "invalid_job_id" }, { status: 400 });
     const claimStarted = performance.now();
     const result = await db.rpc("claim_energy_learning_work", { p_job_id: job_id, p_worker: capability });

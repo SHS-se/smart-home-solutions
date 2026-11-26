@@ -1,5 +1,5 @@
 // The owners, immutable capture bytes and cursor are independently synthetic.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { connectedDatabase } from "./helpers/connected-room-sql.ts";
 import { home, other } from "./helpers/room-fit-sql.ts";
 
@@ -203,5 +203,21 @@ Deno.test("history admissions overlap across homes and with frozen numerical wor
     await db.query("UPDATE private.energy_learning_jobs SET wake_after=now(),room_last_started_at=now() WHERE home_id=$1", [other]);
     await db.query("SELECT private.refill_energy_learning_work()");
     assertEquals(await tickets(), [{ home_id: home, work_class: "source" }, { home_id: other, work_class: "source" }]);
+  } finally { await db.close(); }
+});
+
+Deno.test("only deployment service role can read the configured learning worker credential", async () => {
+  const db = await setup();
+  try {
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261126221000_learning_worker_capability_token.sql"));
+    const roles = (await db.query<{ role: string; allowed: boolean }>(`SELECT role,
+      has_function_privilege(role,'public.get_energy_learning_worker_token()','execute') AS allowed
+      FROM (VALUES ('anon'),('authenticated'),('service_role')) AS roles(role) ORDER BY role`)).rows;
+    assertEquals(roles, [{ role: "anon", allowed: false }, { role: "authenticated", allowed: false }, { role: "service_role", allowed: true }]);
+    await db.exec("RESET ROLE; SET ROLE service_role");
+    const verified = (await db.query<{ ok: boolean }>("SELECT public.verify_energy_learning_token(public.get_energy_learning_worker_token()) AS ok")).rows[0];
+    assert(verified.ok);
+    await db.exec("RESET ROLE; SET ROLE room_migration; UPDATE private.energy_learning_credentials SET function_url=NULL");
+    await assertRejects(() => db.query("SELECT public.get_energy_learning_worker_token()"), Error, "query returned no rows");
   } finally { await db.close(); }
 });

@@ -10,7 +10,22 @@ export function learningDeploymentId(run: string, attempt: string): string {
   return id.toString();
 }
 
-type Post = (path: string, body: Record<string, unknown>) => Promise<unknown>;
+type Post = (path: string, body: Record<string, unknown>, learningToken?: string) => Promise<unknown>;
+
+export function deploymentPost(url: string, key: string, request: typeof fetch = fetch): Post {
+  return async (path, body, learningToken) => {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (learningToken) headers.set("x-energy-learning-token", learningToken);
+    else {
+      headers.set("apikey", key);
+      headers.set("authorization", `Bearer ${key}`);
+    }
+    const response = await request(url + path, { method: "POST", redirect: "error", headers, body: JSON.stringify(body) });
+    if (!response.ok) throw new Error(`Learning release request to ${path} failed (${response.status})`);
+    const data = await response.text();
+    return data ? JSON.parse(data) : null;
+  };
+}
 
 export async function deployLearningRelease(deployment: string, projectUrl: string, post: Post, deploy: () => Promise<void>) {
   const { runtime: _localRuntime, ...manifest } = roomLearningWorkerCapabilities();
@@ -18,7 +33,9 @@ export async function deployLearningRelease(deployment: string, projectUrl: stri
   if (prepared !== true) throw new Error("Learning release preparation refused the deployment");
   await deploy();
   await post("/rest/v1/rpc/configure_energy_device_learning", { p_project_url: projectUrl });
-  const worker = await post("/functions/v1/energy-device-learning", { action: "capabilities" });
+  const token = await post("/rest/v1/rpc/get_energy_learning_worker_token", {});
+  if (typeof token !== "string" || !token) throw new Error("Learning worker credential unavailable");
+  const worker = await post("/functions/v1/energy-device-learning", { action: "capabilities" }, token);
   if (typeof worker !== "object" || !worker || !("runtime" in worker) ||
     typeof worker.runtime !== "string" || !worker.runtime.trim() ||
     Object.keys(worker).length !== Object.keys(manifest).length + 1 ||
@@ -41,16 +58,7 @@ if (import.meta.main) {
   const key = keys.find((row: { name: string }) => row.name === "service_role")?.api_key;
   if (typeof key !== "string" || !key) throw new Error("Service credential unavailable");
   const url = `https://${project}.supabase.co`;
-  const post: Post = async (path, body) => {
-    const response = await fetch(url + path, {
-      method: "POST", redirect: "error", headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw new Error(`Learning release request to ${path} failed (${response.status})`);
-    const data = await response.text();
-    return data ? JSON.parse(data) : null;
-  };
-  await deployLearningRelease(deployment, url, post, async () => {
+  await deployLearningRelease(deployment, url, deploymentPost(url, key), async () => {
     const status = await new Deno.Command("supabase", {
       args: ["functions", "deploy", "energy-device-learning", "--project-ref", project, "--use-api", "--yes"],
       stdout: "inherit", stderr: "inherit",

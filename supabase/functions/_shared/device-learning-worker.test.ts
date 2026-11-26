@@ -110,14 +110,22 @@ Deno.test("a room without a heating context uses its generation horizon and curr
   assertEquals(published[0].last_attempted_at, new Date(wallNow).toISOString());
 });
 
-Deno.test("service role reads worker capabilities and cannot claim through the capability credential", async () => {
-  const probe = (body: unknown) => new Request("https://synthetic.test/learning", { method: "POST",
-    headers: { authorization: "Bearer synthetic-service" }, body: JSON.stringify(body) });
-  const db = { rpc() { throw new Error("Capability probe touched job database"); } };
-  const read = await handleDeviceLearning(probe({ action: "capabilities" }), db, Date.now, "synthetic-service");
+Deno.test("capability reads use the learning token and never claim work", async () => {
+  const probe = (body: unknown, token?: string) => new Request("https://synthetic.test/learning", { method: "POST",
+    headers: { authorization: "Bearer synthetic-service", ...(token ? { "x-energy-learning-token": token } : {}) },
+    body: JSON.stringify(body) });
+  const calls: string[] = [];
+  const db = { rpc(name: string, args: { p_token: string }) {
+    calls.push(name);
+    return { data: args.p_token === "synthetic-learning", error: null };
+  } };
+  const read = await handleDeviceLearning(probe({ action: "capabilities" }, "synthetic-learning"), db);
   const result = await read.json();
   assertEquals([read.status, result.protocol, result.learner_version, result.runtime], [200, 2, ROOM_LEARNER_VERSION, Deno.version.v8]);
-  assertEquals((await handleDeviceLearning(probe({ job_id: "job" }), db, Date.now, "synthetic-service")).status, 403);
+  assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }, "invalid"), db)).status, 401);
+  assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }), db)).status, 401);
+  assertEquals((await handleDeviceLearning(probe({ job_id: "job" }), db)).status, 401);
+  assertEquals(calls, Array(4).fill("verify_energy_learning_token"));
 });
 
 Deno.test("incompatible and missing numerical checkpoints yield before discovery or reset", async () => {
