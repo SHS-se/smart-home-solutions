@@ -5,31 +5,31 @@ use shs_planner_models::room::{
     project, project_traced, temperature, Interval, Projection, State, Thermostat, Transition,
 };
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Quarter {
     #[serde(flatten)]
-    physics: Interval,
-    transition: Transition,
-    required_c: f64,
-    maximum_c: f64,
-    maximum_w: f64,
-    relay_w: Vec<f64>,
-    thermostat_power_w: Option<Vec<f64>>,
-    fixed_relays: Vec<Option<bool>>,
-    fixed_targets_c: Vec<Option<f64>>,
-    import_sek_per_kwh: f64,
-    export_sek_per_kwh: f64,
-    surplus_w: f64,
-    room_target: Option<RoomTarget>,
+    pub(crate) physics: Interval,
+    pub(crate) transition: Transition,
+    pub(crate) required_c: f64,
+    pub(crate) maximum_c: f64,
+    pub(crate) maximum_w: f64,
+    pub(crate) relay_w: Vec<f64>,
+    pub(crate) thermostat_power_w: Option<Vec<f64>>,
+    pub(crate) fixed_relays: Vec<Option<bool>>,
+    pub(crate) fixed_targets_c: Vec<Option<f64>>,
+    pub(crate) import_sek_per_kwh: f64,
+    pub(crate) export_sek_per_kwh: f64,
+    pub(crate) surplus_w: f64,
+    pub(crate) room_target: Option<RoomTarget>,
 }
-#[derive(Deserialize)]
-struct RoomTarget {
-    preferred_c: f64,
-    fixed_c: Option<f64>,
-    fixed_switches: Vec<Option<bool>>,
+#[derive(Clone, Deserialize)]
+pub(crate) struct RoomTarget {
+    pub(crate) preferred_c: f64,
+    pub(crate) fixed_c: Option<f64>,
+    pub(crate) fixed_switches: Vec<Option<bool>>,
 }
 
-fn room_device_target(
+pub(crate) fn room_device_target(
     room: &RoomTarget,
     q: &Quarter,
     i: usize,
@@ -49,23 +49,23 @@ fn room_device_target(
     let last = ((t.maximum_c - t.minimum_c) / t.step_c + 1e-9).floor();
     js_round((t.minimum_c + index.clamp(0., last) * t.step_c) * 1e9) / 1e9
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Input {
-    start_c: f64,
-    start_stored_heat_c: f64,
-    thermostats: Vec<Thermostat>,
-    quarters: Vec<Quarter>,
+    pub(crate) start_c: f64,
+    pub(crate) start_stored_heat_c: f64,
+    pub(crate) thermostats: Vec<Thermostat>,
+    pub(crate) quarters: Vec<Quarter>,
 }
-#[derive(Default, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Plan {
-    power_w: Vec<f64>,
-    thermostat_w: Vec<Vec<f64>>,
-    targets_c: Vec<Vec<f64>>,
-    relays_on: Vec<Vec<bool>>,
-    temperature_c: Vec<f64>,
-    shortfall_c: Vec<f64>,
+    pub(crate) power_w: Vec<f64>,
+    pub(crate) thermostat_w: Vec<Vec<f64>>,
+    pub(crate) targets_c: Vec<Vec<f64>>,
+    pub(crate) relays_on: Vec<Vec<bool>>,
+    pub(crate) temperature_c: Vec<f64>,
+    pub(crate) shortfall_c: Vec<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    room_targets_c: Vec<f64>,
+    pub(crate) room_targets_c: Vec<f64>,
 }
 // A kernel contains exact physical outcomes, not choices or scores. Only
 // adjacent, bit-identical quarter physics share it. The 32 MiB payload budget
@@ -1003,7 +1003,7 @@ fn literal_schedule(
 /// qualifies; a response too weak to reach any missed target cannot buy
 /// unlimited energy through the search's large shortfall weight, because
 /// narrowing a gap without closing it never justifies extra spending.
-fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool {
+pub(crate) fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool {
     let cost = |plan: &Plan| {
         input
             .quarters

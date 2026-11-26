@@ -184,7 +184,7 @@ export interface DecodedRoomEvidenceBlock {
 /** A manifest must cover every requested instant, including explicitly empty blocks.
  * Only observed native intervals wholly within the requested population qualify. */
 export function qualifyRoomEvidenceBlocks(blocks: readonly DecodedRoomEvidenceBlock[], roomKey: string,
-  fromAt: string, toAt: string) {
+  fromAt: string, toAt: string, peerKeys: readonly string[] = []) {
   const floor = Date.parse(fromAt), ceiling = Date.parse(toAt);
   if (!Number.isFinite(floor) || !Number.isFinite(ceiling) || floor > ceiling) throw new Error("Invalid room evidence horizon");
   const chronological = blocks.map(block => ({ ...bounds(block.from_at, block.to_at), rows: block.rows }))
@@ -208,6 +208,6 @@ export function qualifyRoomEvidenceBlocks(blocks: readonly DecodedRoomEvidenceBl
     }
   }
   if (coveredThrough < ceiling) throw new Error("Incomplete room evidence coverage");
-  const { rows, report } = qualifyProbeFreshness(observed);
+  const { rows, report } = qualifyProbeFreshness(observed, peerKeys);
   return { quarters: rows.map(({ probe_evidence: _facts, ...row }) => row), sourceFreshness: report };
 }

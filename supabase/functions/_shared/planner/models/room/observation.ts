@@ -1,4 +1,8 @@
 /** Shared exact continuous-time endpoint and interval-mean observation kernel. */
+/** Source-qualified direction is distinct from measured heating power. */
+export function roomHeatingDirectionKnown(row: { cooling: boolean | null; operation_fact?: string }): boolean {
+  return row.cooling === false || row.operation_fact !== undefined;
+}
 /** Exact endpoint and interval-mean coefficients of T'=-kT+gD+F, D'=(P-D)/lag. */
 export function roomMeanObservation(k: number, lag: number, hours = .25) {
   const H = hours;

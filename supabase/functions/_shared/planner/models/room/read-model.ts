@@ -24,13 +24,13 @@ export function readThermalModel(value: unknown): ThermalZoneModel | null {
   // The existing untagged finite shape remains a member of the storage schema.
   if (row.response_family != null && row.response_family !== "finite" && row.response_family !== "integrator") return null;
   const integrator = row.response_family === "integrator";
-  const noFixedCapacity = integrator || number("gain_c_per_wh") === 0 || (weather.gain_outdoor_slope_per_c ?? 0) !== 0;
   const model: DynamicThermalZoneModel = { ...common,
     ...(row.response_family ? { response_family: row.response_family as "finite" | "integrator" } : {}),
     gain_c_per_wh: number("gain_c_per_wh"), cooling_constant_per_h: number("cooling_constant_per_h"),
     background_gain_c_per_h: number("background_gain_c_per_h"),
-    thermal_capacity_wh_per_c: noFixedCapacity ? optional("thermal_capacity_wh_per_c") : number("thermal_capacity_wh_per_c"),
-    heat_loss_w_per_c: noFixedCapacity ? optional("heat_loss_w_per_c") : number("heat_loss_w_per_c"),
+    // Effective electrical response need not identify physical capacity/COP.
+    thermal_capacity_wh_per_c: optional("thermal_capacity_wh_per_c"),
+    heat_loss_w_per_c: optional("heat_loss_w_per_c"),
     time_constant_h: integrator ? optional("time_constant_h") : number("time_constant_h"),
     heating_rate_c_per_h: optional("heating_rate_c_per_h"),
     solar_gain_c_per_h_per_wm2: optional("solar_gain_c_per_h_per_wm2"),

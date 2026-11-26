@@ -1,4 +1,4 @@
-import { roomResponseTrainingLength } from "../device-learning/room/chronological-evidence.ts";
+import { roomResponseTrainingLength, connectedRoomResponseTrainingLength, connectedRoomObservedPeers, connectedRoomEvidenceUsable } from "../device-learning/room/chronological-evidence.ts";
 import type { LearnedMeasuredRoomResponse } from "../device-learning/room/measured-response.ts";
 import { ROOM_MEASURED_POLICY, ROOM_MEASUREMENT_METHOD, type MeasuredRoomLedger } from "../planner/models/room/measured-evidence.ts";
 import { decodeRoomEvidenceCapture, encodeRoomEvidenceCapture, qualifyRoomEvidenceBlocks, type DecodedRoomEvidenceBlock } from "./room-evidence-capture.ts";
@@ -9,17 +9,18 @@ import { readDoorwayProbes, type DoorwayProbeRow } from "../room-doorway-probes.
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
 import { fitRoomsFromQuarters, TRAINING_WINDOW_DAYS, thermalQuarter, zoneModelRows, type ThermalQuarterRow } from "../thermal-training.ts";
 import { roomIntervalHours, roomIntervalSeconds } from "../device-learning/room/mean-evidence.ts";
-import { fitIndependentRoomBand, fitRoomMeans, type RoomMeanQuarter, type RoomLearningEvidence } from "../device-learning/room/mean-observations.ts";
+import { fitRoomMeans, type RoomMeanQuarter } from "../device-learning/room/mean-observations.ts";
 import { readPassiveHeatModel, readRoomPassiveHeat } from "../room-passive-heat-evidence.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
 import { historicalIrradiancePoints, irradiancePoints, irradianceOnto } from "../solar-irradiance.ts";
-import type { RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
-import { generalRoomFitWarnings, heatingBand, readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
+import { readConnectedRoomCapture, type ConnectedRoomCapture, type RoomHeatingContext, type StoredDeviceModel } from "../device-model-store.ts";
+import { readRoomHeatingBands, type RoomHeatingBands, type RoomHeatingReference } from "../planner/heating-bands.ts";
 import { readThermalModel } from "../planner/models/room/read-model.ts";
-import { isEquilibrium, type DynamicThermalZoneModel, type ThermalZoneModel } from "../planner/models/room/thermal.ts";
+import { isEquilibrium, type DynamicThermalZoneModel } from "../planner/models/room/thermal.ts";
 import { readRoomDoorwayModel, type RoomDoorwayModel } from "../planner/models/room/doorway-boundary.ts";
 import { qualifyProbeFreshness, type ProbeFreshnessReport } from "../device-learning/room/source-freshness.ts";
 import { decodeHeatingProbeCapture } from "../heating-probe-wire.ts";
+import { readConnectedRoomResponse, type ConnectedRoomResponse } from "../planner/models/room/connected-exchange.ts";
 
 const HOUR_MS = 3_600_000;
 
@@ -61,6 +62,16 @@ export async function readRoomQuarters(
   return qualifyRoomOperationEvidence(rows, facts);
 }
 
+/** Planning replays the same source-qualified native observations as learning.
+ * The caller supplies the model's causal anchor, never a fixed recency window. */
+export async function readConnectedRoomPlanningRows(
+  // deno-lint-ignore no-explicit-any
+  db: any, homeId: string, customerId: string, roomKey: string, from: string, to: string, peerKeys: readonly string[],
+): Promise<RoomMeanQuarter[]> {
+  const raw = await readRoomQuarters(db, homeId, customerId, roomKey, from, to, true);
+  return qualifyProbeFreshness(raw, peerKeys).rows.map(thermalQuarter);
+}
+
 export function nativeRoomReadWindows(from: string, to: string): [string, string][] {
   const hour = HOUR_MS, finish = Date.parse(to), windows: [string, string][] = [];
   let start = Date.parse(from);
@@ -75,8 +86,8 @@ export function nativeRoomReadWindows(from: string, to: string): [string, string
 
 /** Source archives are independent of fitting policy and derived estimates. */
 export const ROOM_SOURCE_IMPLEMENTATION = "chronological_native_evidence_v1";
-export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEASURED_POLICY}:${ROOM_MEASUREMENT_METHOD}:state_carrying_forecast_v1`;
-export const ROOM_SHARED_METADATA_VERSION = 2;
+export const ROOM_RESPONSE_IMPLEMENTATION = `${ROOM_SOURCE_IMPLEMENTATION}:${ROOM_MEASURED_POLICY}:${ROOM_MEASUREMENT_METHOD}:state_carrying_forecast_v1:adaptive_connected_native_v1`;
+export const ROOM_SHARED_METADATA_VERSION = 3;
 
 export interface RoomEvidenceBasis {
   sourceRevision: number;
@@ -88,6 +99,7 @@ export interface RoomTrainingView {
   length: number;
   /** Only training-only freshness decisions differing from the full view. */
   temperatures: [index: number, roomC: number | null, houseC: number | null][];
+  peerTemperatures: [index: number, peers: Record<string, number | null>][];
 }
 export interface RoomSharedMetadata {
   version: typeof ROOM_SHARED_METADATA_VERSION;
@@ -108,6 +120,7 @@ export interface RoomSharedMetadata {
   ratedPowerW: number | null;
   roomName: string;
   sourceFreshness: ProbeFreshnessReport | null;
+  connected: ConnectedRoomCapture;
 }
 export interface RoomLearningOwner {
   id: string;
@@ -126,6 +139,7 @@ export type RoomHeatingPreparation =
 interface EvidenceWork {
   source_revision: number;
   policy_fingerprint: string;
+  connected: ConnectedRoomCapture;
   next: { from_at: string; to_at: string; solar_retry_at?: string | null; solar_after?: string | null } | null;
 }
 interface EvidenceBlock {
@@ -142,6 +156,7 @@ const sameEvidence = (a: RoomEvidenceBasis | undefined, b: RoomEvidenceBasis) =>
 export function roomResponseEvidence(rows: RoomMeanQuarter[], view: RoomTrainingView) {
   const trainingRows = rows.slice(0, view.length).map(row => ({ ...row }));
   for (const [index, room_c, house_c] of view.temperatures) Object.assign(trainingRows[index], { room_c, house_c });
+  for (const [index, peer_c] of view.peerTemperatures) trainingRows[index].peer_c = { ...peer_c };
   return { fullRows: rows, trainingRows };
 }
 
@@ -188,7 +203,8 @@ export async function prepareStoredRoomHeating(
   };
   const readWork = async () => {
     const work = await rpc<EvidenceWork>("get_energy_room_evidence_work", scope);
-    if (!work || !isRoomPolicyFingerprint(work.policy_fingerprint) || !Number.isSafeInteger(work.source_revision) || work.source_revision < 0 ||
+    if (!work || !isRoomPolicyFingerprint(work.policy_fingerprint) || !readConnectedRoomCapture(work.connected) ||
+      work.connected.policyFingerprint !== work.policy_fingerprint || !Number.isSafeInteger(work.source_revision) || work.source_revision < 0 ||
       (work.next !== null && (!work.next || !Number.isFinite(Date.parse(work.next.from_at)) || !Number.isFinite(Date.parse(work.next.to_at))))) {
       throw new Error("Invalid chronological room evidence work");
     }
@@ -235,20 +251,34 @@ export async function prepareStoredRoomHeating(
     if (rows.length !== block.row_count) throw new Error("Room evidence block row count mismatch");
     decoded.push({ from_at: block.from_at, to_at: block.to_at, rows });
   }
-  const qualified = qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, historyTo);
+  const qualified = qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, historyTo, work.connected.peerKeys);
   const rows = qualified.quarters.map(thermalQuarter);
-  const length = roomResponseTrainingLength(rows.map(row => row.duration_s ?? 900));
+  const connectedContext = { peers: work.connected.peerKeys, observedOnly: work.connected.observedOnly };
+  const connected = connectedContext.observedOnly || connectedContext.peers.length > 0;
+  let length = connected ? connectedRoomResponseTrainingLength(rows, connectedContext)
+    : roomResponseTrainingLength(rows.map(row => row.duration_s ?? 900));
   const trainingTo = length ? new Date(rows[length - 1].start_ms + roomIntervalSeconds(rows[length - 1]) * 1000).toISOString() : fromAt;
-  const training = length ? qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, trainingTo).quarters : [];
+  let training = length ? qualifyRoomEvidenceBlocks(decoded, roomKey, fromAt, trainingTo, work.connected.peerKeys).quarters : [];
+  const observedContext = { ...connectedContext, peers: connectedRoomObservedPeers(rows, connectedContext.peers) };
+  if (connected && length < rows.length && !training.some(row => connectedRoomEvidenceUsable(thermalQuarter(row), observedContext))) {
+    // Prefix freshness is independent. If it removes all usable training
+    // evidence, fit the whole qualified capture with validation unavailable.
+    length = rows.length;
+    training = qualified.quarters.slice();
+  }
   // Horizon clipping above owns complete intervals. Training follows the exact
   // prefix even when an interval straddles the chosen endpoint elsewhere.
   if (training.length !== length) throw new Error("Room evidence training prefix mismatch");
   const ratedPowerW = qualified.quarters.at(-1)?.active_power_w ?? null;
   const roomName = qualified.quarters.at(-1)?.room_name ?? (typeof previous?.room_name === "string" ? previous.room_name : roomKey);
   const temperatures: RoomTrainingView["temperatures"] = [];
+  const peerTemperatures: RoomTrainingView["peerTemperatures"] = [];
   training.forEach((row, index) => {
     if (row.room_temperature_c !== rows[index].room_c || row.house_temperature_c !== rows[index].house_c) {
       temperatures.push([index, row.room_temperature_c, row.house_temperature_c]);
+    }
+    if (row.peer_temperatures_c && work.connected.peerKeys.some(key => row.peer_temperatures_c![key] !== rows[index].peer_c?.[key])) {
+      peerTemperatures.push([index, row.peer_temperatures_c]);
     }
   });
   // Numerical capture has no use for raw probe vectors or duplicate transport
@@ -259,9 +289,9 @@ export async function prepareStoredRoomHeating(
   return { kind: "shared", work: { rows, policyFingerprint: work.policy_fingerprint, metadata: {
     version: ROOM_SHARED_METADATA_VERSION, implementation: ROOM_RESPONSE_IMPLEMENTATION,
     homeId, customerId, roomKey, binding: context.binding, baseRevision: previous?.model_revision ?? 0,
-    attemptedAt, fromAt, historyTo, evidence, trainingView: { length, temperatures }, library,
+    attemptedAt, fromAt, historyTo, evidence, trainingView: { length, temperatures, peerTemperatures }, library,
     ratedPowerW, roomName, ...(acceptedReference !== undefined ? { acceptedReference } : {}),
-    sourceFreshness: qualified.sourceFreshness,
+    sourceFreshness: qualified.sourceFreshness, connected: work.connected,
   } } };
 }
 
@@ -280,16 +310,73 @@ export function parseRoomSharedMetadata(value: unknown): RoomSharedMetadata | nu
     !Array.isArray(row.trainingView.temperatures) || !row.trainingView.temperatures.every((entry, index, all) =>
       Array.isArray(entry) && entry.length === 3 && Number.isSafeInteger(entry[0]) && entry[0] >= 0 && entry[0] < row.trainingView.length &&
       (index === 0 || entry[0] > all[index - 1][0]) && finite(entry[1]) && finite(entry[2])) ||
+    !Array.isArray(row.trainingView.peerTemperatures) || !row.trainingView.peerTemperatures.every((entry, index, all) =>
+      Array.isArray(entry) && entry.length === 2 && Number.isSafeInteger(entry[0]) && entry[0] >= 0 && entry[0] < row.trainingView.length &&
+      (index === 0 || entry[0] > all[index - 1][0]) && entry[1] && typeof entry[1] === "object" && !Array.isArray(entry[1]) &&
+      Object.values(entry[1]).every(finite)) || !readConnectedRoomCapture(row.connected) ||
     !finite(row.ratedPowerW) || typeof row.roomName !== "string") return null;
   const library = readRoomHeatingBands(row.library);
   if (!library || library.binding !== row.binding) return null;
   const accepted = row.acceptedReference;
   if (library.reference && accepted === undefined) return null;
   if (accepted !== undefined && (!library.reference || !accepted || typeof accepted !== "object" ||
-    !("model" in accepted) || !readThermalModel(accepted.model))) return null;
+    !("model" in accepted) || !readThermalModel(accepted.model) && !(accepted.model === null &&
+      "connected_exchange" in accepted && readConnectedRoomResponse(accepted.connected_exchange)?.thermal.heater === null))) return null;
   if (row.sourceFreshness !== null && (!row.sourceFreshness || ![row.sourceFreshness.room, row.sourceFreshness.house].every(part =>
     part && [part.inferred, part.unavailable, part.unverified].every(v => Number.isSafeInteger(v) && v >= 0)))) return null;
   return row;
+}
+
+export interface StoredConnectedRoomFit {
+  response: ConnectedRoomResponse | null;
+  model: DynamicThermalZoneModel | null;
+  issues: string[];
+  learning: Record<string, unknown>;
+}
+
+/** Publish one receiving response. Unidentified attempts retain the exact
+ * accepted reference, including its original graph and source provenance. */
+export function finalizeStoredConnectedRoomResponse(metadata: RoomSharedMetadata, rows: RoomMeanQuarter[],
+  fit: StoredConnectedRoomFit): { model: Record<string, unknown>; ledger: null } {
+  const { response, model, issues } = fit;
+  if (response && (!readConnectedRoomResponse(response) ||
+    (response.thermal.heater === null) !== (model === null) ||
+    metadata.connected.observedOnly && response.thermal.heater !== null ||
+    !metadata.connected.observedOnly && response.thermal.heater === null &&
+      (response.evidence.heater_identified !== false || response.evidence.unidentified_heater !== true))) {
+    throw new Error("Invalid connected room publication");
+  }
+  const { library, evidence, connected } = metadata;
+  const learning = { ...fit.learning, source_evidence: evidence };
+  const shared_attempt = { implementation: ROOM_RESPONSE_IMPLEMENTATION, learner_version: ROOM_LEARNER_VERSION,
+    evidence, attempted_at: metadata.attemptedAt, status: response ? "fitted" as const : "unidentified" as const };
+  const sampleCount = model?.sample_count ?? rows.length;
+  const scalar = model ? Object.fromEntries(Object.entries(model).filter(([key]) =>
+    !["response_family", "gain_reference_outdoor_c", "gain_outdoor_slope_per_c"].includes(key))) : {
+    gain_c_per_wh: null, cooling_constant_per_h: null, background_gain_c_per_h: null,
+    thermal_capacity_wh_per_c: null, heat_loss_w_per_c: null, time_constant_h: null, heating_rate_c_per_h: null,
+    house_coupling_per_h: null, solar_gain_c_per_h_per_wm2: null, r2: null, residual_std_c: null, heat_lag_h: null,
+    prediction_error_c: null, solar_mean_w_per_m2: null,
+  };
+  const heating_bands = response ? { ...library, reference: { model, connected_exchange: response,
+    scope: { kind: "shared" }, training_from: metadata.fromAt, training_to: metadata.historyTo,
+    warnings: issues, learning_evidence: learning }, reference_revision: crypto.randomUUID(),
+    active: [], candidates: [], attempted: {}, shared_attempt, pending_windows: 0 } : {
+    ...library, ...(metadata.acceptedReference !== undefined ? { reference: metadata.acceptedReference } : {}),
+    shared_attempt, pending_windows: 0,
+  };
+  const accepted = metadata.acceptedReference !== undefined || library.active.length > 0;
+  return { ledger: null, model: {
+    home_id: metadata.homeId, customer_id: metadata.customerId, room_key: metadata.roomKey, room_name: metadata.roomName,
+    ...(response ? { ...scalar, trained: true, rejection_reason: null, sample_count: sampleCount,
+      fitted_at: metadata.attemptedAt, training_from: metadata.fromAt, training_to: metadata.historyTo,
+      passive_heat: null, doorway_exchange: null } : !accepted ? { trained: false, rejection_reason: "singular",
+      sample_count: rows.length, training_from: metadata.fromAt, training_to: metadata.historyTo } : {}),
+    last_attempted_at: metadata.attemptedAt,
+    last_fit_attempt: { status: response ? "fitted" : "unidentified", issues, learning,
+      observed_only: connected.observedOnly, source_freshness: metadata.sourceFreshness },
+    heating_bands,
+  } };
 }
 
 /** A failed attempt retains the accepted response; only a complete numerical
@@ -336,13 +423,6 @@ export function finalizeStoredRoomResponse(metadata: RoomSharedMetadata, rows: R
       ? { ...heating_bands, reference: metadata.acceptedReference } : heating_bands } };
 }
 
-function roomReference(model: ThermalZoneModel, row?: Record<string, unknown>): RoomHeatingReference {
-  const warnings = generalRoomFitWarnings(row?.last_fit_attempt);
-  return { model, ...(typeof row?.training_to === "string" ? { training_to: row.training_to } : {}),
-    ...(warnings ? { warnings } : {}),
-    scope: { kind: "general" }, ...(row?.passive_heat ? { passive_heat: row.passive_heat } : {}),
-    ...(row?.doorway_exchange ? { doorway_exchange: row.doorway_exchange } : {}) };
-}
 
 export async function fitStoredRoom(
   // deno-lint-ignore no-explicit-any
@@ -512,6 +592,7 @@ export function auxiliaryIntervalMean(values: ReadonlyMap<number, number>, start
 export function bandObservations(rows: RoomMeanQuarter[], reference: RoomHeatingReference,
   source: { device_key: string; watts: ReadonlyMap<number, number> } | undefined, probes: DoorwayProbeRow[]) {
   rows.sort((a, b) => a.start_ms - b.start_ms);
+  if (!reference.model) return rows;
   const passive = readPassiveHeatModel(reference.passive_heat);
   const indoor = isEquilibrium(reference.model) ? 0 : reference.model.house_coupling_per_h ?? 0;
   const doorway = readRoomDoorwayModel(reference.doorway_exchange, indoor);

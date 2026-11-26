@@ -1,3 +1,4 @@
+import {connectedRoomForecastIdentity} from "./room-network-contract.ts";
 import { estimateRoomState, roomPlanClock, type RoomStateReading } from "./planner/models/room/state.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "./room-doorway-probes.ts";
 import { doorwayBoundary, readRoomDoorwayModel, type RoomDoorwayModel } from "./planner/models/room/doorway-boundary.ts";
@@ -16,7 +17,7 @@ import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
 import { classifyOutdoorSeries } from "./outdoor-forecast.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
 import { generalRoomFitWarnings, readRoomHeatingBands } from "./planner/heating-bands.ts";
-import { roomResponse } from "./planner/room-response.ts";
+import { connectedRoomHeaterSupported, roomResponse, roomResponseEvidenceLimited } from "./planner/room-response.ts";
 
 /** Mapping has already been parsed at the transport boundary. */
 export interface RoomDeviceMapping {
@@ -28,7 +29,7 @@ type RoomEvidenceDatabase = Pick<SupabaseClient, "rpc" | "from">;
 /** A day of recorded heat supplies the existing delayed-heat initial condition. */
 const RECENT_HEAT_QUARTERS = 24 * 4;
 
-type CapturedRoom = PreparedRoom & { doorway?: RoomDoorwayModel };
+type CapturedRoom = PreparedRoom & { doorway?: RoomDoorwayModel; observed_only?: boolean };
 
 interface RoomPlanningHistory {
   room_key: string;
@@ -73,6 +74,9 @@ export function prepareRoomModels(
   storedDevices: readonly RoomDeviceMapping[],
   bundle: DeviceModelBundle | null,
 ): PreparedThermalPlanning {
+  // Both the response network and its durable evidence work are server-owned.
+  const {room_network:_suppliedNetwork,room_network_capture:_suppliedCapture,...inventory}=snapshot;
+  snapshot=inventory;
   const storedByKey = new Map(
     storedDevices.map((device) => [device.key, device]),
   );
@@ -218,14 +222,26 @@ export function prepareRoomModels(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
     const fittedModel = response?.model ?? legacyScalar;
-    const model = fittedModel && heatingContext ? excludeUncontrolledRoomHeat(fittedModel) : fittedModel;
+    const connected = response?.connected_exchange ?? (compatible ? library?.reference?.connected_exchange : undefined);
+    const graph = bundle?.roomGraph;
+    const connectedCompatible = !connected || !bundle?.roomGraphIssue && (!graph ||
+      connected.basis.graph_owner === graph.owner && connected.basis.graph_revision === graph.revision && connected.basis.topology_hash === graph.topology_hash);
+    const model = connectedCompatible ? fittedModel && heatingContext ? excludeUncontrolledRoomHeat(fittedModel) : fittedModel : null;
+    if (!connectedCompatible) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings,[planningWarning(
+      "room_evidence_unavailable",room.key,`${room.name}: the accepted thermal response does not match the captured room connections.`,
+      "Comfort instructions and measured electrical demand remain active while a matching response is learned.")]);
     if (response?.legacy) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_heating_response_learning", room.key, `${room.name}: the shared room response is still being learned.`,
       "A previously accepted response is used at every forecast temperature until it publishes. Positive uncontrolled background heat is excluded.")]);
     else if (response && !response.supported) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_heating_response_learning", room.key, `${room.name}: the shared room response is awaiting calibration evidence.`,
       "The accepted response remains available while learning continues. Positive uncontrolled background heat is excluded.")]);
-    const modelWarnings = response ? response.warnings : generalRoomFitWarnings(attempt);
+    const modelWarnings = connected && !connectedRoomHeaterSupported(connected)
+      ? [...(response?.warnings ?? generalRoomFitWarnings(attempt) ?? []),"insufficient_heating"]
+      : response ? response.warnings : generalRoomFitWarnings(attempt);
+    if(connected?.evidence.unidentified_heater===true)snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning(
+      "room_model_quality",room.key,`${room.name}: the heater response is not identified.`,
+      "The room remains an observed thermal peer; comfort commands use measured electricity without preheating.")]);
     if (heatingContext && library && !compatible && model) {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
         "room_heating_response_learning", room.key, `${room.name}: heating sources changed.`,
@@ -235,11 +251,21 @@ export function prepareRoomModels(
       model && !isEquilibrium(model) ? model.house_coupling_per_h ?? 0 : 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
+      ...(connected && connectedCompatible ? {connected_exchange: connected} : {}),
       ...(model && modelWarnings?.length ? { model_warnings: modelWarnings } : {}),
       ...(model && response ? { model_source: response.source } : {}),
       ...(doorway ? { doorway } : {}),
       ...(passive ? { passive_heat: passive } : {}),
       maximum_power_w_by_slot: summerLockout.map((locked, i) => locked ? 0 : Math.max(baselineCapW, weather?.[i] ?? 0)) });
+  }
+  for (const [key, context] of Object.entries(bundle?.roomObserved ?? {})) {
+    if (prepared.some(room => room.key === key)) continue;
+    const stored = fittedByRoom.get(key), library = readRoomHeatingBands(stored?.heating_bands);
+    const connected = library?.binding === context.binding ? library.reference?.connected_exchange : undefined;
+    if (!connected || connected.thermal.heater !== null || bundle?.roomGraphIssue || bundle?.roomGraph &&
+      (connected.basis.graph_owner !== bundle.roomGraph.owner || connected.basis.graph_revision !== bundle.roomGraph.revision || connected.basis.topology_hash !== bundle.roomGraph.topology_hash)) continue;
+    prepared.push({key,name:context.room_name ?? key,device_keys:[],model:null,connected_exchange:connected,
+      observed_only:true,rated_power_w:0,maximum_power_w_by_slot:starts.map(()=>0)});
   }
   return { snapshot, rooms: prepared };
 }
@@ -432,7 +458,11 @@ export async function captureRoomPlanningState(
         "The forecast estimates exchange from the available room and house temperatures."));
     }
   }
-  const { zones, warnings } = roomPlanningZones(snapshot, initializedRooms, {
+  // Connected inference belongs to the durable observation stage. Admission
+  // captures its immutable inputs and keeps the accepted controls available.
+  const plannedRooms = initializedRooms.filter(room=>!room.observed_only).map(room =>
+    room.connected_exchange ? {...room,model:rooms.find(original=>original.key===room.key)!.model} : room);
+  const { zones, warnings } = roomPlanningZones(snapshot, plannedRooms, {
     schedules, temperature_c: temperature, temperature_observation: observations, recent_heat_w: recent, stored_heat_c: stored, passive_heat_c_per_h: passiveRates, doorway_boundary_c: doorwayBoundaries,
   });
   // Silent degradation is worse than none, so what was skipped is said out loud.
@@ -440,5 +470,22 @@ export async function captureRoomPlanningState(
     console.info(`[ENERGY-OPTIMISATION] ${warnings.length} of ${rooms.length} rooms not comfort-forecast: ` +
       warnings.map(warning => warning.message).join("; "));
   }
-  return { ...snapshot, thermal_zones: zones, planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, historyWarnings, warnings) };
+  return { ...snapshot, thermal_zones: zones, ...(rooms.some(room=>room.connected_exchange) ? {room_network_capture:{rooms:rooms.filter(room=>room.connected_exchange),observations:[...observations]}} : {}), planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, historyWarnings, warnings) };
+}
+
+/** Complete the durable observation stage before native room preparation. */
+export function applyConnectedRoomCapture(snapshot: OptimisationSnapshot,
+  nodes: import("./planner/models/room/network.ts").ConnectedRoomPlanningNode[], warnings: import("./planner/planning-warnings.ts").PlanningWarning[]): OptimisationSnapshot {
+  const pending=snapshot.room_network_capture;
+  if(!pending)throw new Error("No pending connected room capture");
+  const outdoorKnown=snapshot.outdoor_temperature_c?.length===snapshot.slots.length&&snapshot.outdoor_temperature_c.every(value=>typeof value==="number"&&Number.isFinite(value));
+  const models=new Map(pending.rooms.map(room=>[room.key,outdoorKnown&&room.connected_exchange&&connectedRoomHeaterSupported(room.connected_exchange)&&!roomResponseEvidenceLimited(room.model_warnings)?room.model:null]));
+  const captured=new Map(nodes.map(node=>[node.key,node]));
+  const {room_network_capture:_pending,room_network:_previous,...complete}=snapshot;
+  return {...complete,room_network:{nodes,forecast:connectedRoomForecastIdentity()},thermal_zones:snapshot.thermal_zones?.map(zone=>{
+    if(!models.has(zone.key))return zone;
+    const node=captured.get(zone.key);
+    return {...zone,model:node?models.get(zone.key)!:null,start_temperature_c:node?.start_temperature_c??zone.start_temperature_c,
+      start_stored_heat_c:node?.start_stored_heat_c??zone.start_stored_heat_c};
+  }),planning_warnings:mergePlanningWarnings(snapshot.planning_warnings?.filter(w=>!(captured.has(w.scope)&&w.code==="room_forecast_estimate")),warnings)};
 }

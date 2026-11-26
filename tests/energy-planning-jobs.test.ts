@@ -1525,3 +1525,358 @@ Deno.test('an unclaimed job asks for its first poll at once; a leased or retried
     assertEquals((await read(db, accepted.job_id) as Receipt & {retry_after_ms: number}).retry_after_ms, 1000, 'never below a second once it has been claimed');
   } finally { await db.close(); }
 });
+
+Deno.test('completed connected execution input is archived atomically and survives admission pruning without changing admission', async () => {
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    const original = { model_version: 'synthetic-version', reference: null,
+      snapshot: { slots: [], room_network_capture: { rooms: [{ key: 'synthetic-room' }] } } };
+    const args = { ...capturedSubmission(snapshot, { model_version: 'synthetic-version', accepted_reference_revision: 0 }), input: original };
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    const owner = (await attemptClaim(db, accepted.job_id))!;
+    const execution = { ...original, snapshot: { slots: [], room_network: { nodes: [{ key: 'synthetic-room',
+      model: { incoming: [{ mean_log_per_h: -2, reversion_per_h: .02, stationary_variance: .4 }] },
+      posterior: { through_ms: 123, temperature_c: 20, log_rates: [-1.8], covariance: [[.03]] } }] } } };
+    const publication = { ...attemptIdentity(owner), current: { ...currentRow(), snapshot: execution.snapshot }, run: runRow(),
+      execution_input: execution, runtime_version: 'synthetic-runtime' };
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', { ...publication,
+      execution_input: original }), Error, 'Completed planning input');
+    await db.exec(`CREATE FUNCTION private.reject_execution_archive() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic archive failure'; END; $$;
+      CREATE TRIGGER reject_archive BEFORE INSERT ON private.energy_planning_current_input
+      FOR EACH ROW EXECUTE FUNCTION private.reject_execution_archive();`);
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', publication), Error, 'synthetic archive failure');
+    assertEquals((await read(db, owner.id))?.state, 'pending');
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM energy_optimisation_plan_runs')).rows, [{ n: 0 }]);
+    await db.exec('DROP TRIGGER reject_archive ON private.energy_planning_current_input');
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', publication)).state, 'published');
+    assertEquals((await db.query<{ input: unknown }>('SELECT input FROM private.energy_planning_jobs WHERE id=$1', [owner.id])).rows[0].input, original);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { ...publication, execution_input: original })).state, 'published',
+      'a lost publication reply cannot overwrite the completed execution input');
+    const archived = async (scope = home) => (await db.query<{ value: unknown }>('SELECT get_energy_planning_current_input($1,$2) AS value', [scope, plan])).rows[0].value;
+    assertEquals(await archived(other), null);
+    assertEquals(await archived(), { input: execution, snapshot_hash: currentRow().input_hash,
+      planner_version: 'synthetic-version', runtime_version: 'synthetic-runtime' });
+    await db.query('DELETE FROM private.energy_planning_jobs WHERE id=$1', [owner.id]);
+    assertEquals((await archived() as { input: unknown }).input, execution, 'run provenance survives short-lived job scratch');
+    await db.exec('SET ROLE authenticated');
+    await assertRejects(() => archived(), Error, 'permission denied');
+    const portal = async (scope = home) => (await db.query<{ value: unknown }>(
+      'SELECT get_energy_planning_replay($1,$2) AS value', [scope, plan])).rows[0].value;
+    assertEquals(await portal(), null, 'no customer access discloses no captured inputs');
+    await db.query("SELECT set_config('test.customer',$1,false)", [home]);
+    assertEquals((await portal() as { input: unknown }).input, execution, 'owner downloads exact completed input after job pruning');
+    assertEquals(await portal(other), null, 'home ID must match the archived run');
+    await db.query("SELECT set_config('test.customer',$1,false)", [other]);
+    assertEquals(await portal(), null, 'another customer cannot read the run');
+    await assertRejects(() => db.query('SELECT * FROM private.energy_planning_current_input'), Error, 'permission denied');
+    await db.exec('RESET ROLE');
+    await db.exec('SET ROLE anon');
+    await assertRejects(() => portal(), Error, 'permission denied');
+    await db.exec('RESET ROLE');
+    const currentOwnership = await acceptedState(db);
+    const nextInput = { ...execution, snapshot: { ...execution.snapshot, snapshot_id: nextManual } };
+    const nextAccepted = await rpc<Receipt>(db, 'accept_energy_planning_job', {
+      ...capturedSubmission(nextManual, { model_version: 'synthetic-version', accepted_reference_revision: currentOwnership.accepted_reference_revision,
+        reference_plan_id: currentOwnership.reference_plan_id }), input: nextInput,
+    });
+    const nextOwner = (await attemptClaim(db, nextAccepted.job_id))!;
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { ...attemptIdentity(nextOwner),
+      current: { ...currentRow(), plan_id: other, snapshot_id: nextManual, snapshot: nextInput.snapshot },
+      run: { ...runRow(), id: other, snapshot_id: nextManual }, execution_input: nextInput, runtime_version: 'synthetic-runtime' })).state, 'published');
+    assertEquals(await archived(), null, 'superseded plans do not retain full execution payloads');
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_planning_current_input')).rows, [{ n: 1 }]);
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM energy_optimisation_plan_runs')).rows, [{ n: 2 }],
+      'existing historical summaries are retained independently');
+  } finally { await db.close(); }
+});
+
+Deno.test('native execution checkpoints preserve frozen input and advance fenced room or work cursors across polls', async () => {
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+    const original = { model_version: 'synthetic-version', reference: null,
+      snapshot: { snapshot_id: snapshot, room_network_capture: { rooms: [] } } };
+    const args = { ...capturedSubmission(snapshot, { model_version: 'synthetic-version', accepted_reference_revision: 0 }), input: original };
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    let owner = (await attemptClaim(db, accepted.job_id))!;
+    const execution = { ...original, snapshot: { snapshot_id: snapshot, room_network: { nodes: [],
+      forecast: { revision: 'synthetic', seed: [1, 2], accuracy_revision: 'synthetic', replicates: 4, runtime: 'synthetic', wasm_sha256: 'synthetic' } } } };
+    const state = (next_room: number, cursor?: number, runtime = 'synthetic-v8') => ({ revision: 'synthetic-execution-v1', runtime,
+      progress: { stage: 'prepare', room_progress: { snapshot_id: snapshot, next_room,
+        ...(cursor === undefined ? {} : { network_work: { revision: 'joint_ou_philox_v1', cursor, state: {} } }) } } });
+    const load = async (scope = home, fence = owner.fence) => (await db.query<{ value: { cursor: number; input: unknown; state: unknown } | null }>(
+      'SELECT load_energy_planning_execution($1,$2,$3) AS value', [scope, owner.id, fence])).rows[0].value;
+    const checkpoint = async (cursor: number, next: unknown, input: unknown = execution, fence = owner.fence) => (await db.query<{ value: Receipt | null }>(
+      'SELECT checkpoint_energy_planning_execution($1,$2,$3,$4,$5,$6) AS value',
+      [home, owner.id, fence, cursor, JSON.stringify(input), JSON.stringify(next)])).rows[0].value;
+    assertEquals(await load(other), null);
+    assertEquals(await load(home, owner.fence + 1), null);
+    assertEquals(await load(), { cursor: 0, input: null, state: null });
+    assertEquals(await checkpoint(0, state(1), execution, owner.fence + 1), null);
+    assertEquals((await checkpoint(0, state(1)))?.pending, true);
+    assertEquals(await load(), null, 'checkpoint releases the lease');
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    assertEquals(await load(), { cursor: 1, input: execution, state: state(1) });
+    assertEquals(await checkpoint(0, state(2, 1)), null, 'duplicate response cannot advance twice');
+    await assertRejects(() => checkpoint(1, state(2, 1), { ...execution, reference: { changed: true } }), Error, 'frozen');
+    assertEquals((await checkpoint(1, state(2, 1)))?.pending, true);
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    await assertRejects(() => checkpoint(2, state(2, 1)), Error, 'did not advance');
+    assertEquals((await checkpoint(2, state(2, 2)))?.pending, true);
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    assertEquals((await checkpoint(3, state(1, undefined, 'new-runtime')))?.pending, true, 'runtime change restarts derived native work');
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    const prepared = { ...state(1, undefined, 'new-runtime'), progress: { stage: 'solve', prepared: {} } };
+    const resolved = structuredClone(execution);
+    Object.assign(resolved.snapshot.room_network.forecast, { trajectories: 128, replayed_paths: 256, replicate_trajectories: [32, 32, 32, 32] });
+    const wrongSeed = structuredClone(resolved); wrongSeed.snapshot.room_network.forecast.seed = [3, 4];
+    await assertRejects(() => checkpoint(4, prepared, wrongSeed), Error, 'frozen');
+    const wrongPaths = structuredClone(resolved); wrongPaths.snapshot.room_network.forecast.replayed_paths = 127;
+    await assertRejects(() => checkpoint(4, prepared, wrongPaths), Error, 'frozen');
+    await assertRejects(() => checkpoint(4, prepared, { ...resolved, model_version: 'changed-model' }), Error, 'frozen');
+    await assertRejects(() => checkpoint(4, prepared, { ...resolved, snapshot: { ...resolved.snapshot, changed_source: true } }), Error, 'frozen');
+    assertEquals((await checkpoint(4, prepared, resolved))?.pending, true);
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    assertEquals(await checkpoint(4, prepared, resolved), null, 'duplicate preparation cannot resolve counts twice');
+    assertEquals((await load())!.input, resolved);
+    await assertRejects(() => checkpoint(5, state(1, undefined, 'new-runtime'), resolved), Error, 'stage did not advance');
+    assertEquals((await db.query<{ input: unknown }>('SELECT input FROM private.energy_planning_jobs WHERE id=$1', [owner.id])).rows[0].input, original);
+    await db.exec('SET ROLE authenticated');
+    await assertRejects(() => load(), Error, 'permission denied');
+    await db.exec('RESET ROLE');
+  } finally { await db.close(); }
+});
+
+Deno.test('completed source capture freezes native input before the first room and cannot repeat zero progress', async () => {
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+    const original = {model_version:'synthetic-version',snapshot:{snapshot_id:snapshot,room_network_capture:{rooms:[]}}};
+    const accepted = await rpc<Receipt>(db,'accept_energy_planning_job',{
+      ...capturedSubmission(snapshot,{model_version:'synthetic-version',accepted_reference_revision:0}),input:original,
+    });
+    let owner = (await attemptClaim(db,accepted.job_id))!;
+    const input = {...original,snapshot:{snapshot_id:snapshot,room_network:{nodes:[]}}};
+    const state = {revision:'synthetic-execution',runtime:'synthetic-runtime',progress:{stage:'prepare'}};
+    const checkpoint = async (cursor:number,next:unknown) => (await db.query<{value:Receipt|null}>(
+      'SELECT checkpoint_energy_planning_execution($1,$2,$3,$4,$5,$6) AS value',
+      [home,owner.id,owner.fence,cursor,JSON.stringify(input),JSON.stringify(next)])).rows[0].value;
+    assertEquals((await checkpoint(0,state))?.pending,true);
+    owner=(await attemptClaim(db,accepted.job_id))!;
+    assertEquals(await checkpoint(0,state),null,'duplicate completion cannot overwrite execution input');
+    await assertRejects(()=>checkpoint(1,state),Error,'did not advance');
+    const first={...state,progress:{stage:'prepare',room_progress:{snapshot_id:snapshot,next_room:1}}};
+    assertEquals((await checkpoint(1,first))?.pending,true);
+    assertEquals((await db.query<{input:unknown}>('SELECT input FROM private.energy_planning_jobs WHERE id=$1',[owner.id])).rows[0].input,original);
+  } finally {await db.close();}
+});
+
+Deno.test('owned forecast pages and replica writers retain exact authority, balanced barriers and terminal cleanup', async () => {
+  // Independently synthetic catalog records; no household data or fitted model.
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid);');
+    await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    const original = { model_version: 'synthetic-version', reference: null, snapshot: { snapshot_id: snapshot,
+      slots: [{ start: '2030-01-01T00:00:00Z' }], slot_minutes: 15, room_network_capture: { rooms: [] } } };
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', {
+      ...capturedSubmission(snapshot, { model_version: 'synthetic-version', accepted_reference_revision: 0 }), input: original,
+    });
+    let owner = (await attemptClaim(db, accepted.job_id))!;
+    type Dispatch = { phase: string; cursor: number; replicas: number[]; round: number };
+    type Slice = { dispatch: Dispatch; slice_fence: number; cursor: number; identity: string; round: number; busy?: boolean };
+    const sql = async <T>(query: string, args: unknown[] = []): Promise<T> =>
+      (await db.query<{ value: T }>(`SELECT ${query} AS value`, args)).rows[0].value;
+    const scope = () => [home, owner.id, owner.fence];
+    const load = () => sql<Slice>('load_energy_owned_planning_stage($1,$2,$3,$4,$5)', [...scope(), 'synthetic-v3', 'synthetic-runtime']);
+    const save = (s: Slice, update: unknown) => sql<Dispatch | null>('checkpoint_energy_owned_planning_stage($1,$2,$3,$4,$5,$6)',
+      [...scope(), s.dispatch.cursor, s.slice_fence, JSON.stringify(update)]);
+    const metadata = await sql<Record<string, unknown>>('load_energy_planning_metadata($1,$2,$3)', scope());
+    assertEquals(metadata.connected, true); assertEquals(metadata.input, undefined);
+    assertEquals(metadata.horizon_end, '2030-01-01T00:15:00+00:00');
+    for (const role of ['anon','authenticated']) {
+      await db.exec(`SET ROLE ${role}`);
+      await assertRejects(()=>sql('load_energy_planning_metadata($1,$2,$3)',scope()),Error,'permission denied');
+      await db.exec('RESET ROLE');
+    }
+    assertEquals(await sql('load_energy_planning_metadata($1,$2,$3)',[other,owner.id,owner.fence]),null);
+    let s = await load();
+    assertEquals((await load()).busy, true, 'duplicate request cannot claim the same stage');
+    const { room_network_capture: _pending, ...derivedSnapshot } = original.snapshot;
+    const execution = { ...original, snapshot: derivedSnapshot };
+    assertEquals((await save(s, { phase: 'prepare', input: execution }))?.phase, 'prepare');
+    assertEquals(await save(s, { phase: 'prepare', input: execution }), null, 'lost reply cannot apply twice');
+    s = await load();
+    await save(s, { phase: 'catalog', identity: 'synthetic-identity', nodes: [btoa('{}')], header: btoa('{}'), context: btoa('{}') });
+    s = await load();
+    const records = ['{"value":"α"}', '{"value":2}'];
+    const bytes = new TextEncoder().encode(records.join(''));
+    const offsets = [0, new TextEncoder().encode(records[0]).length, bytes.length];
+    await assertRejects(()=>save(s,{phase:'integrate',node:0,count:2,
+      pages:[{first_record:0,count:2,offsets:[0,offsets[1]+1,bytes.length+1],bytes:btoa(String.fromCharCode(...bytes))}],
+      header:btoa('{}'),replica_count:4,target:64}),Error,'Invalid catalog directory');
+    await save(s, { phase: 'integrate', node: 0, count: 2,
+      pages: [{ first_record: 0, count: 2, offsets, bytes: btoa(String.fromCharCode(...bytes)) }],
+      header: btoa('{}'), replica_count: 4, target: 64 });
+    const slices: Slice[] = [];
+    for (let r = 0; r < 4; r++) slices.push(await sql<Slice>('claim_energy_forecast_replica($1,$2,$3,$4)', [...scope(), r]));
+    assert(slices.every(p => p.slice_fence === 1), 'all four independent writers can be claimed together');
+    await db.query("UPDATE private.energy_planning_jobs SET context=(context::jsonb||'{\"accepted_reference_revision\":1}'::jsonb)::json WHERE id=$1",[owner.id]);
+    assertEquals(await sql('claim_energy_forecast_replica($1,$2,$3,$4)',[...scope(),0]),null,'accepted command ownership fences every child');
+    await db.query("UPDATE private.energy_planning_jobs SET context=(context::jsonb||'{\"accepted_reference_revision\":0}'::jsonb)::json WHERE id=$1",[owner.id]);
+
+    const selected = await sql<Array<{ node: number; index: number; json: string }>>('read_energy_forecast_records($1,$2,$3,$4,$5,$6,$7)',
+      [...scope(), 0, slices[0].slice_fence, 'synthetic-identity', JSON.stringify([{ node: 0, index: 1 }, { node: 0, index: 0 }, { node: 0, index: 1 }])]);
+    assertEquals(selected.sort((a, b) => a.index - b.index).map(p => p.json), records, 'exact UTF-8 records, deduplicated');
+    await assertRejects(() => sql('read_energy_forecast_records($1,$2,$3,$4,$5,$6,$7)',
+      [...scope(), 0, 1, 'synthetic-identity', '[{"node":0,"index":2}]']), Error, 'Missing forecast catalog');
+    const finish = (r: number, fence = owner.fence) => sql<Dispatch | null>('checkpoint_energy_forecast_replica($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [home, owner.id, fence, r, slices[r].slice_fence, 0, 'synthetic-identity', slices[r].round, 1, 16, btoa('{}')]);
+    assertEquals(await finish(0, owner.fence + 1), null);
+    for (const r of [2, 0, 3]) await finish(r);
+    assertEquals((await sql<Dispatch>('advance_energy_forecast_barrier($1,$2,$3)', scope())).phase, 'integrate');
+    await finish(1);
+    assertEquals(await finish(1), null);
+    assertEquals((await sql<Dispatch>('advance_energy_forecast_barrier($1,$2,$3)', scope())).phase, 'qualify');
+    s = await load();
+    assertEquals((await save(s, { phase: 'integrate', target: 128, replica_count: 4 }))?.phase, 'integrate');
+    const late = await sql<Slice>('claim_energy_forecast_replica($1,$2,$3,$4)', [...scope(), 0]);
+    await sql('release_energy_owned_planning_attempt($1,$2,$3)', scope());
+    assertEquals(await sql('checkpoint_energy_forecast_replica($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [...scope(), 0, late.slice_fence, 1, 'synthetic-identity', late.round, 2, 32, btoa('{}')]), null, 'released parent rejects late child');
+    owner = (await attemptClaim(db, accepted.job_id))!;
+    assert((await sql<Slice>('claim_energy_forecast_replica($1,$2,$3,$4)', [...scope(), 0])).slice_fence > late.slice_fence,
+      'new owner can resume without waiting for old subordinate lease');
+    const repair = (await load()).dispatch;
+    assertEquals(await sql('reset_energy_owned_planning_runtime($1,$2,$3,$4,$5,$6)',
+      [...scope(),repair.cursor,'wrong-identity','integrate']),false);
+    assertEquals(await sql('reset_energy_owned_planning_runtime($1,$2,$3,$4,$5,$6)',
+      [...scope(),repair.cursor,'synthetic-identity','integrate']),true);
+    assertEquals(await sql('(SELECT input FROM private.energy_planning_jobs WHERE id=$1)',[owner.id]),original,
+      'repair preserves immutable admission');
+    assertEquals((await load()).dispatch.phase,'capture');
+    await rpc(db,'retry_energy_planning_attempt',{...attemptIdentity(owner),code:'planning_worker_rate_limited',detail:'Synthetic provider limit',retry_after_ms:43_210});
+    const remaining=await sql<number>('(SELECT extract(epoch FROM wake_after-clock_timestamp())*1000 FROM private.energy_planning_jobs WHERE id=$1)',[owner.id]);
+    assert(remaining>42_000&&remaining<=43_210,'provider retry delay survives durable receipt scheduling');
+    assertEquals(await attemptClaim(db,accepted.job_id),null);
+    await db.query("UPDATE private.energy_planning_jobs SET wake_after=clock_timestamp()-interval '1 second' WHERE id=$1",[owner.id]);
+    owner=(await attemptClaim(db,accepted.job_id))!;
+    await rpc(db, 'fail_energy_planning_job', { ...attemptIdentity(owner), code: 'synthetic_terminal', detail: 'Synthetic terminal cleanup' });
+    for (const table of ['energy_planning_runtime', 'energy_forecast_catalog_nodes', 'energy_forecast_catalog_pages', 'energy_forecast_replicas']) {
+      assertEquals(await sql<number>(`(SELECT count(*)::integer FROM private.${table})`), 0);
+    }
+  } finally { await db.close(); }
+});
+
+Deno.test('owned SQL worker publishes immutable completed arguments and downloaded replay reproduces the plan', async () => {
+  const { createClient } = await import('npm:@supabase/supabase-js@2.90.1');
+  const { PlanningJobs } = await import('../supabase/functions/_shared/energy-planning-jobs.ts');
+  const { handleEnergyPlanningStep } = await import('../supabase/functions/_shared/energy-planning-worker.ts');
+  const { connectedRoomSnapshot } = await import('../supabase/functions/_shared/room-network.fixture.ts');
+  const { CONNECTED_CAPTURE_IMPLEMENTATION } = await import('../supabase/functions/_shared/connected-room-planning-capture.ts');
+  const { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } = await import('../supabase/functions/_shared/rules-planner-identity.ts');
+  const { replayExecution } = await import('../src/lib/energy-shift/plan-replay.ts');
+  const { executeRulesPlanning } = await import('../supabase/functions/_shared/rules-planning-execution.ts');
+  const { sha256Hex } = await import('../supabase/functions/_shared/ha-device-auth.ts');
+  const { unpackOwnedPlanningValue } = await import('../supabase/functions/_shared/owned-planning-codec.ts');
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid,state json);');
+    // Source qualification/replay has separate actual SQL tests. This fixture
+    // starts at its completed immutable state; every subsequent RPC is production.
+    await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint) RETURNS json LANGUAGE sql AS $$
+      SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
+    await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    const connected = connectedRoomSnapshot(); connected.snapshot_id = snapshot;
+    connected.operating_scope = { modes: { $battery:'controlling',$pool:'controlling',$ev:'controlling','synthetic-a':'controlling' },
+      device_owners: { 'synthetic-a-heater':'synthetic-a' }, external_demands: {} };
+    Object.assign(connected, rulesFixtureInput(connected).snapshot);
+    const nodes = connected.room_network!.nodes;
+    const admitted = structuredClone(connected); admitted.room_network = undefined;
+    admitted.room_network_capture = { rooms: nodes.map(node => {
+      const zone = connected.thermal_zones!.find(zone => zone.key === node.key);
+      return { key:node.key,name:node.key,device_keys:zone?.device_keys??[],model:zone?.model??null,
+        connected_exchange:{...node.model,incoming:[]},rated_power_w:zone?.rated_power_w??0,
+        maximum_power_w_by_slot:zone?.maximum_power_w_by_slot??[] };
+    }), observations: [] };
+    const input = captureRulesPlanningInput({ snapshot:admitted, now:admitted.captured_at,
+      resolved_price_outlook:rulesFixtureInput(admitted).price_outlook },null,resolveRulePolicy());
+    const original = JSON.parse(JSON.stringify(input));
+    const args = { ...capturedSubmission(snapshot,{model_version:RULES_MODEL_VERSION,accepted_reference_revision:0}),input,protocol:RULES_PLANNING_PROTOCOL };
+    const accepted = await rpc<Receipt>(db,'accept_energy_planning_job',args);
+    await db.query('INSERT INTO private.energy_planning_room_capture VALUES($1,$2)',[accepted.job_id,JSON.stringify({version:1,
+      implementation:CONNECTED_CAPTURE_IMPLEMENTATION,runtime:Deno.version.v8,room:nodes.length,phase:'complete',
+      from_at:admitted.captured_at,next_from_at:admitted.captured_at,policy:null,row:0,nodes,warnings:[]})]);
+    const calls: string[] = [], bytes = { http_request:0,http_response:0,db_request:0,db_response:0,http_calls:0,max_http_request:0,max_http_response:0 };
+    let publication: Record<string,unknown> | undefined;
+    const stageCheckpoints: {phase:string;pending:boolean;next_room?:number}[] = [];
+    const client = createClient('http://localhost:54321','synthetic-service',{auth:{persistSession:false},global:{fetch:async(url,init)=>{
+      const name = String(url).split('/').at(-1)!; const body = JSON.parse(String(init?.body??'{}'));
+      if (!String(url).includes('/rpc/')) return Response.json([]);
+      calls.push(name); bytes.db_request+=new TextEncoder().encode(String(init?.body??'')).length;
+      if(name==='publish_energy_planning_job') publication=body;
+      if(name==='checkpoint_energy_owned_planning_stage') {
+        const update=body.p_update;
+        const progress=update.phase==='prepare'&&update.payload ? await unpackOwnedPlanningValue<{forecast_pending?:true;next_room:number}>(update.payload) : null;
+        stageCheckpoints.push({phase:update.phase,pending:progress?.forecast_pending===true,next_room:progress?.next_room});
+      }
+      try {
+        const signatures = (await db.query<{proargnames:string[]|null}>('SELECT proargnames FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=\'public\' AND p.proname=$1',[name])).rows;
+        if(!signatures.length) return Response.json([]); // non-critical activity archive outside this fixture
+        const names = Object.keys(body); assert(names.every(key=>/^[a-z_]+$/.test(key)));
+        const named = signatures.some(signature=>signature.proargnames?.includes(names[0]));
+        const query = named ? `SELECT public.${name}(${names.map((key,i)=>`${key}=>$${i+1}`).join(',')}) AS value` : `SELECT public.${name}($1::json) AS value`;
+        const values = named ? names.map(key=>typeof body[key]==='object'?JSON.stringify(body[key]):body[key]) : [JSON.stringify(body)];
+        const data = (await db.query<{value:unknown}>(query,values)).rows[0].value;
+        const response=Response.json(data); bytes.db_response+=(await response.clone().arrayBuffer()).byteLength; return response;
+      } catch(error) { return Response.json({message:(error as Error).message,code:(error as {code?:string}).code??'XX000'},{status:500}); }
+    }}});
+    const jobs = new PlanningJobs(client,()=>Date.parse(admitted.captured_at));
+    let receipt: Awaited<ReturnType<typeof jobs.advanceForHome>> = null;
+    let active=0,maxActive=0;
+    for(let poll=0;poll<20&&(!receipt||receipt.pending);poll++) {
+      receipt=await jobs.advanceForHome(home,{jobId:accepted.job_id},{url:'https://synthetic.test',planningSecret:'synthetic'},async(url,init)=>{
+        const requestBytes=new TextEncoder().encode(String(init?.body)).length;bytes.http_request+=requestBytes;bytes.max_http_request=Math.max(bytes.max_http_request,requestBytes);bytes.http_calls++;
+        const body=JSON.parse(String(init?.body));assertEquals(body.stage,'owned');assertEquals(body.input,undefined);
+        active++;maxActive=Math.max(maxActive,active);
+        try {const response=await handleEnergyPlanningStep(new Request(url,init),'synthetic',()=>client);
+          const length=(await response.clone().arrayBuffer()).byteLength;bytes.http_response+=length;bytes.max_http_response=Math.max(bytes.max_http_response,length);return response;
+        } finally {active--;}
+      });
+    }
+    assert(receipt?.state==='published',JSON.stringify(receipt)); assert(maxActive<=4);
+    const compileBoundary=stageCheckpoints.findIndex(stage=>stage.pending);
+    assert(compileBoundary>=0,'final proposal is durably checkpointed before forecast compilation');
+    assertEquals(stageCheckpoints[compileBoundary].next_room,connected.thermal_zones!.length);
+    assertEquals(stageCheckpoints[compileBoundary+1].phase,'catalog','a separate owned action compiles the forecast');
+    assertEquals(stageCheckpoints.filter(stage=>stage.pending).length,1);
+    assert(!calls.includes('load_energy_planning_attempt'),'parent never loads expanded admission per poll');
+    assertEquals(JSON.parse(JSON.stringify(input)),original);
+    const archived=publication!.execution_input as typeof input;
+    assertEquals(archived.snapshot.room_network_capture,undefined);assertEquals(archived.snapshot.room_network!.nodes,nodes);
+    const forecast=archived.snapshot.room_network!.forecast;
+    assertEquals(forecast.seed,connected.room_network!.forecast.seed);assertEquals(forecast.runtime,Deno.version.v8);
+    assert(Number.isSafeInteger(forecast.trajectories)&&forecast.trajectories!>0);
+    assert(Number.isSafeInteger(forecast.replayed_paths)&&forecast.replayed_paths!>=forecast.trajectories!);
+    assertEquals(forecast.replicate_trajectories!.length,4);
+    assertEquals(forecast.replicate_trajectories!.reduce((sum,n)=>sum+n,0),forecast.trajectories);
+    const hash=await sha256Hex(JSON.stringify(archived.snapshot));
+    assertEquals((publication!.current as {input_hash:string}).input_hash,hash);
+    assertEquals((publication!.run as {input_hash:string}).input_hash,hash);
+    const downloaded=JSON.parse(JSON.stringify(replayExecution({input:archived,snapshot_hash:hash,planner_version:archived.model_version,runtime_version:Deno.version.v8})));
+    assertEquals(downloaded.entrypoint.export,'executeRulesPlanning');
+    assertEquals(JSON.parse(JSON.stringify(executeRulesPlanning(downloaded.entrypoint.arguments).plan)),JSON.parse(JSON.stringify(receipt.plan)));
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_forecast_catalog_pages')).rows,[{n:0}]);
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_planning_current_input')).rows,[{n:1}]);
+    assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_planning_execution')).rows,[{n:0}], 'current replay owns the only completed execution copy');
+    console.info('owned synthetic transport bytes',bytes);
+  } finally {await db.close();}
+});

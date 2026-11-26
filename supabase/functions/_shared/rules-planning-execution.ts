@@ -2,8 +2,10 @@ import { PlanningError } from "./planning-errors.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import { prepareRulesPlanningBasis, prepareRulesPlanningInput, generateRulesPlan } from "./rules-planner.ts";
-import { prepareRoomBatch, type RoomPreparationProgress } from "./rules-room-services.ts";
+import { prepareRoomBatch, prepareRoomProposals, type RoomPreparationProgress } from "./rules-room-services.ts";
 import type { PlanningTrace } from "./planning-trace.ts";
+import { applyConnectedRoomForecast, type ConnectedRoomForecastContext } from "./rules-connected-room-services.ts";
+import type { NativeRoomNetworkOutput } from "./room-network-contract.ts";
 
 /** Compile one captured basis using the existing room-first preparation. */
 export function prepareCapturedRulesInput(capture: CapturedRulesInput, trace?: PlanningTrace) {
@@ -15,9 +17,32 @@ export function prepareCapturedRulesInput(capture: CapturedRulesInput, trace?: P
 export function prepareCapturedRoomBatch(capture: CapturedRulesInput, previous: RoomPreparationProgress | null, trace?: PlanningTrace) {
   const { roomInputs, finish } = prepareRulesPlanningBasis(capture, capture.reference, capture.approved_policy, capture.independent_references);
   const progress = prepareRoomBatch(roomInputs, trace, previous);
-  return progress.next_room < (roomInputs.snapshot.thermal_zones?.length ?? 0)
+  return progress.network_work || progress.forecast_pending || progress.next_room < (roomInputs.snapshot.thermal_zones?.length ?? 0)
     ? {room_progress: progress}
     : {prepared: finish(progress.services)};
+}
+
+/** Produce an immutable final-forecast request for the job-owned replica stage. */
+export function prepareCapturedRoomProposals(capture: CapturedRulesInput, previous: RoomPreparationProgress | null, trace?: PlanningTrace) {
+  const { roomInputs, finish } = prepareRulesPlanningBasis(capture, capture.reference, capture.approved_policy, capture.independent_references);
+  const { progress, forecast } = prepareRoomProposals(roomInputs, trace, previous);
+  if (forecast) return { forecast, room_progress: progress };
+  return progress.forecast_pending || progress.next_room < (roomInputs.snapshot.thermal_zones?.length ?? 0)
+    ? { room_progress: progress }
+    : { prepared: finish(progress.services) };
+}
+
+/** The canonical barrier already owns selection; this restores its actual
+ * commands and demand into the existing room-first household preparation. */
+export function applyCapturedConnectedForecast(capture: CapturedRulesInput, progress: RoomPreparationProgress,
+  context: ConnectedRoomForecastContext, output: NativeRoomNetworkOutput,
+  counts: { trajectories: number; replayed_paths: number; replicates: Array<{ trajectories: number }> }, trace?: PlanningTrace) {
+  if (progress.snapshot_id !== capture.snapshot.snapshot_id || progress.next_room !== (capture.snapshot.thermal_zones?.length ?? 0)) {
+    throw new PlanningError("Connected forecast does not match completed room proposals", "invalid_snapshot", 400, "retry");
+  }
+  const { roomInputs, finish } = prepareRulesPlanningBasis(capture, capture.reference, capture.approved_policy, capture.independent_references);
+  applyConnectedRoomForecast(roomInputs, progress.services, context, output, counts);
+  return finish(progress.services);
 }
 
 /** Local execution uses the same ordered stages as the isolated remote requests. */

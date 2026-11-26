@@ -6,7 +6,7 @@ export { PlanningInputError } from "./planner/input-error.ts";
 export type PlanningFailureDisposition = "retry" | "terminal" | "recapture";
 export class PlanningError extends Error {
   constructor(message: string, readonly code: string, readonly status: number,
-    readonly disposition: PlanningFailureDisposition) {
+    readonly disposition: PlanningFailureDisposition, readonly retryAfterMs?: number) {
     super(message); this.name = "PlanningError";
   }
 }

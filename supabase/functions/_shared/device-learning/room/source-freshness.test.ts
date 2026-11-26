@@ -146,3 +146,19 @@ Deno.test("only the fitted room's exact temperature source is masked", () => {
   const legacy = { ...raw, temperature_source_key: null };
   assertStrictEquals(qualifyProbeFreshness([legacy]).rows[0], legacy);
 });
+
+Deno.test("named peers use their own physical freshness and independently qualified chronological prefixes", () => {
+  // Independent synthetic frozen peer, with the receiver still reporting.
+  const raw = jointFreeze().map(row => ({ ...row, temperature_source_key: "receiver",
+    probe_evidence: [...row.probe_evidence.map(p => ({ ...p, area_key: "peer" })),
+      probe("receiver", { mean: 19, joint_unchanged: false })] }));
+  const full = qualifyProbeFreshness(raw, ["peer", "missing"]);
+  assertEquals(full.rows[150].peer_temperatures_c, { peer: null, missing: null });
+  assertEquals(full.rows[10].peer_temperatures_c, { peer: 20, missing: null });
+  assertEquals(full.rows[150].heat_w, raw[150].heat_w);
+  assertEquals(qualifyProbeFreshness(raw.slice(100, 260), ["peer"]).rows[50].peer_temperatures_c, { peer: 20 });
+  assertEquals(raw[150].probe_evidence[0].mean, 20);
+  const repaired = raw.map(row => ({ ...row, probe_evidence: row.probe_evidence.map(p => ({ ...p, reported: true })) }));
+  assertEquals(qualifyProbeFreshness(repaired, ["peer"]).rows[150].peer_temperatures_c, { peer: 20 });
+  assertEquals(qualifyProbeFreshness([{ ...raw[0], probe_evidence: null }], ["peer"]).rows[0].peer_temperatures_c, { peer: null });
+});

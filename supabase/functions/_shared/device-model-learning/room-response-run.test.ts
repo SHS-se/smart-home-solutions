@@ -1,4 +1,4 @@
-import { evidenceStore } from "./room-evidence.fixture.ts";
+import { evidenceStore, syntheticRoomConnectionCapture } from "./room-evidence.fixture.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../device-learning/room/native-mean.fixture.ts";
@@ -224,7 +224,7 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   assertEquals(f.writes.length, 0);
   assertEquals(await (await f.tick()).json(), { checkpointed: true });
   const envelope = f.progress!.metadata as { version: number; capture: unknown; policy_fingerprint: string };
-  assertEquals(envelope.version, 5);
+  assertEquals(envelope.version, 6);
   assertEquals(envelope.policy_fingerprint, f.archive.policyFingerprint);
   f.fail("capture_energy_device_models", "get_energy_room_heating_context");
   const numericStart = f.reads.length;
@@ -321,7 +321,8 @@ Deno.test("ordinary backfill across all cells publishes the frozen basis and ret
   assert(f.archive.sourceRevision(f.range) > capture.evidence.sourceRevision);
   assertEquals((await f.archive.rpc("get_energy_room_evidence_work", {
     p_from_at: f.range.from_at, p_to_at: f.range.to_at,
-  })).data, { policy_fingerprint: f.archive.policyFingerprint, source_revision: f.archive.sourceRevision(f.range), next: f.range });
+  })).data, { policy_fingerprint: f.archive.policyFingerprint, source_revision: f.archive.sourceRevision(f.range), next: f.range,
+    connected: syntheticRoomConnectionCapture(f.archive.policyFingerprint) });
 });
 
 Deno.test("a reviewed policy race at initial capture or publication refuses that snapshot", async () => {

@@ -1,6 +1,5 @@
 /** Cached forecast products only. Device evidence is captured separately from the model store. */
 import { z } from "zod";
-import type { PassiveRoomHeat, ThermalZoneModel } from "./planner/models/room/thermal.ts";
 import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
 import type {
   OptimisationPlan,
@@ -13,19 +12,7 @@ const timestamp = z.string().refine(
   (value) => Number.isFinite(Date.parse(value)),
   "Invalid timestamp",
 );
-/** Current inventory joined to a captured model; never stored in the forecast product. */
-export interface PreparedRoom {
-  key: string;
-  name: string;
-  device_keys: string[];
-  model: ThermalZoneModel | null;
-  model_warnings?: string[];
-  /** The one response used at every quarter, and where it came from. */
-  model_source?: import("./planner/room-response.ts").RoomResponseSource;
-  passive_heat?: PassiveRoomHeat;
-  rated_power_w: number;
-  maximum_power_w_by_slot: number[];
-}
+export type { PreparedRoom } from "./planner/models/room/planning.ts";
 const forecastSchema = z.object({
   schema_version: z.literal(2),
   planner_location: z.object({latitude:finite,longitude:finite}).nullable(),

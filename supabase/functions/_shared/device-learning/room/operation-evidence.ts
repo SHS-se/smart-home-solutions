@@ -40,6 +40,4 @@ export function qualifyRoomOperationEvidence<T extends RoomOperationObservation>
 
 /** An observed non-cooling flag or independently qualified dated direction
  * supports heater attribution. Neither asserts that the compressor was on. */
-export function roomHeatingDirectionKnown(row: { cooling: boolean | null; operation_fact?: string }): boolean {
-  return row.cooling === false || row.operation_fact !== undefined;
-}
+export { roomHeatingDirectionKnown } from "../../planner/models/room/observation.ts";

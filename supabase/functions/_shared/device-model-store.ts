@@ -21,10 +21,59 @@ export interface DeviceModelBundle {
   devices: StoredDeviceModel[];
   revisions: { rooms: Record<string, number>; pool: number | null };
   roomHeating?: Record<string, RoomHeatingContext>;
+  /** Observed thermal nodes do not own controls or comfort services. */
+  roomObserved?: Record<string, RoomHeatingContext>;
+  roomGraph?: RoomConnectionGraph;
+  roomGraphIssue?: "room_connection_graph_invalid";
+}
+export interface RoomConnectionGraph {
+  owner: string | null;
+  revision: number | null;
+  topology_hash: string;
+  connections: [string, string][];
+}
+export interface ConnectedRoomCapture {
+  graph: RoomConnectionGraph;
+  peerKeys: string[];
+  sourceKeys: Record<string, string | null>;
+  observedOnly: boolean;
+  policyFingerprint: string;
 }
 export interface RoomHeatingContext {
   binding: string;
   observed_since: string | null;
+  room_name?: string;
+  source_key?: string | null;
+  peer_keys?: string[];
+  observed_only?: boolean;
+  graph?: RoomConnectionGraph;
+}
+export function readRoomConnectionGraph(value: unknown): RoomConnectionGraph | null {
+  if (!value || typeof value !== "object") return null;
+  const graph = value as RoomConnectionGraph;
+  if (!(graph.owner === null || typeof graph.owner === "string" && graph.owner.length > 0) ||
+    !(graph.revision === null || Number.isSafeInteger(graph.revision) && graph.revision > 0) ||
+    (graph.owner === null) !== (graph.revision === null) || typeof graph.topology_hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(graph.topology_hash) || !Array.isArray(graph.connections)) return null;
+  const seen = new Set<string>();
+  for (const pair of graph.connections) {
+    if (!Array.isArray(pair) || pair.length !== 2 || pair.some(key => typeof key !== "string" || !key.length) || pair[0] >= pair[1]) return null;
+    const identity = JSON.stringify(pair);
+    if (seen.has(identity)) return null;
+    seen.add(identity);
+  }
+  return graph;
+}
+export function readConnectedRoomCapture(value: unknown): ConnectedRoomCapture | null {
+  if (!value || typeof value !== "object") return null;
+  const capture = value as ConnectedRoomCapture;
+  if (!readRoomConnectionGraph(capture.graph) || !Array.isArray(capture.peerKeys) ||
+    capture.peerKeys.some((key, index) => typeof key !== "string" || !key.length || index > 0 && key <= capture.peerKeys[index - 1]) ||
+    !capture.sourceKeys || typeof capture.sourceKeys !== "object" || Array.isArray(capture.sourceKeys) ||
+    Object.values(capture.sourceKeys).some(key => key !== null && (typeof key !== "string" || !key.length)) ||
+    typeof capture.observedOnly !== "boolean" || typeof capture.policyFingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/.test(capture.policyFingerprint)) return null;
+  return capture;
 }
 export async function captureDeviceModels(db: ModelDatabase, homeId: string): Promise<DeviceModelBundle> {
   const { data, error } = await db.rpc("capture_energy_device_models", { p_home_id: homeId });
@@ -39,7 +88,10 @@ export async function captureDeviceModels(db: ModelDatabase, homeId: string): Pr
     if (!Number.isSafeInteger(model.model_revision) || model.model_revision < 1) throw new Error("Missing device model revision");
   }
   const roomHeating = data.room_heating && typeof data.room_heating === "object" ? data.room_heating : undefined;
-  return { rooms, pool, devices, roomHeating, revisions: {
+  const roomObserved = data.room_observed && typeof data.room_observed === "object" ? data.room_observed : undefined;
+  const roomGraph = data.room_graph === undefined ? undefined : readRoomConnectionGraph(data.room_graph);
+  return { rooms, pool, devices, roomHeating, roomObserved, roomGraph: roomGraph ?? undefined,
+    ...(roomGraph === null ? { roomGraphIssue: "room_connection_graph_invalid" as const } : {}), revisions: {
     rooms: Object.fromEntries(rooms.map(model => [String(model.room_key), model.model_revision])),
     pool: pool?.model_revision ?? null,
   } };

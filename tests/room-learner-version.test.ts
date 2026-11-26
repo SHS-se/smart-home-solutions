@@ -11,6 +11,9 @@ Deno.test("the room learner version covers the fitting code and excludes tests a
   const sources = await roomLearnerSources();
   assert(sources.includes("supabase/functions/_shared/device-learning/room/measured-response.ts"));
   assert(sources.includes("supabase/functions/_shared/device-model-learning/room.ts"));
+  assert(sources.includes("supabase/functions/_shared/device-learning/room/connected-response.ts"));
+  assert(sources.includes("supabase/functions/_shared/planner/models/room/connected-exchange.ts"));
+  assert(sources.includes("supabase/functions/_shared/planner/models/room/observation.ts"));
   assert(!sources.some(path => /\.(test|fixture)\.ts$/.test(path)));
   assert(!sources.includes(ROOM_LEARNER_VERSION_FILE));
 });

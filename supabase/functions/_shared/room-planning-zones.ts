@@ -83,7 +83,10 @@ export function roomPlanningZones(
       ? outdoor.map(c => members.reduce((sum, member) => sum + (
         (member.weather_heating ? heatingWatts(member.weather_heating, c) : null) ?? member.active_power_w ?? 0), 0))
       : undefined;
-    if (model && start !== null && outdoor && room.rated_power_w > 0) {
+    if (model && room.connected_exchange && start !== null && outdoor && room.rated_power_w > 0) {
+      // Current named exchange is projected jointly by the native room owner.
+      // This layer contributes comfort targets, never an independent trajectory.
+    } else if (model && start !== null && outdoor && room.rated_power_w > 0) {
       try {
         forecast = buildComfortForecast(starts, snapshot.timezone, routine, model, start, outdoor, room.rated_power_w,
           lockout, snapshot.solar_irradiance_w_per_m2, { house_c: doorway ?? house, start_stored_heat_c: delivered, passive_heat_c_per_h: passive, duration_hours: roomPlanClock(snapshot).hours },

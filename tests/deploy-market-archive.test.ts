@@ -23,7 +23,7 @@ if [ "$operation" = 'db query' ]; then
  [ "$agent" = 'no' ] || exit 9
  case "$(cat "$input")" in
   *'AS applied'*) printf '[{"applied":true}]' ;;
-  *'SELECT coalesce'*) printf '[{"home_id":"9bc2ab59-7832-4530-8a15-e51a09e43a59"}]' ;;
+  *'SELECT coalesce'*) printf '[{"home_id":"00000000-0000-4000-8000-000000000001"}]' ;;
   *'cron.job'*) printf '[{"jobname":"test-energy-price-experiment","active":true}]' ;;
   *'AS enabled'*) printf '[{"enabled":true}]' ;;
   *) exit 10 ;;

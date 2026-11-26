@@ -1,9 +1,26 @@
 import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-planner.ts";
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
-import { replayHistory, replayPlanSelection } from './plan-replay.ts';
+import { replayExecution, replayHistory, replayPlanSelection } from './plan-replay.ts';
 import { buildEnergyTimeline, SLOT_MS } from './energy-timeline.ts';
 
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
+import { captureRulesPlanningInput } from '../../../supabase/functions/_shared/rules-planning-capture.ts';
+import { resolveRulePolicy } from '../../../supabase/functions/_shared/planner-wasm/rule-policy.ts';
+
+Deno.test('download uses complete archived execution arguments and rejects unfinished capture', () => {
+  const snapshot = mixedModeSnapshot();
+  const input = captureRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [] },
+    { plan_id: 'synthetic-accepted-plan', slots: [] }, resolveRulePolicy(), { battery: null });
+  const archive = { input, snapshot_hash: 'synthetic-hash', planner_version: input.model_version, runtime_version: 'synthetic-runtime' };
+  const replay = replayExecution(JSON.parse(JSON.stringify(archive)));
+  assertEquals(replay.entrypoint.arguments, input);
+  assertEquals(replay.entrypoint.export, 'executeRulesPlanning');
+  assertEquals(replay.planner_version, input.model_version);
+  assertEquals(replay.runtime_version, archive.runtime_version);
+  assertThrows(() => replayExecution({ ...archive, planner_version: 'different-version' }));
+  assertThrows(() => replayExecution({ ...archive, input: { ...input, snapshot: { ...snapshot, room_network_capture: {} } } }));
+  assertThrows(() => replayExecution({ snapshot }));
+});
 
 Deno.test('replay retains both branches of a scoped solve and bookmarks the displayed scenario', () => {
   const snapshot = mixedModeSnapshot();

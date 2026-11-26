@@ -2,6 +2,11 @@ import { assert, assertEquals } from "@std/assert";
 import type { ThermalQuarterRow } from "../thermal-training.ts";
 import type { HeatingProbeCapture } from "../heating-probe-wire.ts";
 
+export const syntheticRoomConnectionCapture = (policyFingerprint: string) => ({
+  graph: { owner: null, revision: null, topology_hash: "c".repeat(64), connections: [] },
+  peerKeys: [], sourceKeys: {}, observedOnly: false, policyFingerprint,
+});
+
 export function compactCapture(rows: ThermalQuarterRow[]): HeatingProbeCapture {
   const sources: HeatingProbeCapture["sources"] = [];
   const indices = new Map<string, number>();
@@ -52,7 +57,8 @@ export function evidenceStore(rows: ThermalQuarterRow[], ranges: EvidenceRange[]
       let data: unknown;
       switch (name) {
         case "get_energy_room_evidence_work":
-          data = { source_revision: sourceRevision(range), policy_fingerprint: policyFingerprint, next: ranges.find(r => overlaps(r, range) && dirty.has(r.from_at)) ?? null };
+          data = { source_revision: sourceRevision(range), policy_fingerprint: policyFingerprint,
+            connected: syntheticRoomConnectionCapture(policyFingerprint), next: ranges.find(r => overlaps(r, range) && dirty.has(r.from_at)) ?? null };
           break;
         case "load_energy_room_evidence_blocks":
           data = [...blocks.values()].filter(r => overlaps(r, range));

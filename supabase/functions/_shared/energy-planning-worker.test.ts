@@ -4,6 +4,7 @@ import { assert, assertEquals } from "@std/assert";
 import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { generateRulesPlan } from "./rules-planner.ts";
+import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 
 type StageEvent = {
@@ -110,4 +111,53 @@ Deno.test("pure domain input validation maps to a terminal worker response at th
   const body = await result.response.json();
   assertEquals(body.error, "invalid_snapshot");
   assert(body.detail.includes("operating_scope"));
+});
+
+Deno.test("owned capture authenticates and loads its fenced immutable attempt before source work", async () => {
+  const owner={home_id:"synthetic-home",job_id:"synthetic-job",fence:7};
+  const snapshot=dispatchedEvSnapshot();
+  const input={model_version:RULES_MODEL_VERSION,snapshot};
+  const body={protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner,action:{kind:"advance"}};
+  const dispatch={phase:"capture",cursor:0,target:64,round:0,replicas:[]};
+  const calls:string[]=[];
+  let checkpoint:unknown;
+  const db={rpc(name:string,args:Record<string,unknown>){
+    calls.push(name);
+    assertEquals({home:args.p_home_id,job:args.p_job_id,fence:args.p_fence},{home:owner.home_id,job:owner.job_id,fence:7});
+    if(name==="load_energy_owned_planning_stage") return Promise.resolve({data:{dispatch,slice_fence:1,customer_id:"synthetic-customer",input},error:null});
+    assertEquals(name,"checkpoint_energy_owned_planning_stage");checkpoint=args.p_update;
+    return Promise.resolve({data:{...dispatch,phase:"prepare",cursor:1},error:null});
+  }};
+  const request=(secret="secret",value:unknown=body)=>new Request("https://synthetic-worker.test",{
+    method:"POST",headers:{"x-shs-planning-secret":secret},body:JSON.stringify(value)});
+  assertEquals((await handleEnergyPlanningStep(request("wrong"),"secret",()=>db)).status,401);
+  assertEquals(calls,[]);
+  const response=await handleEnergyPlanningStep(request(),"secret",()=>db);
+  assertEquals(response.status,200);assertEquals((await response.json()).dispatch.phase,"prepare");
+  assertEquals(calls,["load_energy_owned_planning_stage","checkpoint_energy_owned_planning_stage"]);
+  assertEquals(checkpoint,{phase:"prepare",input,payload:null},"completion is stored directly, not returned over HTTP");
+  for(const invalid of [{...body,owner:{...owner,fence:0}},{...body,action:{kind:"replica",replica:4}}]) {
+    assertEquals((await handleEnergyPlanningStep(request("secret",invalid),"secret",()=>db)).status,400);
+  }
+  assertEquals(calls.length,2,"invalid owners/actions never read private state");
+  const stale=await handleEnergyPlanningStep(request(),"secret",()=>({rpc(){return Promise.resolve({data:null,error:null});}}));
+  assertEquals((await stale.json()).dispatch,null);
+});
+
+Deno.test("owned worker repairs only unreadable derived artifacts under the captured cursor and identity", async () => {
+  const calls: Array<{name:string;args:Record<string,unknown>}> = [];
+  const db = { async rpc(name:string,args:Record<string,unknown>) {
+    calls.push({name,args});
+    if(name==='claim_energy_forecast_replica') return {data:{dispatch:{phase:'integrate',cursor:7,target:64,round:1,replicas:[0,1,2,3]},
+      slice_fence:2,cursor:0,identity:'synthetic-frozen-identity',round:1,target_local_draws:16,header:'not-gzip',work:null},error:null};
+    if(name==='reset_energy_owned_planning_runtime') return {data:true,error:null};
+    throw new Error(`Unexpected synthetic RPC ${name}`);
+  }};
+  const response=await handleEnergyPlanningStep(new Request('https://synthetic.test/step',{method:'POST',
+    headers:{'x-shs-planning-secret':'synthetic','x-request-id':'synthetic'},body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,
+      stage:'owned',owner:{home_id:'synthetic-home',job_id:'synthetic-job',fence:3},action:{kind:'replica',replica:0}})}),'synthetic',()=>db);
+  assertEquals(response.status,200);assertEquals((await response.json()).dispatch,null);
+  assertEquals(calls.map(call=>call.name),['claim_energy_forecast_replica','reset_energy_owned_planning_runtime']);
+  assertEquals(calls[1].args,{p_home_id:'synthetic-home',p_job_id:'synthetic-job',p_fence:3,
+    p_cursor:7,p_identity:'synthetic-frozen-identity',p_phase:'integrate'});
 });

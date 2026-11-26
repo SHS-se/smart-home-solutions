@@ -1,3 +1,5 @@
+import { OwnedPlanningArtifactError, unpackOwnedPlanningValue } from "./owned-planning-codec.ts";
+import type { OptimisationResult } from "./planner/planning-contracts.ts";
 import { classifyPlanningFailure, PlanningError } from "./planning-errors.ts";
 import { recordPlanningActivity } from './planning-log.ts';
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -5,7 +7,7 @@ import type { ExecutionReplan } from "./execution-replan.ts";
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
-import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan } from "./rules-planning-client.ts";
+import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, advanceOwnedPlanning } from "./rules-planning-client.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
 import { describeThrown } from "./ha-api-contract.ts";
@@ -16,7 +18,6 @@ import { archiveAccuracyForecast } from "./forecast-accuracy-store.ts";
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 export const PLANNING_EXCHANGE_VERSION = 3;
-
 export type PlanningCompletionBasis = "publication" | "home_assistant_ack";
 
 /** TEST observes plans without control authority, so it cannot acknowledge execution. */
@@ -177,30 +178,61 @@ export class PlanningJobs {
     });
     const claimAt = performance.now();
     if (!job) return deliver(await this.readForHome(homeId, receipt.job_id) ?? receipt);
-    const loaded = await this.rpc<LoadedJob | null>("load_energy_planning_attempt", {
+    const metadata = await this.rpc<{ connected: boolean; horizon_end: string | null; context: LoadedJob["context"] } | null>("load_energy_planning_metadata", {
       p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
     });
     const loadAt = performance.now();
-    if (!loaded) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
+    if (!metadata) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
     const owner = { job_id: job.id, home_id: homeId, fence: job.fence };
-    if (job.protocol !== RULES_PLANNING_PROTOCOL || loaded.context.model_version !== RULES_MODEL_VERSION) {
+    if (job.protocol !== RULES_PLANNING_PROTOCOL || metadata.context.model_version !== RULES_MODEL_VERSION) {
       return deliver(await this.writeRecovering("fail_energy_planning_job", { ...owner,
         code: "planner_upgraded", detail: "Planner version changed. A fresh capture is required." }, homeId, job.id));
     }
     let generated: PublishedPlan;
     let publication: { current: Record<string, unknown>; run: Record<string, unknown> };
-    const assembledJob = { ...job, ...loaded };
-    // The actual finite command horizon, not capture/source age, determines
-    // whether this immutable input can still produce an executable replacement.
-    const horizonEnd = Date.parse(loaded.input.snapshot.slots.at(-1)?.start ?? "") +
-      loaded.input.snapshot.slot_minutes * 60_000;
+    let loaded: LoadedJob;
+    let assembledJob: ClaimedJob & LoadedJob;
+    const horizonEnd = Date.parse(metadata.horizon_end ?? "");
     const requireRemainingHorizon = () => {
       if (horizonEnd <= this.now()) throw new PlanningError(
         "The captured plan horizon has ended. A fresh capture is required.", "capture_horizon_ended", 409, "recapture");
     };
     try {
       requireRemainingHorizon();
-      const planned = await generateRemoteRulesPlan(loaded.input, { ...connection, requestId: loaded.context.request_id }, fetcher);
+      let planned: OptimisationResult;
+      if (metadata.connected) {
+        const advanced = await advanceOwnedPlanning(owner, { ...connection, requestId: metadata.context.request_id,
+          deadline: started + 25_000 }, fetcher);
+        if (advanced.dispatch?.phase !== "ready") {
+          const released = await this.rpc<PlanningReceipt | null>("release_energy_owned_planning_attempt", {
+            p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
+          });
+          return deliver(this.delivery(released) ?? await this.readForHome(homeId, job.id) ?? receipt);
+        }
+        const complete = await this.rpc<(LoadedJob & { result: string; identity: string | null }) | null>("load_energy_owned_planning_result", {
+          p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
+        });
+        if (!complete) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
+        loaded = complete;
+        try { planned = await unpackOwnedPlanningValue<OptimisationResult>(complete.result); }
+        catch (error) {
+          if (!(error instanceof OwnedPlanningArtifactError)) throw error;
+          await this.rpc("reset_energy_owned_planning_runtime", { p_home_id:homeId,p_job_id:job.id,p_fence:job.fence,
+            p_cursor:advanced.dispatch.cursor,p_identity:complete.identity,p_phase:"ready" });
+          const released = await this.rpc<PlanningReceipt | null>("release_energy_owned_planning_attempt", {
+            p_home_id:homeId,p_job_id:job.id,p_fence:job.fence });
+          return deliver(this.delivery(released) ?? await this.readForHome(homeId,job.id) ?? receipt);
+        }
+      } else {
+        const ordinary = await this.rpc<LoadedJob | null>("load_energy_planning_attempt", {
+          p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
+        });
+        if (!ordinary) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
+        loaded = ordinary;
+        planned = await generateRemoteRulesPlan(loaded.input, { ...connection, requestId: loaded.context.request_id,
+          deadline: started + 25_000 }, fetcher);
+      }
+      assembledJob = { ...job, ...loaded };
       generated = planned.plan;
       const snapshot = loaded.input.snapshot;
       const inputHash = await sha256Hex(JSON.stringify(snapshot));
@@ -233,10 +265,11 @@ export class PlanningJobs {
       requireRemainingHorizon();
       publication = { current, run };
     } catch (error) {
-      return deliver(await this.computeFailure(owner, error, loaded.context.planning_trigger));
+      return deliver(await this.computeFailure(owner, error, metadata.context.planning_trigger));
     }
     const assembledAt = performance.now();
-    const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication }, homeId, job.id, generated);
+    const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication,
+      execution_input: loaded.input, runtime_version: Deno.version.v8 }, homeId, job.id, generated);
     console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state, planning_trigger: loaded.context.planning_trigger,
       read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
       load_ms: Math.round(loadAt - claimAt), solve_ms: Math.round(assembledAt - loadAt),
@@ -259,7 +292,7 @@ export class PlanningJobs {
     const code = failure.code;
     console.error("[ENERGY-PLANNING-JOB] failed", { ...owner, code, detail, planning_trigger: planningTrigger });
     return this.writeRecovering(failure.disposition === "retry" ? "retry_energy_planning_attempt" : "fail_energy_planning_job",
-      { ...owner, code, detail }, owner.home_id, owner.job_id);
+      { ...owner, code, detail, retry_after_ms: failure.retryAfterMs }, owner.home_id, owner.job_id);
   }
 
   private async writeRecovering(name: string, body: Record<string, unknown>, homeId: string,

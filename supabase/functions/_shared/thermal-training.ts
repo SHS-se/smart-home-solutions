@@ -81,6 +81,7 @@ export interface ThermalQuarterRow {
   heat_attributed?: boolean;
   temperature_source_key?: string | null;
   probe_evidence?: ProbeEvidence[] | null;
+  peer_temperatures_c?: Record<string, number | null>;
   outdoor_temperature_c: number | null;
   solar_w_per_m2: number | null;
   house_temperature_c: number | null;
@@ -96,6 +97,7 @@ export const thermalQuarter = (row: ThermalQuarterRow): RoomMeanQuarter => ({
   room_c: reading(row.room_temperature_c),
   outdoor_c: reading(row.outdoor_temperature_c),
   house_c: reading(row.house_temperature_c),
+  ...(row.peer_temperatures_c ? { peer_c: row.peer_temperatures_c } : {}),
   solar_w_per_m2: reading(row.solar_w_per_m2),
   heat_w: reading(row.heat_w),
   cooling: row.cooling,

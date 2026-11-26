@@ -6,9 +6,12 @@ mod charging_blocks;
 mod commitments;
 mod move_resize;
 mod opportunity;
+mod packed_f64;
 mod physics;
 mod policy;
 pub mod room_heating;
+pub mod room_network;
+pub mod room_network_forecast;
 mod room_policy;
 mod witnesses;
 use serde::{Deserialize, Serialize};
@@ -727,6 +730,16 @@ pub unsafe extern "C" fn planner_room(pointer: *const u8, length: usize) -> u64 
     (length << 32) | pointer
 }
 
+/// # Safety
+/// Input must name a live initialized module allocation. Caller owns both buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network::plan_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
 #[cfg(test)]
 mod live_tests {
     use super::*;
@@ -872,4 +885,63 @@ mod live_tests {
         assert_eq!(q[0].curtailed_w, 2000.0);
         assert_eq!(q[0].net_w, -7000.0);
     }
+}
+
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_forecast(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::advance_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_finalize(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::finalize_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_header(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::header_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_select(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::select_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_replica(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::replica_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
+/// Input must identify a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_network_merge(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network_forecast::merge_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
 }

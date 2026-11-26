@@ -1,6 +1,6 @@
 // Independently generated synthetic equipment; no household replay data.
 import { assertEquals } from "@std/assert";
-import { poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, type LearningOwner } from "./device-model-store.ts";
+import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, type LearningOwner } from "./device-model-store.ts";
 
 Deno.test("pool telemetry without a mapped heating meter omits only its learning owner", async () => {
   const pool = { volume_m3: 25, water_temperature_c: 24 };
@@ -46,4 +46,14 @@ Deno.test("every variable-power device outside the pool is its own learning owne
     { kind: "device", key: "synthetic-charger", input: {} },
     { kind: "device", key: "synthetic-heater", input: {} },
   ]);
+});
+
+Deno.test("a malformed connected-room graph is isolated without stopping other captured services", async () => {
+  const pool = { model_revision: 2 }, device = { model_revision: 3 };
+  const bundle = await captureDeviceModels({ rpc: () => Promise.resolve({ error: null,
+    data: { rooms: [], pool, devices: [device], room_graph: { connections: "invalid" } } }) }, "synthetic-home");
+  assertEquals(bundle.pool, pool);
+  assertEquals(bundle.devices, [device]);
+  assertEquals(bundle.roomGraph, undefined);
+  assertEquals(bundle.roomGraphIssue, "room_connection_graph_invalid");
 });

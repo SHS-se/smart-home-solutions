@@ -1,5 +1,7 @@
 import { TEST_DEVICE_COLOURS } from './helpers/device-colours';
 import { runRulesPlanner } from "../supabase/functions/_shared/run-rules-planner.ts";
+import { captureRulesPlanningInput } from '../supabase/functions/_shared/rules-planning-capture.ts';
+import { resolveRulePolicy } from '../supabase/functions/_shared/planner-wasm/rule-policy.ts';
 /**
  * "Planera om nu", fully local — no real backend.
  *
@@ -226,6 +228,16 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       } } });
       return;
     }
+    if (url.pathname.endsWith('/rpc/get_energy_planning_replay')) {
+      const args = route.request().postDataJSON();
+      expect(args).toEqual({ p_home_id: HOME_ID, p_plan_id: shown.plan_id });
+      const input = captureRulesPlanningInput({ snapshot: planSnapshot, now: shown.issued_at,
+        price_archive: [], resolved_price_outlook: shown.price_outlook },
+        { plan_id: 'synthetic-accepted-reference', slots: [] }, resolveRulePolicy(), { battery: null });
+      await route.fulfill({ json: { input, snapshot_hash: 'synthetic-archive-hash',
+        planner_version: input.model_version, runtime_version: 'synthetic-runtime' } });
+      return;
+    }
     if (url.pathname.includes('/rpc/')) {
       // The quarter-series readers return rows; access checks return a boolean.
       await route.fulfill({
@@ -240,9 +252,6 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       ? [{ id: CUSTOMER_ID, user_id: CUSTOMER_USER_ID, name: 'Ana', primary_home_id: HOME_ID }]
       : table === 'customers'
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
-      : table === 'energy_optimisation_current'
-      // User-requested replay downloads read the source snapshot separately from sync.
-      ? [{ snapshot: planSnapshot, plan: shown }]
       : table === 'energy_planning_log'
       ? (replan.log ?? []).filter(row =>
         (!url.searchParams.has('sequence') || Number(row.sequence) < Number(url.searchParams.get('sequence')!.slice(3))) &&
@@ -2504,6 +2513,13 @@ test('mixed modes show and export the published device plan', async ({ context, 
     await page.getByRole('button', { name: /replay|repris/i }).click();
     const file = await downloaded;
     const bundle = JSON.parse(readFileSync((await file.path())!, 'utf8'));
+    expect(bundle.schema_version).toBe(3);
+    expect(bundle.entrypoint.export).toBe('executeRulesPlanning');
+    expect(bundle.entrypoint.arguments.reference.plan_id).toBe('synthetic-accepted-reference');
+    expect(bundle.entrypoint.arguments.independent_references).toEqual({ battery: null });
+    expect(bundle.entrypoint.arguments.model_version).toBe(bundle.planner_version);
+    expect(bundle.runtime_version).toBe('synthetic-runtime');
+    expect(bundle.input_hash).toBe('synthetic-archive-hash');
     expect(bundle.selection.scenario).toBe(scenario);
     expect(bundle.expected.planner_output).toEqual(plan);
     expect(bundle.expected.selected_quarter).toEqual(

@@ -1,3 +1,4 @@
+import type { NativeRoomNetworkInput, NativeRoomNetworkOutput, NativeRoomNetworkProposal, NativeRoomNetworkAdvanceInput, NativeRoomNetworkAdvanced, NativeRoomNetworkWork, NativeRoomNetworkBelief, NativeRoomNetworkNodeHeader, NativeRoomNetworkDrawSelection, NativeRoomReplica, NativeRoomNetworkReplicaAdvanceInput, NativeRoomNetworkReplicaAdvanced, NativeRoomNetworkReplicaWork, NativeRoomNetworkMerged } from "../room-network-contract.ts";
 import { z } from "zod";
 import type { NativeCommand, ReadyProblem } from "./ready-problem.ts";
 import { planningStage, type PlanningTrace } from "../planning-trace.ts";
@@ -141,15 +142,78 @@ const completionOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
   z.object({ kind: z.literal("projected"), commands: command.array(), quarters: quarter.array(), account }),
 ]);
-const roomOutcome = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("failed"), issue: z.string() }),
-  z.object({ kind: z.literal("planned"), plan: z.object({
+const roomPlan = z.object({
     power_w: z.number().finite().array(), thermostat_w: z.number().finite().array().array(),
     targets_c: z.number().finite().array().array(), relays_on: z.boolean().array().array(),
     temperature_c: z.number().finite().array(), shortfall_c: z.number().finite().array(),
     room_targets_c: z.number().finite().array().optional(),
-  }) }),
+});
+const roomNetworkProjection = z.object({plans:roomPlan.array(),temperature_c:z.number().finite().array().array(),mean_temperature_c:z.number().finite().array().array()});
+const roomNetworkProposalOutcome = z.discriminatedUnion("kind",[
+  z.object({kind:z.literal("failed"),issue:z.string()}),
+  z.object({kind:z.literal("planned"),plan:roomNetworkProjection}),
 ]);
+const roomNetworkOutcome = z.discriminatedUnion("kind", [
+  z.object({kind: z.literal("failed"), issue: z.string()}),
+  z.object({kind: z.literal("planned"), plan: roomNetworkProjection.extend({literal:roomPlan.array()})}),
+]);
+
+const numericRoomNetworkStatistics=z.object({
+  trajectories:z.number().int().nonnegative(),replayed_paths:z.number().int().nonnegative(),
+  total:z.number().finite().array(),
+  replicates:z.object({trajectories:z.number().int().nonnegative(),total:z.number().finite().array()}).array(),
+  infeasible:z.number().int().nonnegative().array().length(3),
+});
+const packedRoomNetworkStatistics=numericRoomNetworkStatistics.extend({
+  total:z.string(),replicates:z.object({trajectories:z.number().int().nonnegative(),total:z.string()}).array(),
+});
+const roomNetworkAdvancedOutcome=z.discriminatedUnion("kind",[
+  z.object({kind:z.literal("failed"),issue:z.string()}),
+  z.object({kind:z.literal("advanced"),result:z.object({
+    reached_target:z.boolean(),statistics:numericRoomNetworkStatistics.nullable(),
+    assessment:z.object({deadline_resolved:z.boolean(),unresolved_deadline_prefixes:z.number().int().nonnegative(),proposal_rejection:z.discriminatedUnion("kind",[
+      z.object({kind:z.literal("horizon_shortfall"),room:z.number().int().nonnegative(),horizon_shortfall_difference_c_h:z.number().finite(),twice_standard_error_c_h:z.number().finite().nonnegative()}),
+      z.object({kind:z.literal("prefix_cost"),room:z.number().int().nonnegative(),cost_difference:z.number().finite(),twice_standard_error:z.number().finite().nonnegative(),new_miss:z.boolean(),no_improvement:z.boolean()}),
+    ]).nullable()}),
+    work:z.object({revision:z.literal("joint_regime_replicas_philox_v3"),identity:z.string(),seed:z.tuple([z.number().int(),z.number().int()]),replicate_count:z.number().int().positive(),cursor:z.number().int().nonnegative(),slot:z.number().int().nonnegative(),minute:z.number().int().nonnegative(),deterministic:z.boolean(),statistics:packedRoomNetworkStatistics}).passthrough(),
+  })}),
+]);
+
+const canonicalResult=roomNetworkAdvancedOutcome.options[1].shape.result;
+const replicaWork=canonicalResult.shape.work.omit({replicate_count:true,statistics:true}).extend({
+  replica:z.number().int().min(0).max(3),statistics:packedRoomNetworkStatistics.omit({replicates:true}),
+}).passthrough();
+const nodeHeader=z.object({cdf:z.number().finite().nonnegative().array(),weight_sum:z.number().finite().nonnegative(),count:z.number().int().nonnegative(),deterministic:z.boolean(),thermal_noise_c2_per_h:z.number().finite().nonnegative(),bounded_thermal:z.boolean(),reset_priors:z.object({from:z.number().int().nonnegative(),center_mean:z.number().finite(),center_variance:z.number().finite().nonnegative(),log_reversion_mean:z.number().finite(),log_reversion_sd:z.number().finite().nonnegative(),stationary_variance_scale:z.number().finite().nonnegative(),constant_probability:z.number().finite().min(0).max(1)}).array()});
+function nativeReady<T extends z.ZodTypeAny>(schema:T) {
+  return z.discriminatedUnion("kind",[z.object({kind:z.literal("failed"),issue:z.string()}),z.object({kind:z.literal("ready"),result:schema})]);
+}
+const headerOutcome=nativeReady(nodeHeader);
+const selectionOutcome=nativeReady(z.object({local_draw:z.number().int().nonnegative(),global_draw:z.number().int().nonnegative(),hypothesis_indexes:z.number().int().nonnegative().nullable().array()}).array());
+const replicaOutcome=nativeReady(z.object({work:replicaWork,reached_target:z.boolean(),needs_global_draw:z.number().int().nonnegative().nullable()}));
+const mergeOutcome=nativeReady(z.object({work:canonicalResult.shape.work,statistics:numericRoomNetworkStatistics,assessment:canonicalResult.shape.assessment}));
+
+const roomOutcome = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("failed"), issue: z.string() }),
+  z.object({ kind: z.literal("planned"), plan: roomPlan }),
+]);
+function validateNetworkCoverage(input:NativeRoomNetworkInput,plan:NativeRoomNetworkProposal & {literal?:RoomHeatingPlan[]}) {
+  if(plan.plans.length!==input.rooms.length || plan.temperature_c.length!==input.nodes.length ||
+    plan.mean_temperature_c.length!==input.nodes.length || plan.temperature_c.some(row=>row.length!==input.hours.length) ||
+    plan.mean_temperature_c.some(row=>row.length!==input.hours.length) ||
+    plan.literal && plan.literal.length!==input.rooms.length) throw new Error("Invalid native room network coverage");
+  plan.plans.forEach((room,i)=>validateRoomCoverage(input.rooms[i].input,room));
+  plan.literal?.forEach((room,i)=>validateRoomCoverage(input.rooms[i].input,room));
+}
+function validateRoomCoverage(input: {quarters:RoomQuarter[];thermostats:readonly RoomThermostat[]},plan:RoomHeatingPlan):void {
+      if (Object.values(plan).some(series => series?.length !== input.quarters.length) ||
+        Boolean(plan.room_targets_c) !== input.quarters.some(q => q.room_target != null) ||
+        plan.targets_c.some(row => row.length !== input.thermostats.length) ||
+        plan.thermostat_w.some(row => row.length !== input.thermostats.length) ||
+        plan.relays_on.some((row, i) => row.length !== input.quarters[i].relay_w.length)) {
+        throw new Error("Invalid native room plan coverage");
+      }
+}
+
 // All fields in the validated wire schemas are required. Preserve that fact
 // for browser consumers whose project disables strictNullChecks (Zod otherwise
 // infers optional object keys there); runtime parsing remains unchanged.
@@ -196,7 +260,7 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
   let projectionFailure: Error | undefined;
   function invoke<T>(
     inputValue: unknown,
-    exportName: "planner_solve" | "planner_project" | "planner_complete" | "planner_room",
+    exportName: "planner_solve" | "planner_project" | "planner_complete" | "planner_room" | "planner_room_network" | "planner_room_network_forecast" | "planner_room_network_finalize" | "planner_room_network_header" | "planner_room_network_select" | "planner_room_network_replica" | "planner_room_network_merge",
     parse: (value: unknown) => T,
     trace?: PlanningTrace,
   ) {
@@ -260,17 +324,48 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
     }
   }
   return {
+    roomNetwork(input: NativeRoomNetworkInput, trace?: PlanningTrace): NativeRoomNetworkProposal {
+      const { outcome } = invoke(input, "planner_room_network", value => roomNetworkProposalOutcome.parse(value), trace);
+      if (outcome.kind === "failed") throw new Error(outcome.issue);
+      validateNetworkCoverage(input,outcome.plan);
+      return outcome.plan;
+    },
+    roomNetworkAdvance(input:NativeRoomNetworkAdvanceInput,trace?:PlanningTrace):NativeRoomNetworkAdvanced {
+      const {outcome}=invoke(input,"planner_room_network_forecast",value=>roomNetworkAdvancedOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      return outcome.result as NativeRoomNetworkAdvanced;
+    },
+    roomNetworkHeader(input:{belief:NativeRoomNetworkBelief},trace?:PlanningTrace):NativeRoomNetworkNodeHeader {
+      const {outcome}=invoke(input,"planner_room_network_header",value=>headerOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      return outcome.result as NativeRoomNetworkNodeHeader;
+    },
+    roomNetworkSelect(input:{node_headers:NativeRoomNetworkNodeHeader[];seed:[number,number];replica:NativeRoomReplica;local_draws:number[]},trace?:PlanningTrace):NativeRoomNetworkDrawSelection[] {
+      const {outcome}=invoke(input,"planner_room_network_select",value=>selectionOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      return outcome.result as NativeRoomNetworkDrawSelection[];
+    },
+    roomNetworkReplicaAdvance(input:NativeRoomNetworkReplicaAdvanceInput,trace?:PlanningTrace):NativeRoomNetworkReplicaAdvanced {
+      const {outcome}=invoke(input,"planner_room_network_replica",value=>replicaOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      return outcome.result as NativeRoomNetworkReplicaAdvanced;
+    },
+    roomNetworkMerge(input:{network:NativeRoomNetworkInput;identity:string;seed:[number,number];replicas:NativeRoomNetworkReplicaWork[]},trace?:PlanningTrace):NativeRoomNetworkMerged {
+      const {outcome}=invoke(input,"planner_room_network_merge",value=>mergeOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      return outcome.result as NativeRoomNetworkMerged;
+    },
+    roomNetworkFinalize(input:{network:NativeRoomNetworkInput;work:NativeRoomNetworkWork},trace?:PlanningTrace):NativeRoomNetworkOutput {
+      const {outcome}=invoke(input,"planner_room_network_finalize",value=>roomNetworkOutcome.parse(value),trace);
+      if(outcome.kind==="failed")throw new Error(outcome.issue);
+      validateNetworkCoverage(input.network,outcome.plan);
+      return outcome.plan;
+    },
     room(input: { start_c: number; start_stored_heat_c: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[] }, trace?: PlanningTrace): RoomHeatingPlan {
       const { outcome } = invoke(input, "planner_room", value => roomOutcome.parse(value), trace);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
       const plan = outcome.plan as RoomHeatingPlan;
-      if (Object.values(plan).some(series => series?.length !== input.quarters.length) ||
-        Boolean(plan.room_targets_c) !== input.quarters.some(q => q.room_target != null) ||
-        plan.targets_c.some(row => row.length !== input.thermostats.length) ||
-        plan.thermostat_w.some(row => row.length !== input.thermostats.length) ||
-        plan.relays_on.some((row, i) => row.length !== input.quarters[i].relay_w.length)) {
-        throw new Error("Invalid native room plan coverage");
-      }
+      validateRoomCoverage(input,plan);
       return plan;
     },
     solve(problem: ReadyProblem, trace?: PlanningTrace) {

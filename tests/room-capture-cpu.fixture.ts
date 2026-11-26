@@ -1,3 +1,4 @@
+import { ROOM_FIT_CAPTURE_VERSION } from "../supabase/functions/_shared/device-model-learning/room-response-run.ts";
 import { assert, assertEquals } from "@std/assert";
 import { encodeRoomEvidenceCapture } from "../supabase/functions/_shared/device-model-learning/room-evidence-capture.ts";
 import { syntheticRoomBandStress } from "../supabase/functions/_shared/device-learning/room/native-mean.fixture.ts";
@@ -7,6 +8,7 @@ import { ROOM_MEASURED_POLICY } from "../supabase/functions/_shared/planner/mode
 import { decodeRoomResponseFitCapture } from "../supabase/functions/_shared/device-model-learning/room-band-fit-capture.ts";
 import { roomResponseEvidence, type RoomSharedMetadata } from "../supabase/functions/_shared/device-model-learning/room.ts";
 import type { ThermalQuarterRow } from "../supabase/functions/_shared/thermal-training.ts";
+import { syntheticRoomConnectionCapture } from "../supabase/functions/_shared/device-model-learning/room-evidence.fixture.ts";
 
 const ROWS = 400 * 96;
 const TRAINING_ROWS = ROWS * 2 / 3;
@@ -79,7 +81,8 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
         case "claim_energy_device_learning": data = { ...claim, room_fit_progress: checkpoint?.progress ?? null }; break;
         case "capture_energy_device_models": assert(!checkpoint, "Numerical claims skip bundle discovery"); data = { pool: null, rooms: [], room_heating: { synthetic: context } }; break;
         case "get_energy_room_heating_context": assert(!checkpoint, "Numerical claims skip context discovery"); data = context; break;
-        case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64), next: null }; break;
+        case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64),
+          connected: syntheticRoomConnectionCapture("b".repeat(64)), next: null }; break;
         case "load_energy_room_evidence_blocks":
           assertEquals([args.p_from_at, args.p_to_at], [at(0), at(ROWS)]);
           data = JSON.parse(new TextDecoder().decode(archive));
@@ -93,7 +96,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           assertEquals(copy.p_expected_cursor, -1);
           assertEquals(copy.p_metadata.policy_fingerprint, "b".repeat(64));
           assertEquals(copy.p_metadata.row_count, ROWS);
-          assertEquals(copy.p_metadata.version, 5);
+          assertEquals(copy.p_metadata.version, ROOM_FIT_CAPTURE_VERSION);
           assert(copy.p_metadata.capture.implementation.includes(ROOM_MEASURED_POLICY));
           assertEquals(copy.p_metadata.capture.trainingView.length, TRAINING_ROWS);
           assert(copy.p_metadata.capture.trainingView.temperatures.length > 0);

@@ -29,6 +29,8 @@ export interface RoomMeanQuarter {
   room_c: number | null;
   outdoor_c: number | null;
   house_c: number | null;
+  /** Source-qualified named room means; missing peers remain unknown. */
+  peer_c?: Record<string, number | null>;
   solar_w_per_m2: number | null;
   /** Measured mean electrical input; null means unobserved, never OFF. */
   heat_w: number | null;

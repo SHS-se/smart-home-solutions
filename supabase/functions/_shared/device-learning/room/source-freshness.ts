@@ -18,6 +18,7 @@ interface Observation {
   room_temperature_c: number | null;
   house_temperature_c: number | null;
   heat_w: number | null;
+  peer_temperatures_c?: Record<string, number | null>;
 }
 
 export interface ProbeFreshnessReport {
@@ -233,13 +234,17 @@ function inferFrozen(intervals: Interval[], durationMs: number) {
 }
 
 /** Qualify only temperatures used for learning. No raw evidence is mutated. */
-export function qualifyProbeFreshness<T extends Observation>(rows: readonly T[]): { rows: T[]; report: ProbeFreshnessReport } {
+export function qualifyProbeFreshness<T extends Observation>(rows: readonly T[], peerKeys: readonly string[] = []):
+  { rows: (T & { peer_temperatures_c?: Record<string, number | null> })[]; report: ProbeFreshnessReport } {
   const report: ProbeFreshnessReport = {
     room: { inferred: 0, unavailable: 0, unverified: 0 },
     house: { inferred: 0, unavailable: 0, unverified: 0 },
   };
   const byDuration = new Map<number, Array<Interval & { index: number; row: T }>>();
-  const qualified = [...rows];
+  const peerSet = new Set(peerKeys);
+  const qualified = rows.map(row => peerKeys.length
+    ? { ...row, peer_temperatures_c: Object.fromEntries(peerKeys.map(key => [key, null])) as Record<string, number | null> }
+    : row);
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
     if (!row.probe_evidence?.length) continue;
@@ -289,8 +294,22 @@ export function qualifyProbeFreshness<T extends Observation>(rows: readonly T[])
       }
       if (roomReason && row.room_temperature_c !== null) report.room[roomReason]++;
       const room = roomReason ? null : row.room_temperature_c;
-      if (room !== row.room_temperature_c || house !== row.house_temperature_c) {
-        qualified[index] = { ...row, room_temperature_c: room, house_temperature_c: house };
+      // SQL has already qualified each physical source against its dated room
+      // assignment. Apply the same population-specific freshness here.
+      const peerValues = new Map<string, number[]>();
+      for (const probe of probes) {
+        if (!peerSet.has(probe.area_key) || reason(probe) !== null || !finite(probe.mean)) continue;
+        const values = peerValues.get(probe.area_key);
+        if (values) values.push(probe.mean);
+        else peerValues.set(probe.area_key, [probe.mean]);
+      }
+      const peer_temperatures_c = peerKeys.length ? Object.fromEntries(peerKeys.map(key => {
+        const values = peerValues.get(key);
+        return [key, values ? median(values) : null];
+      })) : undefined;
+      if (room !== row.room_temperature_c || house !== row.house_temperature_c || peer_temperatures_c) {
+        qualified[index] = { ...row, room_temperature_c: room, house_temperature_c: house,
+          ...(peer_temperatures_c ? { peer_temperatures_c } : {}) };
       }
     }
   }

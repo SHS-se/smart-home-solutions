@@ -1,3 +1,4 @@
+import type { ConnectedRoomResponse } from "./models/room/connected-exchange.ts";
 /**
  * The one room response the planner uses at every quarter. A shared response
  * is fitted across every outdoor temperature; the quarter's forecast outdoor
@@ -14,12 +15,11 @@ import { hasMeasuredRoomSupport } from "./models/room/measured-evidence.ts";
 import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import { readThermalModel } from "./models/room/read-model.ts";
 
-export type RoomResponseSource =
-  | { kind: "shared"; revision: string }
-  | { kind: "general"; revision: string | number | null }
-  | { kind: "band"; band_c: number; revision: string };
+import type { RoomResponseSource } from "./models/room/planning.ts";
+export type { RoomResponseSource } from "./models/room/planning.ts";
 
 export interface RoomResponse {
+  connected_exchange?: ConnectedRoomResponse;
   model: ThermalZoneModel;
   source: RoomResponseSource;
   warnings: string[];
@@ -52,8 +52,10 @@ export function roomResponse(library: RoomHeatingBands, forecastOutdoorC?: reado
   const reference = library.reference;
   const model = readThermalModel(reference?.model);
   if (reference && model && reference.scope?.kind === "shared" && typeof library.reference_revision === "string") {
-    return { model, source: { kind: "shared", revision: library.reference_revision }, warnings: reference.warnings ?? [],
-      supported: hasMeasuredRoomSupport(reference.learning_evidence) || hasRoomTransitionSupport(reference.learning_evidence) || hasRoomRunSupport(reference.learning_evidence), legacy: false };
+    return { model, source: { kind: "shared", revision: library.reference_revision }, warnings: reference.connected_exchange && !connectedRoomHeaterSupported(reference.connected_exchange)
+        ? [...(reference.warnings ?? []), "insufficient_heating"] : reference.warnings ?? [],
+      ...(reference.connected_exchange ? { connected_exchange: reference.connected_exchange } : {}),
+      supported: reference.connected_exchange ? connectedRoomHeaterSupported(reference.connected_exchange) : hasMeasuredRoomSupport(reference.learning_evidence) || hasRoomTransitionSupport(reference.learning_evidence) || hasRoomRunSupport(reference.learning_evidence), legacy: false };
   }
   // ---- Rollout only: responses accepted before the shared response. ----
   if (reference && model && reference.scope?.kind !== "band") {
@@ -73,3 +75,7 @@ export function roomResponse(library: RoomHeatingBands, forecastOutdoorC?: reado
 /** Fits the learner flagged as resting on too little heating cannot justify preheating. */
 export const roomResponseEvidenceLimited = (warnings?: readonly string[]): boolean =>
   Array.isArray(warnings) && (warnings.includes("insufficient_heating") || warnings.includes("insufficient_samples"));
+
+/** Exchange identification does not grant permission for unsupported heater preheating. */
+export const connectedRoomHeaterSupported = (model: ConnectedRoomResponse): boolean =>
+  model.thermal.heater !== null && model.evidence.heater_identified === true;

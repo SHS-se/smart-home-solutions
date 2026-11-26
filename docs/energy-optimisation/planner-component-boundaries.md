@@ -22,11 +22,18 @@ refactor does not create a new priority or spending policy.
 | `device-learning/heat-pump-startup.ts` | A heat pump's start-up peak, recovery draw and running draw and peak per outdoor band, with an out-of-sample check | Planning, commands or electrical permission |
 | `device-learning/linear-algebra.ts` | Numerical equation solving | Room or pool policy |
 | `planner/models/room/thermal.ts` | Room thermal response and delayed heat | Regression, prices, scheduling |
+| `planner/models/room/connected-exchange.ts` | Native-mean observation/state contract, positive stochastic exchange, causal posterior and coefficient prediction | Database, tariffs, actuator permissions |
+| `device-learning/room/connected-response.ts` | Joint stable receiving-response identification and bounded exchange-process identification | Commands, prices, changing accepted body parameters during planning capture |
+| `connected-room-planning-capture.ts` | Fenced, immutable source acquisition, qualification and resumable derived state in the authenticated planning worker | Learning a replacement heater/body response or changing intent |
+| `owned-planning-worker.ts` | One authenticated, fenced capture/preparation/catalog/replica/barrier/solve action and direct checkpoint | Publishing plans, changing physical or preference policy |
+| `room-forecast-catalog.ts` | Exact JSON record encoding, UTF-8 byte offsets and compressed artifact transport | Probability normalization, hypothesis selection or covariance semantics |
+| `rules-planning-client.ts`, `energy-planning-jobs.ts` | Compact bounded worker waves, durable household ownership and atomic publication | Inference kernels or repeated posterior transport through ingestion |
 | `planner/models/pool/state.ts` | Reconstruction of thermal memory from actual compressor energy | Parameter fitting or releasing commitments |
 | `planner/models/pool/electrical.ts` | Expected compressor and auxiliary draw from the learned operating point, and the separate ON reservation, from equipment evidence | Thermal gain, comfort targets or statistical fit quality |
 | Rust `models/{battery,ev,pool,room}` | Pure device transitions and actuator simulation | Tariffs, policy, database or search |
 | Rust `solver/{policy,room_policy}` | Existing economic/comfort preferences | Learning or physical response coefficients |
 | Rust `solver/room_heating` | Bellman search, action enumeration and memoization | Its own copy of thermostat physics |
+| Rust `models/room_network`, `solver/room_network` | Simultaneous room evolution, ordered proposals and authoritative whole-network command replay | Fitting, source selection or a separate thermostat implementation |
 | `rules-planner.ts` | Existing ordered orchestration and publication | Fitting or mutating a caller's captured basis |
 | `rules-planning-capture.ts` | Detached unsolved observations, intent, accepted commands and policy | Search or fitting on admission |
 | `device-model-store.ts` | One atomic calibration bundle with per-model revisions | Weather caching or model selection |
@@ -44,6 +51,70 @@ The TypeScript thermal and electrical models retained for calibration,
 reference projections and the benchmark are not a second executable planner.
 Rust remains the sole search engine. The independently pinned benchmark is
 not changed by this extraction.
+
+### Adaptive connected-room response
+
+The app owns the canonical room connection map. Each receiving-room learner
+owns its effective nonnegative incoming rates; opposite directions need not
+identify reciprocal physical W/K. Electrical heater response alone does not
+identify delivered heat, COP or thermal capacity, so the new response leaves
+those physical diagnostics null. Named exchange replaces aggregate-house
+coupling in this model family.
+
+Each native interval mean is scored once against a latent boundary temperature,
+known stored heater heat and continuous log-rate state. Positive cubature weights
+carry the joint covariance of the interval mean and its endpoint. Observation
+noise, unexplained thermal disturbances and exchange-process variation are
+separate terms. Proper scaled inverse-chi-squared variance priors have one degree
+of freedom and a data-derived, partition-fixed scale. Missing electricity stays
+unknown; a warm residual cannot manufacture stored heater heat.
+
+Stable response fitting and current exchange inference have different owners.
+A captured plan keeps the accepted heater/body/noise parameters exactly. Its
+bounded preparation updates the retained incoming-process posterior against
+immutable qualified evidence, without refitting the body. Each incoming edge
+has its own regime-reset intensity and within-regime persistence. A regime has
+an unknown static log-rate centre and either a constant coefficient or an
+Ornstein–Uhlenbeck variation around that centre. Reset priors are frozen with the
+accepted evidence basis; inferred resets are statistical changes, not door
+observations. Four independently seeded particle replicas retain parameter and
+state uncertainty, with their evidence normalizers contributing to the combined
+posterior. Known stored heat remains a deterministic measured contribution.
+This can respond to a first new exchange regime even when the accepted process
+previously estimated no variation. There is no process-noise floor, arbitrary
+recency window, inferred contact state or confidence-based service gate.
+Likelihood is conditional on measured native neighbour means; it is not evidence
+of genuine future network forecast accuracy. The latter requires independent
+coupled-plant and chronological closed-loop validation. Predictive mean rates
+are used only by the conditional proposal engine. Final command qualification
+uses joint stochastic rate paths and signed thermal disturbances, retaining
+initial state/rate covariance and per-edge reset uncertainty. Common paths are
+shared by proposed, literal and feasible-seed vectors; uncertainty is integrated
+after positive-part comfort shortfall and closed-loop thermostat decisions.
+Finite-path feasibility is a numerical replay statistic, not a universal
+physical guarantee. Existing execution safety remains authoritative.
+
+Observed passive rooms, and controlled rooms with no identified heater response,
+can supply a passive receiving equation. Their response has `heater: null` and
+no invented gain. Existing controls and empirical demand remain separate; only
+measured heater support permits modeled preheating. Unobserved candidate sources
+are reported as unresolved evidence rather than fitted zero coefficients.
+
+The native room search remains an ordered conditional proposal engine. After
+each proposal the full affected network is replayed from the same captured
+origin, including retained commands, actuator latches and delayed heat. The
+accepted result replaces all affected thermostat powers and temperatures, not
+just the currently proposed room. Capacity, prior-room comfort and the existing
+literal deadline/cost comparator are checked on those coupled consequences.
+An affected component that cannot be modeled retains empirical comfort/demand
+with a visible diagnostic; unrelated household services keep planning.
+
+Source correction and source-freshness qualification can alter an old numerical
+prefix. Derived state therefore uses the complete qualified capture, with
+bounded source, qualification and numerical stages in the existing planning
+job. It does not certify a posterior from raw timestamps alone. Completed
+execution arguments contain the derived network and posterior so replay does
+not require live observations. The immutable admission remains unchanged.
 
 Heating-band learning jointly represents positive, persistent unexplained heat
 in each response family's interval-mean coordinates. This is statistical

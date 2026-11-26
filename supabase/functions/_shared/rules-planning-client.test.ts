@@ -1,11 +1,13 @@
-import { cpuMixedRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
-import { assertEquals, assertRejects } from "@std/assert";
+import { cpuConnectedRoomPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
-import { solveRulesPlan } from "./rules-planner.ts";
+import { solveRulesPlan, type PreparedRulesInput } from "./rules-planner.ts";
 import { prepareCapturedRulesInput, executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
-import { EnergyPlanningError, generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
+import { completedRemoteCapture, EnergyPlanningError, generateRemoteRulesPlan, validRoomPreparationAdvance, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
+import { ROOM_NETWORK_WORK_REVISION } from "./room-network-contract.ts";
+import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { MAX_PLANNING_BODY_BYTES } from "./planning-transport-limits.ts";
 import { createPlannerProbe } from "./planner-wasm/probe.ts";
@@ -14,11 +16,67 @@ import artifact from "./planner-wasm/artifact.json" with { type: "json" };
 import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 
 const connection = { url: "https://planner.test", planningSecret: "private", requestId: "test-request" };
+Deno.test("native preparation resolves only replay path counts without replacing captured seed or physical inputs", () => {
+  const capture = captureRulesPlanningInput(cpuConnectedRoomPlanningSource(), null, resolveRulePolicy());
+  const original = structuredClone(capture);
+  const prepared = { snapshot: structuredClone(capture.snapshot) } as PreparedRulesInput;
+  Object.assign(prepared.snapshot.room_network!.forecast, { trajectories: 128, replayed_paths: 256, replicate_trajectories: [32, 32, 32, 32] });
+  const completed = completedRemoteCapture(capture, prepared);
+  assertEquals(capture, original, 'admission is not changed');
+  const expected = structuredClone(original);
+  Object.assign(expected.snapshot.room_network!.forecast, { trajectories: 128, replayed_paths: 256, replicate_trajectories: [32, 32, 32, 32] });
+  assertEquals(completed, expected);
+  assertEquals(completedRemoteCapture(completed, prepared), completed, 'repeated preparation is idempotent');
+  for (const replayed_paths of [undefined, 127, 256.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const malformed = structuredClone(prepared);
+    Object.assign(malformed.snapshot.room_network!.forecast, { replayed_paths });
+    assertThrows(() => completedRemoteCapture(capture, malformed), EnergyPlanningError, 'numerical identity');
+  }
+  const changedPaths = structuredClone(prepared);
+  changedPaths.snapshot.room_network!.forecast.replayed_paths = 257;
+  assertThrows(() => completedRemoteCapture(completed, changedPaths), EnergyPlanningError, 'numerical identity');
+  for (const field of ['seed', 'runtime', 'wasm_sha256', 'accuracy_revision'] as const) {
+    const changed = structuredClone(prepared);
+    Object.assign(changed.snapshot.room_network!.forecast, { [field]: field === 'seed' ? [1, 2] : 'different' });
+    assertThrows(() => completedRemoteCapture(capture, changed), EnergyPlanningError, 'numerical identity');
+  }
+  const changed = structuredClone(prepared);
+  changed.snapshot.room_network!.forecast.trajectories = 256;
+  changed.snapshot.room_network!.forecast.replicate_trajectories = [64, 64, 64, 64];
+  assertThrows(() => completedRemoteCapture(completed, changed), EnergyPlanningError, 'numerical identity');
+});
+Deno.test("joint replay progress keeps its final room index while strictly advancing native work", () => {
+  const source = cpuVaryingRoomTargetPlanningSource();
+  source.snapshot.thermal_zones = source.snapshot.thermal_zones!.slice(0, 2);
+  const capture = captureRulesPlanningInput(source, null, resolveRulePolicy());
+  const progress: RoomPreparationProgress = { snapshot_id: capture.snapshot.snapshot_id, next_room: 1,
+    services: { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, unplanned_power: {}, warnings: [] } };
+  const pending: RoomPreparationProgress = { ...progress, next_room: 2, forecast_pending: true };
+  const barrier: RoomPreparationProgress = { ...progress, next_room: 2,
+    network_work: { revision: ROOM_NETWORK_WORK_REVISION, cursor: 1, target_trajectories: 128,
+      replicas: [null, null, null, null] } };
+  assertEquals(validRoomPreparationAdvance(capture, null, progress), true);
+  assertEquals(validRoomPreparationAdvance(capture, progress, pending), true);
+  assertEquals(validRoomPreparationAdvance(capture, pending, barrier), true);
+  assertEquals(validRoomPreparationAdvance(capture, progress, barrier), false, "compile follows a durable final-proposal boundary");
+  assertEquals(validRoomPreparationAdvance(capture, pending, pending), false, "pending compilation cannot repeat without progress");
+  assertEquals(validRoomPreparationAdvance(capture, null, pending), false, "pending compilation cannot skip ordered proposals");
+  assertEquals(validRoomPreparationAdvance(capture, progress, { ...pending, next_room: 1 }), false);
+  assertEquals(validRoomPreparationAdvance(capture, pending, { ...barrier, forecast_pending: true }), false);
+  assertEquals(validRoomPreparationAdvance(capture, barrier, pending), false, "native work cannot rewind to compile");
+  assertEquals(validRoomPreparationAdvance(capture, barrier, { ...barrier, network_work: { ...barrier.network_work!, cursor: 2 } }), true);
+  for (const invalid of [barrier, { ...barrier, next_room: 1 }, { ...barrier, snapshot_id: 'different' },
+    { ...barrier, network_work: { ...barrier.network_work!, cursor: 0 } },
+    { ...barrier, network_work: { ...barrier.network_work!, cursor: NaN } },
+    { ...barrier, network_work: { ...barrier.network_work!, revision: 'other' } }]) {
+    assertEquals(validRoomPreparationAdvance(capture, barrier, invalid as RoomPreparationProgress), false);
+  }
+  assertEquals(validRoomPreparationAdvance(capture, null, barrier), false, 'cannot skip ordered room proposals');
+});
 function input() {
   const snapshot = dispatchedEvSnapshot();
   snapshot.slots = snapshot.slots.slice(0, 8);
   snapshot.captured_at = snapshot.slots[0].start;
-  snapshot.comfort = { ev: { target_km: 300 } };
   return captureRulesPlanningInput({ snapshot, now: snapshot.captured_at,
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1,
       level_sek_per_kwh: 1, shadow_import_sek_per_kwh: snapshot.slots.map(() => 1) } }, null, resolveRulePolicy());
@@ -185,4 +243,58 @@ Deno.test("worker failures preserve retry, recapture and terminal disposition ac
     assertEquals(error.code, code);
     assertEquals(error.disposition, disposition);
   }
+});
+
+
+Deno.test("owned dispatch awaits at most four replica writers and preserves successful siblings when one fails", async () => {
+  const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
+  const owner = { home_id:'synthetic-home',job_id:'synthetic-job',fence:1 };
+  const done: number[] = []; let active=0,maxActive=0,requests=0;
+  await assertRejects(()=>advanceOwnedPlanning(owner,connection,async(_url,init)=>{
+    requests++; const body=JSON.parse(String(init?.body));
+    assertEquals(body.input,undefined); assertEquals(body.owner,owner);
+    if(body.action.kind==='advance') return Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:connection.requestId,stage:'owned',
+      dispatch:{phase:'integrate',cursor:8,target:64,round:1,replicas:[0,1,2,3]}});
+    active++;maxActive=Math.max(maxActive,active);
+    await new Promise(resolve=>setTimeout(resolve,body.action.replica===0?1:5));
+    active--;done.push(body.action.replica);
+    if(body.action.replica===0) return Response.json({error:'synthetic_retry'},{status:503});
+    return Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:connection.requestId,stage:'owned',
+      dispatch:{phase:'integrate',cursor:8,target:64,round:1,replicas:[]}});
+  }),EnergyPlanningError,'synthetic_retry');
+  assertEquals(maxActive,4);assertEquals(active,0);assertEquals(done.sort(),[0,1,2,3]);assertEquals(requests,5);
+});
+
+Deno.test("owned dispatch stops launching waves near the shared deadline and rejects malformed replica lists", async () => {
+  const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
+  const owner={home_id:'synthetic-home',job_id:'synthetic-job',fence:1};let requests=0;
+  const reply=(replicas:number[])=>Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:connection.requestId,stage:'owned',
+    dispatch:{phase:'integrate',cursor:8,target:64,round:1,replicas}});
+  assertEquals((await advanceOwnedPlanning(owner,{...connection,deadline:performance.now()+500},()=>{
+    requests++;return Promise.resolve(reply([0,1,2,3]));
+  })).dispatch?.phase,'integrate');
+  assertEquals(requests,1);
+  for(const invalid of [[0,0],[4],[-1],[.5]]) {
+    await assertRejects(()=>advanceOwnedPlanning(owner,connection,()=>Promise.resolve(reply(invalid))),EnergyPlanningError,'Invalid owned planning dispatch');
+  }
+});
+
+Deno.test("owned exchange shares its hosted call allowance across fan-out and barriers", async () => {
+  const { advanceOwnedPlanning, OWNED_WORKER_CALLS_PER_EXCHANGE } = await import('./rules-planning-client.ts');
+  let calls=0,replicaCalls=0;
+  const result=await advanceOwnedPlanning({home_id:'synthetic',job_id:'synthetic',fence:1},connection,(_url,init)=>{
+    calls++;if(JSON.parse(String(init?.body)).action.kind==='replica')replicaCalls++;
+    return Promise.resolve(Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:connection.requestId,stage:'owned',
+      dispatch:{phase:'integrate',cursor:8,target:1024,round:1,replicas:[0,1,2,3]}}));
+  });
+  assertEquals(result.dispatch?.phase,'integrate');
+  assertEquals(replicaCalls%4,0);assertEquals(calls,21);assertEquals(calls<=OWNED_WORKER_CALLS_PER_EXCHANGE,true);
+  assertEquals(OWNED_WORKER_CALLS_PER_EXCHANGE<30,true);
+});
+Deno.test("hosted fetch RateLimitError retains retryAfterMs without an HTTP response", async () => {
+  const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
+  const limited=Object.assign(new Error('Synthetic provider limit'),{name:'RateLimitError',retryAfterMs:43_210});
+  const error=await assertRejects(()=>advanceOwnedPlanning({home_id:'synthetic',job_id:'synthetic',fence:1},connection,
+    ()=>Promise.reject(limited)),EnergyPlanningError);
+  assertEquals(error.disposition,'retry');assertEquals(error.retryAfterMs,43_210);assertEquals(error.code,'planning_worker_rate_limited');
 });

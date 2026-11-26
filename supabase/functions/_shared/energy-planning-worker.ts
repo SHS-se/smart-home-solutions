@@ -1,3 +1,5 @@
+import { advanceOwnedPlanningWorker } from "./owned-planning-worker.ts";
+import type { OwnedPlanningOwner, OwnedPlanningAction } from "./owned-planning-contract.ts";
 import { classifyPlanningFailure, PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { assembleRulesPlan, solveRulesPlan, type PreparedRulesInput, type SolvedRulesInput } from "./rules-planner.ts";
 import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
@@ -7,9 +9,11 @@ import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 import { PlanningTrace } from "./planning-trace.ts";
 
+import type { ModelDatabase } from "./device-model-store.ts";
+
 import { MAX_PLANNING_BODY_BYTES } from "./planning-transport-limits.ts";
 /** Internal endpoint: each explicit stage receives a fresh hosted CPU budget. */
-export async function handleEnergyPlanningStep(request: Request, planningSecret: string): Promise<Response> {
+export async function handleEnergyPlanningStep(request: Request, planningSecret: string, captureDatabase?: () => ModelDatabase): Promise<Response> {
   const requestId = request.headers.get("x-request-id");
   const json = (body: object, status = 200) => Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:requestId,...body},{status});
   if (request.method !== "POST") return json({error:"method_not_allowed"},405);
@@ -23,13 +27,23 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
     read();
     if (new TextEncoder().encode(raw).byteLength > MAX_PLANNING_BODY_BYTES) return json({error:"request_too_large"},413);
     const body = trace.run("request_parse", () => {
-      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput;room_progress?:RoomPreparationProgress} | {stage:"solve";input:PreparedRulesInput} | {stage:"assemble";input:SolvedRulesInput}); }
+      try { return JSON.parse(raw) as {protocol:number} & ({stage:"owned";owner:OwnedPlanningOwner;action:OwnedPlanningAction} | {stage:"prepare";input:CapturedRulesInput;room_progress?:RoomPreparationProgress} | {stage:"solve";input:PreparedRulesInput} | {stage:"assemble";input:SolvedRulesInput}); }
       catch (error) { if (error instanceof SyntaxError) throw new PlanningInputError(error.message); throw error; }
     });
     if (!body || typeof body !== "object") throw new PlanningInputError("Planning request must be an object");
     if (body.protocol !== RULES_PLANNING_PROTOCOL) return json({error:"planning_protocol_mismatch"},409);
-    if (body.stage !== "prepare" && body.stage !== "solve" && body.stage !== "assemble") {
+    if (body.stage !== "owned" && body.stage !== "prepare" && body.stage !== "solve" && body.stage !== "assemble") {
       return json({error:"planning_stage_required"},400);
+    }
+    if (body.stage === "owned") {
+      const owner = body.owner, action = body.action;
+      if (!owner || ![owner.job_id, owner.home_id].every(value => typeof value === "string" && value.length > 0) ||
+        !Number.isSafeInteger(owner.fence) || owner.fence < 1 || !action ||
+        !(action.kind === "advance" || action.kind === "replica" && Number.isInteger(action.replica) && action.replica >= 0 && action.replica < 4)) {
+        throw new PlanningInputError("Owned planning requires its fenced owner and action");
+      }
+      if (!captureDatabase) throw new PlanningError("Planning source worker is not configured", "planner_not_configured", 503, "retry");
+      return json({stage:"owned", ...await advanceOwnedPlanningWorker(captureDatabase(), owner, action, trace)});
     }
     const model = body.stage === "assemble" ? body.input?.input : body.input;
     const slots = body.stage === "prepare" ? body.input?.snapshot?.slots

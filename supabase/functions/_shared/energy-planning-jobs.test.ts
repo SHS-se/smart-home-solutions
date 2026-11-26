@@ -1,10 +1,10 @@
+import { executeRulesPlanning } from "./rules-planning-execution.ts";
 import { assertEquals, assertRejects, assert } from "jsr:@std/assert@1";
 import { createClient } from "npm:@supabase/supabase-js@2.90.1";
 import { PlanningJobs, PlanningJobError, planningCompletionBasis, type PlanningReceipt } from "./energy-planning-jobs.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
-import { executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput, rulesFixturePlan } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
@@ -14,7 +14,7 @@ const jobId = "11111111-1111-4111-8111-111111111111";
 const snapshot = dispatchedEvSnapshot();
 snapshot.captured_at = snapshot.slots[0].start;
 snapshot.slots = snapshot.slots.slice(0, 8).map(s => ({ ...s, pv_forecast_w: 0 }));
-snapshot.comfort = {ev:{target_km:300}};
+
 const input = captureRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {
   shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
   shadow_import_sek_per_kwh: snapshot.slots.map(() => 1.5),
@@ -36,7 +36,7 @@ Deno.test("only the exact TEST server origin completes on publication", () => {
   }
 });
 
-function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; retried?: boolean; planningInput?: typeof input; now?: () => number } = {}) {
+function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; retried?: boolean; planningInput?: typeof input; connectedState?: unknown; now?: () => number } = {}) {
   const job = options.planningInput ?? input;
   let fence = 0;
   let owned = options.claimed ?? false;
@@ -62,9 +62,21 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
         return Response.json({ id: jobId, home_id: jobId, customer_id: jobId, snapshot_id: job.snapshot.snapshot_id,
           fence, protocol: options.obsolete ? 8 : RULES_PLANNING_PROTOCOL });
       }
+      if (name === "load_energy_planning_metadata") return Response.json({ connected: Boolean(job.snapshot.room_network_capture || job.snapshot.room_network?.nodes.length),
+        horizon_end: new Date(Date.parse(job.snapshot.slots.at(-1)!.start) + job.snapshot.slot_minutes * 60_000).toISOString(), context });
       if (name === "load_energy_planning_attempt") {
         assertEquals(body.p_fence, fence);
         return Response.json({ input: job, context });
+      }
+      if (name === "load_energy_planning_room_capture") return Response.json({ cursor: 42, state: options.connectedState });
+      if (name === "load_energy_planning_execution") {
+        const checkpoints = calls.filter(call => call.name === "checkpoint_energy_planning_execution");
+        const last = checkpoints.at(-1)?.body;
+        return Response.json({ cursor: checkpoints.length, input: last?.p_input ?? null, state: last?.p_state ?? null });
+      }
+      if (name === "checkpoint_energy_planning_execution") {
+        owned = false;
+        return Response.json(receipt);
       }
       if (name === "publish_energy_planning_job") {
         assertEquals(body.fence, fence);
@@ -98,7 +110,7 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
       return Response.json([]);
     } },
   });
-  return { jobs: new PlanningJobs(db, options.now ?? (() => Date.parse(job.snapshot.captured_at))), calls, publication: () => publication };
+  return { db, jobs: new PlanningJobs(db, options.now ?? (() => Date.parse(job.snapshot.captured_at))), calls, publication: () => publication };
 }
 const realWorker: typeof fetch = (url, init) => handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
 
@@ -334,3 +346,6 @@ Deno.test("a retried job's error never travels into its later receipt", async ()
   assert(published?.state === "published");
   assert(!("last_error" in published) && !("retry_after_ms" in published));
 });
+
+// The connected publication/download regression lives in tests/energy-planning-jobs.test.ts
+// so the actual owned worker exercises real SQL fences and catalog storage.

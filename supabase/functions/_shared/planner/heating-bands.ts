@@ -1,3 +1,4 @@
+import { readConnectedRoomResponse, type ConnectedRoomResponse } from "./models/room/connected-exchange.ts";
 import { hasRoomRunSupport } from "./models/room/run-evidence.ts";
 import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import { readThermalModel } from "./models/room/read-model.ts";
@@ -53,7 +54,8 @@ export interface RoomHeatingBands {
 }
 
 export interface RoomHeatingReference {
-  model: ThermalZoneModel;
+  model: ThermalZoneModel | null;
+  connected_exchange?: ConnectedRoomResponse;
   training_from?: string;
   training_to?: string;
   warnings?: string[];
@@ -167,7 +169,9 @@ export function readRoomHeatingBands(value: unknown): RoomHeatingBands | undefin
     !Array.isArray(library.active) || !Array.isArray(library.candidates) || !library.attempted ||
     typeof library.attempted !== "object") return;
   const model = readThermalModel(library.reference?.model);
-  const reference = model ? { ...library.reference, model } : undefined;
+  const connected = readConnectedRoomResponse(library.reference?.connected_exchange);
+  const reference = model || connected && connected.thermal.heater === null
+    ? { ...library.reference, model, ...(connected ? { connected_exchange: connected } : {}) } : undefined;
   const attempt = library.general_attempt;
   let general_attempt: RoomHeatingBands["general_attempt"];
   if (attempt && typeof attempt.implementation === "string" &&

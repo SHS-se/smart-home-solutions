@@ -58,3 +58,24 @@ Deno.test("chronological numerical captures preserve fractional seams without me
   const empty = await encodeRoomResponseFitCapture([], from);
   assertEquals(await decodeRoomResponseFitCapture(empty.base64, from, empty.sha256), []);
 });
+
+Deno.test("connected numeric capture keeps named peer zero, unknown, absent and prefix-qualified observations distinct", async () => {
+  // Synthetic native room means, including a legitimate zero Celsius reading.
+  const rows: RoomMeanQuarter[] = [basic, { ...basic, start_ms: start + 900_000, peer_c: {} },
+    { ...basic, start_ms: start + 1_800_000, peer_c: { north: 0, south: null } },
+    { ...basic, start_ms: start + 2_700_000, peer_c: { south: 21.125, north: -0 } }];
+  const encoded = await encodeRoomResponseFitCapture(rows, from);
+  assertEquals(await decodeRoomResponseFitCapture(encoded.base64, from, encoded.sha256), rows);
+  const reordered = rows.map(row => row.peer_c ? { ...row, peer_c: Object.fromEntries(Object.entries(row.peer_c).reverse()) } : row);
+  assertEquals(await encodeRoomResponseFitCapture(reordered, from), encoded);
+  await assertRejects(() => encodeRoomResponseFitCapture([{ ...basic, peer_c: { north: Infinity } }], from), Error, "peer measurement");
+});
+
+Deno.test("response captures continue beyond a fitted history horizon without discarding native rows", async () => {
+  // Independently generated 401-day means plus a late capture many years later.
+  const rows = Array.from({ length: 401 * 96 }, (_, i) => ({ ...basic, start_ms: start + i * 900_000 }));
+  rows.push({ ...basic, start_ms: start + 1000 * 86400_000 });
+  const encoded = await encodeRoomResponseFitCapture(rows, from);
+  assertEquals(await decodeRoomResponseFitCapture(encoded.base64, from, encoded.sha256), rows);
+  await assertRejects(() => encodeRoomBandFitCapture(rows, from), Error, "history window");
+});

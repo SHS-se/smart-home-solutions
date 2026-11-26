@@ -12,7 +12,9 @@ const DIRECTORIES = [
   { dir: "supabase/functions/_shared/device-learning/room/", match: () => true },
   { dir: "supabase/functions/_shared/device-model-learning/", match: (name: string) => name.startsWith("room") },
 ];
-const FILES = ["supabase/functions/_shared/planner/models/room/measured-evidence.ts"];
+const FILES = ["supabase/functions/_shared/planner/models/room/measured-evidence.ts",
+  "supabase/functions/_shared/planner/models/room/connected-exchange.ts",
+  "supabase/functions/_shared/planner/models/room/observation.ts"];
 const excluded = (name: string) => !name.endsWith(".ts") || /\.(test|fixture|experiment)\.ts$/.test(name);
 
 export async function roomLearnerSources(): Promise<string[]> {

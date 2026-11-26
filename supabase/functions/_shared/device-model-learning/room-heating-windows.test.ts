@@ -284,6 +284,7 @@ Deno.test("an unidentifiable chronological capture retains its accepted referenc
   const library = model.heating_bands as RoomHeatingBands;
   assertEquals(library.reference_revision, "accepted");
   assertEquals(library.reference, accepted.heating_bands.reference);
+  assert(library.reference?.model);
   assertEquals(Object.hasOwn(library.reference!.model, "solar_mean_w_per_m2"), false);
   assertEquals(library.reference?.learning_evidence, { source_evidence: prior });
   assertEquals(library.shared_attempt?.evidence, metadata.evidence);

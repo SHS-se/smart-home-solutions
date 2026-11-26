@@ -26,7 +26,7 @@ import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timel
 import type { PlanModel } from './usePlanModel';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
-import { replayDescription, replayHistory, replayPlanSelection } from '@/lib/energy-shift/plan-replay';
+import { replayDescription, replayExecution, replayHistory, replayPlanSelection } from '@/lib/energy-shift/plan-replay';
 import { downloadJson } from '@/lib/download-json';
 
 const PlanReplayDownload: React.FC<{
@@ -77,38 +77,24 @@ const PlanReplayDownload: React.FC<{
     if (!model.current.home_id || !model.current.generation_request_id || !canReplay) return;
     setReplayLoading(true);
     try {
-      // Snapshot is deliberately lazy: it and the plan are the two large JSON
-      // values, and the workspace otherwise polls every 30 seconds.
+      // Full inputs stay lazy and are pinned to the selected published run,
+      // even if the current plan is replaced while this request is in flight.
       const { data, error } = await supabase
-        .from('energy_optimisation_current')
-        .select('snapshot, input_hash, plan_id')
-        .eq('home_id', model.current.home_id)
-        .eq('plan_id', model.plan.plan_id)
-        .eq('generation_request_id', model.current.generation_request_id)
-        .maybeSingle();
-      if (error || !data?.snapshot) {
+        .rpc('get_energy_planning_replay', {
+          p_home_id: model.current.home_id,
+          p_plan_id: model.plan.plan_id,
+        });
+      if (error || !data) {
         throw new Error(error?.message ?? t(
-          'Planen ersattes innan replaydata kunde hämtas.',
-          'The plan was replaced before its replay data could be fetched.',
+          'Planens arkiverade indata är inte tillgängliga.',
+          'The plan’s archived inputs are unavailable.',
         ));
       }
       const capturedPlan = model.current.plan;
       const bundle = {
         format: 'shs-energy-optimisation-quarter-replay',
-        schema_version: 2,
-        entrypoint: {
-          module: 'supabase/functions/_shared/run-rules-planner.ts',
-          export: 'runRulesPlanner',
-          argument_order: ['input'],
-          invocation: 'runRulesPlanner(arguments).plan',
-          arguments: {
-            snapshot: data.snapshot,
-            now: capturedPlan.issued_at,
-            price_archive: [],
-            resolved_price_outlook: capturedPlan.price_outlook,
-          },
-        },
-        input_hash: data.input_hash,
+        schema_version: 3,
+        ...replayExecution(data),
         generation_request_id: model.current.generation_request_id,
         ...replayPlanSelection(capturedPlan, model.active.key, slot.start),
         history: replayHistory(timeline, range, homeTimeZone, selectedStart),

@@ -304,6 +304,8 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  room_network?: import("./models/room/network.ts").ConnectedRoomPlanningNetwork;
+  room_network_capture?: import("./models/room/network.ts").ConnectedRoomPendingCapture;
   /** Server-derived weekday usage estimate frozen at planning admission. */
   ev_weekday_usage?: import("./ev-usage.ts").EvWeekdayUsage | null;
   /** Unresolved execution evidence, independent of snapshot capture and plan IDs. */

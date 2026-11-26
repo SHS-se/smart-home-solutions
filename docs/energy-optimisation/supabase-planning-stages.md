@@ -101,6 +101,199 @@ household problem. A separate request runs the native search, and a final
 request refines and assembles that selection for publication.
 
 The caller checks the snapshot identity and requires the room cursor to advance
-by one on each response. All stages share a 25-second exchange deadline.
+by one during proposals. At the final connected-network barrier the room cursor
+can remain fixed while the opaque native work cursor advances. Each remote
+exchange has a 25-second deadline.
 Partial preparation results stay inside the planning attempt. A failed attempt
 can retry from the captured input while the accepted plan stays active.
+
+## Connected-room state capture (26 November 2026)
+
+Hosted room capture freezes the accepted receiving-room models, the app-owned
+connection map identity and the current observations in the admitted planning
+input. It defers connected-state inference to scratch owned by that same durable
+planning job. This preparation finishes before native room scheduling starts;
+it does not create a separate actor or a second learning-job kind. Existing
+accepted instructions remain active while preparation advances.
+
+Each receipt poll claims the existing home/job lease and drains compact owned
+worker actions within the existing 25-second exchange deadline. The authenticated
+request contains only job/home/fence and an action; ingestion reads persisted
+metadata and imports no inference or fitting kernels. The worker loads and
+checkpoints one bounded stage directly. Source completion freezes execution
+arguments before native preparation. No source snapshot or posterior population
+is returned through ingestion on each action. The source actions are:
+
+1. Freeze valid source blocks from the fitted archive or a prior capture inside
+   PostgreSQL. Source policy, graph, binding and correction clocks must match.
+   Only missing or dirty extents require a bounded native history read. Existing
+   blocks remain immutable for this attempt. The scope runs from the accepted
+   model's `basis.history_from` to the frozen planning clock; it has no arbitrary
+   recent-history window.
+2. Decode and independently qualify the receiving room's complete population.
+   Receiver and named peers retain physical source identity and dated assignments.
+   Later reporting evidence may reclassify an earlier freeze, even if no old raw
+   row changed. Unknown values and native interval boundaries remain explicit.
+3. Verify a reusable inference prefix by its exact qualified numeric bytes. The
+   accepted fit contains a trained process belief and prefix proof. Later global
+   checkpoints retain each ten-day prefix and the latest prefix; a correction
+   selects the latest earlier matching checkpoint, or starts from the proper
+   prior when none matches. Raw dirt alone never certifies numerical reuse.
+4. Advance the accepted learner's per-edge regime belief while holding the
+   thermal body, heater and noise parameters fixed. Each particle carries the
+   correlated receiving temperature, stored heater heat, incoming log rates and
+   unknown regime centers. An edge reset redraws only that edge; the other
+   edges' learned state and covariance remain intact. Four independent numerical
+   replicas initially contain 256 conceptual particles each. Local continuation
+   and reset proposals update each replica's marginal log evidence; that evidence
+   weights replicas together. Resampling occurs at effective sample size below
+   half the replica population. Exact duplicate states share storage and retain
+   their multiplicity. There is no parameter jitter, process floor or recency
+   window. Initial edge tags, reset priors, initial hazard prior, random state
+   and likelihood weights persist with the belief, including across correction
+   replay. Native observation updates are canonical across request partitions.
+   Cached beliefs stop at the received prefix; propagation over a late tail,
+   including possible resets, is a separate copy, so newly arriving observations
+   are not skipped on the next capture.
+5. Assemble receiving nodes and check dependencies once after all nodes finish.
+   Native proposals and joint trajectory replay then advance under their own
+   monotone work cursor in the same planning job. The room index can stay at the
+   final proposal barrier while trajectory work advances. Completed trajectory
+   counts resolve once; seed, algorithm, model and source inputs stay immutable.
+
+Inference approximates reset timing at the start of each native observation
+interval. The finite particle population and conditional Gaussian state updates
+are numerical approximations, not an exact Bayesian posterior. Replica effective
+sample size, marginal log evidence, conceptual and distinct particle counts, and
+numerical failures are retained as diagnostics. A zero edge can acquire a reset
+prior only from eligible historical contrast and an identified receiving-rate
+scale; topology alone never creates credited heat. Without that scale the edge
+stays present with an unresolved-scale diagnostic until body learning supplies it.
+
+Native forecasting replays the connected network jointly under common numerical
+paths for competing commands. Conditional no-reset and reset strata represent
+rare changes without relying on accidental event hits. The resulting expected
+electrical demand enters the existing household capacity policy; the rate mean
+alone does not form the final energy ledger. The completed capture freezes the
+algorithm, accuracy policy, seed, artifact/runtime identity, outer trajectory
+counts, replica counts and actual replayed-path count for exact downloaded replay.
+
+The owned runtime advances through capture, ordered preparation, catalog,
+integration, qualification, solve, assembly and ready stages. Native code compiles
+probability headers and selects hypothesis indexes. Exact UTF-8 hypothesis records
+are stored in independently compressed, approximately 64 KiB pages with explicit
+byte offsets; an oversized record gets its own page. Selected reads decompress
+only their pages, without pruning hypotheses or rebuilding probability weights
+in SQL. Immutable network/context and opaque numerical checkpoints travel as gzip
+payloads between the database and worker.
+
+Only integration fans out: at most four forecast replicas run in parallel, and
+the caller awaits each wave. These are distinct from the inference replicas.
+An exchange shares a 24-call allowance across every worker stage and replica,
+reserving six calls for upstream hops within Supabase's
+[30-call per-trace limit](https://supabase.com/docs/guides/functions/recursive-functions).
+A complete wave and its barrier must fit before launch. Exhausting the allowance
+returns pending; the next external receipt continues the same numerical job.
+The runtime also handles a thrown `RateLimitError` and persists its `retryAfterMs`
+alongside the existing retry backoff. Trace propagation is not stripped or reset.
+Each subordinate writer holds its own lease and cursor under the active parent
+fence. Shared home/current/job authority locks avoid serializing sibling work;
+no lock spans computation or HTTP. A late child after parent release or takeover
+cannot checkpoint. The balanced barrier merges completed replicas in index order,
+then applies the unchanged accuracy test. Unresolved integration increases the
+balanced target. Deterministic physics evaluates one path and records zero counts
+for the other replicas. There is no trajectory cap or whole-job timeout.
+
+The parent loads the completed execution input and result once for atomic
+publication. Publication, supersession and terminal failure delete compiled
+catalog and replica scratch immediately. Successful publication moves exact
+execution arguments into the existing single current-input record per home and
+removes the execution scratch after validation. Historical run summaries do not
+acquire full posterior archives. Local downloaded replay uses the same indexed
+native engine, canonical merge and frozen completed trajectory counts.
+
+Process and filter work have a cooperative 600 ms allowance. Inference can stop
+between conceptual particles within a native row, retaining local proposals,
+integer child references, replica progress and random state in attempt scratch.
+Only a completed row can become a reusable source-prefix belief. Tail prediction
+uses a separate bounded worker action and is never written to that evidence cache.
+The numeric loader
+sends bounded row slices for process inference, metadata for prefix verification,
+and complete rows only where qualification or a bounded initial-state estimate
+needs them. Completed nodes are omitted from intermediate numerical payloads and
+retained by the database. Consecutive prefix completions may use the same request's
+remaining allowance; every checkpoint and native stage retains home, lease, fence
+and cursor checks. This is bounded work in the existing receipt-poll path, not a
+new actor or an unbounded loop within one Edge invocation.
+
+Ordinary late observations and corrections repair the next capture automatically.
+The same body model remains usable; corrected source evidence does not wait for a
+daily thermal refit. A source-assignment or graph change fails its source fence.
+Numeric scratch carries the learner digest, explicit capture/execution protocol
+revision, native artifact identity where applicable, and V8 runtime. Incompatible
+scratch restarts within the admitted attempt or uses the existing planner-upgrade
+recapture path while accepted controls remain active. Incompatible orchestration
+or assembly changes must bump their explicit protocol independently of model
+fitting; UI edits do not force a thermal refit.
+Recognized compressed-artifact or catalog-directory corruption resets only the
+fenced derived runtime and rebuilds it from immutable admission/source state.
+A stale repair cannot delete a newer cursor, identity or owner. Numerical/model
+errors are not reclassified as storage corruption.
+
+Missing or late quarters are ordinary inputs. They remain unknown, are estimated
+conservatively by the room model, and never become measured zero heat or a
+persisted sensor value. An unreadable or malformed receiving model/source is
+isolated to that room with diagnostics; accepted comfort instructions and
+empirical electrical demand remain available. An observed-only room, or a room
+whose installed heater has no identified gain, can participate as a passive
+thermal node without gaining actuator authority.
+
+The handler CPU gate exercises cold staged source, qualification, process,
+filter and assembly calls using synthetic history, including checkpoint
+serialization. Its existing budgets remain unchanged. Local scaled measurements
+are a regression check, not proof that every hosted request fits Supabase's
+strict two-second CPU limit; qualification population size and checkpoint
+transport remain explicit scaling costs.
+
+Completed execution arguments are stored atomically with their published run
+in `private.energy_planning_current_input`. They contain the final derived network,
+process parameters and posterior actually sent to native planning, plus the
+planner/runtime identity and snapshot hash. The admitted descriptor remains
+immutable. Exactly one completed input per home survives planning-job cleanup;
+publication replaces it with the new plan ID. Historical runs remain summary-only.
+The current input can be read through a service-only, home-scoped RPC. The portal's lazy replay download uses a
+separate customer-authorized RPC pinned to the selected run, rather than
+reconstructing arguments from the current snapshot. Its version-3 bundle names
+`executeRulesPlanning`, preserves all captured arguments and planner/runtime
+identities, and needs no current observations or fitted models to replay.
+
+Per-request CPU is only one acceptance measure. Complete cold and subsequent
+captures must also be measured for receipt count, total elapsed work and payload
+volume on a long native history. Initial full-history optimization on every plan
+was rejected by that measurement; accepted-fit beliefs, exact prefix reuse and
+bounded numeric transport remove that repeated work. Hosted SQL/network latency
+and receipt pacing still add to local benchmark time.
+
+The current four-replica regime estimator was also measured on an independent
+400-day, one-receiver/one-peer synthetic history (38,400 native quarters), with
+256 conceptual particles per replica. Cold inference used 837 bounded numerical
+calls and 501.8 seconds of local work. Appending four days (384 quarters) to that
+trained belief took 4.0–6.2 seconds across stable, abrupt, gradual and frequently
+varying histories. These are estimator measurements without database transport
+or receipt pacing, not end-to-end plan latency. They confirm that a stable long
+prefix need not be replayed to adapt; cold repair remains substantial work and
+accepted controls must continue while it runs. The source-capture and complete
+joint-forecast measurements must report their separate receipt and payload costs.
+
+A separate synthetic 15-node, 72-hour forecast exercised the production owned
+client and worker handlers with four Deno worker isolates, the 24-call exchange
+allowance and one-second receipt pacing. It completed 2,048 outer trajectories
+(4,096 conditional reset branches) in 64 receipts and 225.5 seconds locally,
+using 650.3 seconds of total process CPU. Its 1,335 worker calls transferred
+200,379 request bytes and 191,841 response bytes. Exact serialized catalog and
+checkpoint RPC payloads totaled 655.3 MB read and 391.5 MB written. This test used
+a fetch adapter and in-memory RPC storage, so those figures measure computation,
+serialization and call volume; they exclude real network and PostgreSQL latency.
+Separate SQL integration tests verify fencing, publication and downloaded replay.
+Neither measurement replaces the unchanged per-request CPU gate or hosted
+qualification.

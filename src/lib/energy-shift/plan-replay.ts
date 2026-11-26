@@ -1,5 +1,34 @@
 import type { TimelineRange, TimelineRow } from './energy-timeline';
 import type { PlanKey, PortalOptimisationPlan } from './contracts';
+import type { CapturedRulesInput } from '../../../supabase/functions/_shared/rules-planning-capture';
+
+/** The archive already contains the exact completed arguments; never rebuild them from current settings. */
+export function replayExecution(archive: unknown) {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!record(archive) || !record(archive.input) || !record(archive.input.snapshot) ||
+    typeof archive.planner_version !== 'string' || !archive.planner_version ||
+    archive.input.model_version !== archive.planner_version ||
+    typeof archive.runtime_version !== 'string' || !archive.runtime_version ||
+    typeof archive.snapshot_hash !== 'string' || !archive.snapshot_hash ||
+    'room_network_capture' in archive.input.snapshot ||
+    !record(archive.input.approved_policy) || !('reference' in archive.input) ||
+    typeof archive.input.now !== 'string') {
+    throw new Error('The plan has no complete archived execution input');
+  }
+  return {
+    entrypoint: {
+      module: 'supabase/functions/_shared/rules-planning-execution.ts',
+      export: 'executeRulesPlanning',
+      argument_order: ['capture'],
+      invocation: 'executeRulesPlanning(arguments).plan',
+      arguments: archive.input as CapturedRulesInput,
+    },
+    input_hash: archive.snapshot_hash,
+    planner_version: archive.planner_version,
+    runtime_version: archive.runtime_version,
+  };
+}
 
 /** Preserve the complete solve and bookmark the selected chart scenario. */
 export function replayPlanSelection(
