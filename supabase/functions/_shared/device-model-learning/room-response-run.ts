@@ -46,7 +46,7 @@ export async function runRoomLearning(db: ModelDatabase, claim: RoomLearningClai
   const models = await captureDeviceModels(db, claim.home_id);
   const previous = models.rooms.find(model => model.room_key === claim.owner_key);
   const revision = previous?.model_revision ?? 0;
-  const captured = models.roomHeating?.[claim.owner_key];
+  const captured = models.roomHeating?.[claim.owner_key] ?? models.roomObserved?.[claim.owner_key];
   const location = claim.input.location ?? null;
   if (!captured) {
     const model = await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, location, clock);

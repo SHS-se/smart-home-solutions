@@ -16,13 +16,13 @@ function jsonb<T>(value: T): T {
   return JSON.parse(JSON.stringify(normalize(value)));
 }
 
-function fixture(operationBasis?: "customer_assertion" | "source_capability") {
+function fixture(operationBasis?: "customer_assertion" | "source_capability", observedOnly = false) {
   const source = syntheticRoomPlant([3600], 240).rows;
-  const rows = source.map(row => ({ room_key: "room", room_name: "Synthetic room", active_power_w: 500,
+  const rows = source.map(row => ({ room_key: "room", room_name: "Synthetic room", active_power_w: observedOnly ? null : 500,
     start_ts: new Date(row.start_ms).toISOString(), duration_s: row.duration_s,
     room_temperature_c: row.room_c,
     outdoor_temperature_c: row.outdoor_c, house_temperature_c: row.house_c,
-    solar_w_per_m2: row.solar_w_per_m2, heat_w: row.heat_w, cooling: row.cooling }));
+    solar_w_per_m2: row.solar_w_per_m2, heat_w: observedOnly ? null : row.heat_w, cooling: observedOnly ? null : row.cooling }));
   const now = source.at(-1)!.start_ms + 3_600_000;
   let wallNow = now;
   let historyTo: string | null = new Date(now).toISOString();
@@ -64,14 +64,19 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
           break;
         }
         case "capture_energy_device_models": data = { rooms: model ? [jsonb(model)] : [], devices: [], pool: null,
-          room_heating: { room: context } }; break;
+          room_heating: observedOnly ? {} : { room: context }, room_observed: observedOnly ? { room: context } : {} }; break;
         case "get_energy_room_heating_context": data = context; break;
         case "save_energy_room_evidence_block":
           assertEquals(args.p_fence, fence);
           assertEquals(args.p_revision, model?.model_revision ?? 0);
           return await archive.rpc(name, args);
         case "get_energy_room_operation_facts": data = capturedFacts; break;
-        case "get_energy_room_evidence_work": case "load_energy_room_evidence_blocks": case "get_energy_room_thermal_interval_capture":
+        case "get_energy_room_evidence_work": {
+          const result = await archive.rpc(name, args);
+          if (observedOnly && result.data) (result.data as { connected: { observedOnly: boolean } }).connected.observedOnly = true;
+          return result;
+        }
+        case "load_energy_room_evidence_blocks": case "get_energy_room_thermal_interval_capture":
           return await archive.rpc(name, args);
         case "checkpoint_energy_room_fit": {
           // Only the immutable capture uses the single-step API now.
@@ -166,6 +171,19 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability") {
     setProgress: (value: typeof progress) => { progress = value; },
   };
 }
+
+Deno.test("an observed-only room starts native learning through the worker without a mapped heater", async () => {
+  const f = fixture(undefined, true);
+  assertEquals((await f.tick()).status, 200);
+  assertEquals(f.archive.blocks.size, 1);
+  assertEquals((await f.tick()).status, 200);
+  const envelope = f.progress?.metadata as { capture?: unknown } | undefined;
+  const capture = parseRoomSharedMetadata(envelope?.capture);
+  assert(capture);
+  assertEquals(capture.connected.observedOnly, true);
+  assertEquals(capture.ratedPowerW, null);
+  assertEquals(f.failures, []);
+});
 
 Deno.test("a missing room horizon is a retriable owner failure preserving accepted models and staged work", async () => {
   for (const staged of [false, true]) {
