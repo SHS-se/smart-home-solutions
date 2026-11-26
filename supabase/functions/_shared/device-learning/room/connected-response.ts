@@ -21,6 +21,8 @@ interface Optimizer {
 }
 export interface ConnectedFitProgress {
   version: 1; stage: "static" | "adaptive" | "validation_static" | "validation_adaptive" | "process_posterior" | "full" | "posterior" | "complete";
+  configuredContext: ConnectedFitContext;
+  trainingBasis: "chronological_prefix" | "full_capture";
   context: ConnectedFitContext; seed: Seed; optimizer: Optimizer;
   staticValues: number[] | null; adaptiveValues: number[] | null;
   validationStatic: number | null; validationAdaptive: number | null;
@@ -73,10 +75,18 @@ function positiveRegression(matrix: number[][], target: number[]): number[] | nu
   const fitted = beta.map((v, j) => v / scales[j]);
   return [...fitted, average - fitted.reduce((s, v, j) => s + v * means[j], 0)];
 }
+function solarVaries(rows: readonly RoomMeanQuarter[]): boolean {
+  let first: number | undefined;
+  for (const row of rows) if (finite(row.solar_w_per_m2)) {
+    if (first !== undefined && row.solar_w_per_m2 !== first) return true;
+    first = row.solar_w_per_m2;
+  }
+  return false;
+}
 function seedFit(rows: readonly RoomMeanQuarter[], context: ConnectedFitContext): Seed | null {
   const eligible = rows.filter(row => finite(row.room_c) && finite(row.outdoor_c) &&
     (context.observedOnly || finite(row.heat_w) && row.heat_w >= 0 && roomHeatingDirectionKnown(row)));
-  const solarPresent = eligible.some(row => finite(row.solar_w_per_m2) && row.solar_w_per_m2 !== eligible[0]?.solar_w_per_m2);
+  const solarPresent = solarVaries(eligible);
   const matrix: number[][] = [], target: number[] = [], durations: number[] = [];
   let outdoorSum = 0;
   for (let i = 0; i + 1 < rows.length; i++) {
@@ -150,13 +160,13 @@ function optimizer(values: number[], seed: Seed, context: ConnectedFitContext): 
 }
 const emptyFit = (reason: string): ConnectedRoomFit => ({ response: null, model: null, issues: [reason], learning: {
   method: "adaptive_connected_native_v1", identification: reason } });
-export function beginConnectedRoomFit(evidence: RoomResponseEvidence, context: ConnectedFitContext): ConnectedFitProgress {
-  validateConnectedRoomResponseEvidence(evidence, context);
-  const observedPeers = connectedRoomObservedPeers(evidence.trainingRows, context.peers);
+function identifyStructure(rows: readonly RoomMeanQuarter[], configured: ConnectedFitContext) {
+  let context = configured;
+  const observedPeers = connectedRoomObservedPeers(rows, context.peers);
   const unresolvedPeers = context.peers.filter(key => !observedPeers.includes(key));
   const unidentifiedPeerCombinations: string[][] = [], redundant = new Set<string>();
   const sameCenteredBoundary = (a: string, b: string | null) => {
-    const differences = evidence.trainingRows.flatMap(row => {
+    const differences = rows.flatMap(row => {
       const x = row.peer_c?.[a], y = b === null ? row.outdoor_c : row.peer_c?.[b];
       return finite(row.room_c) && finite(x) && finite(y) ? [x - y] : [];
     });
@@ -166,7 +176,7 @@ export function beginConnectedRoomFit(evidence: RoomResponseEvidence, context: C
   };
   for (let i = 0; i < observedPeers.length; i++) {
     const key = observedPeers[i];
-    const contrast = evidence.trainingRows.flatMap(row => finite(row.room_c) && finite(row.peer_c?.[key]) ? [row.peer_c![key]! - row.room_c] : []);
+    const contrast = rows.flatMap(row => finite(row.room_c) && finite(row.peer_c?.[key]) ? [row.peer_c![key]! - row.room_c] : []);
     if (contrast.length > 1 && contrast.every(x => Math.abs(x - contrast[0]) <= Number.EPSILON * 256 * Math.max(1, Math.abs(x), Math.abs(contrast[0])))) {
       redundant.add(key); unidentifiedPeerCombinations.push([key, "background"]);
     }
@@ -178,17 +188,38 @@ export function beginConnectedRoomFit(evidence: RoomResponseEvidence, context: C
     }
   }
   context = { ...context, peers: observedPeers.filter(key => !redundant.has(key)) };
-  let seed = seedFit(evidence.trainingRows, context), unidentifiedHeater = false;
+  let seed = seedFit(rows, context), unidentifiedHeater = false;
   if (!seed && !context.observedOnly) {
-    const passive = evidence.trainingRows.map(row => finite(row.heat_w) && row.heat_w === 0 && roomHeatingDirectionKnown(row)
+    const passive = rows.map(row => finite(row.heat_w) && row.heat_w === 0 && roomHeatingDirectionKnown(row)
       ? row : { ...row, outdoor_c: null });
     const fitted = seedFit(passive, { ...context, observedOnly: true });
     if (fitted) { seed = fitted; context = { ...context, observedOnly: true }; unidentifiedHeater = true; }
   }
+  return { context, seed, unresolvedPeers, unidentifiedHeater, unidentifiedPeerCombinations };
+}
+export function beginConnectedRoomFit(evidence: RoomResponseEvidence, configuredContext: ConnectedFitContext): ConnectedFitProgress {
+  validateConnectedRoomResponseEvidence(evidence, configuredContext);
+  let structure = identifyStructure(evidence.trainingRows, configuredContext);
+  let trainingBasis: ConnectedFitProgress["trainingBasis"] = evidence.trainingRows.length === evidence.fullRows.length
+    ? "full_capture" : "chronological_prefix";
+  if (trainingBasis === "chronological_prefix" && (!structure.seed || structure.unidentifiedHeater ||
+    structure.unresolvedPeers.length || structure.unidentifiedPeerCombinations.length ||
+    !structure.seed.solarPresent && solarVaries(evidence.fullRows))) {
+    const full = identifyStructure(evidence.fullRows, configuredContext);
+    if (full.seed && (!structure.seed || structure.unidentifiedHeater && !full.unidentifiedHeater ||
+      !structure.seed.solarPresent && full.seed.solarPresent ||
+      full.context.peers.some(key => !structure.context.peers.includes(key)))) {
+      // A training prefix can predate the first informative heater operation or
+      // peer contrast or varying solar input. Identify that newly observed shape from the full causal
+      // basis, without claiming its already-used tail as independent validation.
+      structure = full; trainingBasis = "full_capture";
+    }
+  }
+  const { context, seed, unresolvedPeers, unidentifiedHeater, unidentifiedPeerCombinations } = structure;
   const unavailable: Seed = { rates: context.peers.map(() => 0), outdoor: 0, gain: 0, background: 0, solar: 0,
     reference: 0, noise: 1, thermalNoise: 1, solarPresent: false, medianHours: .25, historyHours: 1, observations: 0 };
   const effective = seed ?? unavailable, values = seed ? valuesFrom(seed, context, false) : [];
-  return { version: 1, stage: seed ? "static" : "complete", context, seed: effective,
+  return { version: 1, stage: seed ? "static" : "complete", configuredContext, trainingBasis, context, seed: effective,
     optimizer: optimizer(values, effective, context), staticValues: null, adaptiveValues: null,
     validationStatic: null, validationAdaptive: null, selectedAdaptive: false, selectedWeather: false, candidateIndex: 0, candidates: [], result: seed ? null : emptyFit("unidentified_connected_response"),
     unresolvedPeers, unidentifiedHeater, unidentifiedPeerCombinations };
@@ -258,6 +289,7 @@ function finalFit(state: ConnectedFitProgress): ConnectedRoomFit {
     validation_weather_static_nll: state.candidates[2]?.validation ?? null,
     validation_weather_adaptive_nll: state.candidates[3]?.validation ?? null,
     validation_available: state.candidates.some(candidate => candidate.validation !== null),
+    training_basis: state.trainingBasis, observed_only: state.configuredContext.observedOnly,
     heater_weather_response_selected: state.selectedWeather,
     conditional_only: true, unavailable_intervals: e.unavailable, optimization_sweeps: state.optimizer.sweep,
     thermal_state_identified: e.identified,
@@ -300,10 +332,14 @@ export function advanceConnectedRoomFit(evidence: RoomResponseEvidence, previous
     }
     const validating = state.stage.startsWith("validation"), full = state.stage === "full" || state.stage === "posterior";
     const adaptive = state.stage === "adaptive" || state.stage === "validation_adaptive" || full && state.selectedAdaptive;
-    const rows = full ? evidence.fullRows : validating ? [...evidence.trainingRows, ...evidence.fullRows.slice(evidence.trainingRows.length)] : evidence.trainingRows;
+    const trainingRows = state.trainingBasis === "full_capture" ? evidence.fullRows : evidence.trainingRows;
+    const rows = full ? evidence.fullRows : validating ? [...trainingRows, ...evidence.fullRows.slice(trainingRows.length)] : trainingRows;
     const e = state.optimizer.evaluation, response = modelFrom(e.values, state.seed, state.context, adaptive);
     if (response && e.cursor < rows.length) {
-      const next = Math.min(rows.length, e.cursor + 128, validating && e.cursor < evidence.trainingRows.length ? evidence.trainingRows.length : rows.length);
+      // Only the final forward pass needs per-observation durations. Use the
+      // filter's accepted observation directly, including reinitializations.
+      const posterior = state.stage === "posterior";
+      const next = Math.min(rows.length, e.cursor + (posterior ? 1 : 128), validating && e.cursor < trainingRows.length ? trainingRows.length : rows.length);
       // Every competing shape is scored on the same conditional observation
       // population, including when an edge or solar coefficient meets zero.
       const chunk = rows.slice(e.cursor, next).map(row => state.context.peers.some(key => !finite(row.peer_c?.[key])) ||
@@ -312,13 +348,14 @@ export function advanceConnectedRoomFit(evidence: RoomResponseEvidence, previous
       if (state.unidentifiedHeater) response.evidence = { ...response.evidence, unidentified_heater: true };
       const result = filterConnectedRoomExchange(response, chunk, end(chunk.at(-1)!), e.posterior?.observations ? e.posterior : undefined, e.identified);
       e.posterior = result.posterior; e.identified = result.diagnostics.thermal_state_identified;
-      if (!validating || e.cursor >= evidence.trainingRows.length) {
+      if (!validating || e.cursor >= trainingRows.length) {
         e.nll += result.diagnostics.negative_log_likelihood; e.error += result.diagnostics.squared_error_c2;
         if (result.diagnostics.numerical_failures) e.nll = Number.MAX_VALUE;
         if (!Number.isFinite(e.nll)) e.nll = Number.MAX_VALUE;
         if (!Number.isFinite(e.error)) { e.error = Number.MAX_VALUE; e.nll = Number.MAX_VALUE; }
         e.observations += result.diagnostics.observed_intervals; e.unavailable += result.diagnostics.unavailable_intervals;
-        for (const row of chunk) if (finite(row.room_c) && finite(row.outdoor_c) && state.context.peers.every(key => finite(row.peer_c?.[key]))) {
+        if (posterior && result.diagnostics.observed_intervals === 1) {
+          const row = chunk[0];
           const hours = (row.duration_s ?? 900) / 3600;
           e.observedHours += hours;
           if (finite(row.heat_w) && row.heat_w > HEATED_SAMPLE_MIN_W && roomHeatingDirectionKnown(row)) e.heatedHours += hours;
@@ -378,7 +415,9 @@ export function parseConnectedFitProgress(value: unknown): ConnectedFitProgress 
   if (!value || typeof value !== "object" || !("version" in value) || value.version !== 1 || !("stage" in value) ||
     !["static", "adaptive", "validation_static", "validation_adaptive", "process_posterior", "full", "posterior", "complete"].includes(String(value.stage))) return null;
   const p = value as ConnectedFitProgress;
-  if (!Array.isArray(p.candidates) || !Number.isSafeInteger(p.candidateIndex) || p.candidateIndex < 0 || p.candidateIndex > 4 ||
+  if (!p.configuredContext || typeof p.configuredContext.observedOnly !== "boolean" || !Array.isArray(p.configuredContext.peers) ||
+    !p.configuredContext.peers.every(k => typeof k === "string") || !["chronological_prefix", "full_capture"].includes(p.trainingBasis) ||
+    !Array.isArray(p.candidates) || !Number.isSafeInteger(p.candidateIndex) || p.candidateIndex < 0 || p.candidateIndex > 4 ||
     typeof p.selectedAdaptive !== "boolean" || typeof p.selectedWeather !== "boolean" || !p.context || !Array.isArray(p.context.peers) || !p.context.peers.every(k => typeof k === "string") || !p.seed || !p.optimizer ||
     !Array.isArray(p.optimizer.values) || !p.optimizer.values.every(finite) || !Array.isArray(p.optimizer.steps) ||
     !p.optimizer.steps.every(v => finite(v) && v >= 0) || !p.optimizer.evaluation || !Number.isSafeInteger(p.optimizer.evaluation.cursor) || p.optimizer.evaluation.cursor < 0) return null;

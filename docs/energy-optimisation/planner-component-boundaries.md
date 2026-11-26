@@ -95,10 +95,21 @@ Finite-path feasibility is a numerical replay statistic, not a universal
 physical guarantee. Existing execution safety remains authoritative.
 
 Observed passive rooms, and controlled rooms with no identified heater response,
-can supply a passive receiving equation. Their response has `heater: null` and
-no invented gain. Existing controls and empirical demand remain separate; only
+can supply a passive receiving equation. An unidentifiable gain is represented
+by `heater: null`, without inventing a gain. Existing controls and empirical demand remain separate; only
 measured heater support permits modeled preheating. Unobserved candidate sources
 are reported as unresolved evidence rather than fitted zero coefficients.
+Physical observation-only configuration is separate from a fitted passive shape.
+If the independently qualified training prefix predates identifiable heater
+operation, peer contrasts or variation in observed solar forcing, the learner
+reconsiders those terms using the full
+qualified causal basis. A newly identifiable shape is fitted on that full basis
+and explicitly reports unavailable holdout validation; its already-used tail is
+never presented as independent validation. The existing measured heating support
+requirements still apply even when a positive response can be fitted. Only
+intervals accepted by the final observation filter count toward support. The
+heater needs at least 24 such hours with known heating direction and measured
+power above 50 W.
 
 The native room search remains an ordered conditional proposal engine. After
 each proposal the full affected network is replayed from the same captured
