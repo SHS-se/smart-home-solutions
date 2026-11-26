@@ -45,3 +45,22 @@ Deno.test("passive native rows preserve unavailable peers, missing weather and n
     assertEquals((await read())[0].temperature_source_key, "b".repeat(64));
   } finally { await db.close(); }
 });
+
+Deno.test("snapshot enqueue includes linked observed rooms and preserves pending generations on repeat", async () => {
+  const db = await connectedDatabase();
+  try {
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261126194000_qualify_observed_room_enqueue.sql"));
+    const input = { location: null, learner_version: "synthetic-learner" };
+    const owners = [{ kind: "room", key: "room", input }];
+    const enqueue = async () => (await db.query<{ queued: number }>(
+      "SELECT request_energy_device_learning($1,$1,$2) AS queued", [home, JSON.stringify(owners)])).rows[0].queued;
+    const jobs = async () => (await db.query<{ owner_key: string; input: typeof input; pending: boolean; generation: number; fence: number }>(
+      "SELECT owner_key,input,pending,generation,fence FROM private.energy_learning_jobs WHERE home_id=$1 AND owner_kind='room' ORDER BY owner_key",
+      [home])).rows;
+    assertEquals(await enqueue(), 2);
+    const first = await jobs();
+    assertEquals(first.map(job => [job.owner_key, job.input, job.pending]), [["observed", input, true], ["room", input, true]]);
+    assertEquals(await enqueue(), 0);
+    assertEquals(await jobs(), first);
+  } finally { await db.close(); }
+});
