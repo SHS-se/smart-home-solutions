@@ -125,7 +125,15 @@ prefix. Derived state therefore uses the complete qualified capture, with
 bounded source, qualification and numerical stages in the existing planning
 job. It does not certify a posterior from raw timestamps alone. Completed
 execution arguments contain the derived network and posterior so replay does
-not require live observations. The immutable admission remains unchanged.
+not require live observations. When the admission already contains the completed
+network and has no source-capture descriptor, the fenced worker requests that SQL
+freeze the stored admission directly. SQL keeps its exact JSON text and verifies
+the capture phase and fences before advancing the execution cursor. The worker
+checkpoints only the resolved trajectory counts at solve. Publication selects
+that frozen input by the ready job and fence. The public current snapshot carries
+all operational fields. The private current-input archive additionally owns
+`room_network` and its numerical evidence. The public input hash identifies the
+full archived snapshot and both download paths use that archive.
 
 Heating-band learning jointly represents positive, persistent unexplained heat
 in each response family's interval-mean coordinates. This is statistical

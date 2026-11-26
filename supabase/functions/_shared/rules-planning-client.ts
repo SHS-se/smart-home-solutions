@@ -29,9 +29,9 @@ export type RemoteRulesProgress =
 
 /** Only convergence counts are resolved by preparation. Seed, model and source
  * inputs were captured already and cannot be replaced by a worker response. */
-export function completedRemoteCapture(input: CapturedRulesInput, prepared: PreparedRulesInput): CapturedRulesInput {
+export function resolvedRemoteForecastCounts(input: CapturedRulesInput, prepared: PreparedRulesInput) {
   const before = input.snapshot.room_network?.forecast, after = prepared.snapshot.room_network?.forecast;
-  if (!before || after?.trajectories === undefined) return input;
+  if (!before || after?.trajectories === undefined) return null;
   const invalid = () => new EnergyPlanningError("Planning worker changed the captured numerical identity", 502, "invalid_planning_response", "retry");
   if (before.revision !== after.revision || before.accuracy_revision !== after.accuracy_revision ||
     before.replicates !== after.replicates || before.wasm_sha256 !== after.wasm_sha256 || before.runtime !== after.runtime ||
@@ -43,11 +43,16 @@ export function completedRemoteCapture(input: CapturedRulesInput, prepared: Prep
     after.replicate_trajectories.reduce((sum, n) => sum + n, 0) !== after.trajectories) throw invalid();
   if (before.trajectories !== undefined) {
     if (before.trajectories !== after.trajectories || before.replayed_paths !== after.replayed_paths || JSON.stringify(before.replicate_trajectories) !== JSON.stringify(after.replicate_trajectories)) throw invalid();
-    return input;
+    return null;
   }
+  return { trajectories: after.trajectories, replayed_paths: after.replayed_paths!, replicate_trajectories: [...after.replicate_trajectories] };
+}
+
+export function completedRemoteCapture(input: CapturedRulesInput, prepared: PreparedRulesInput): CapturedRulesInput {
+  const counts = resolvedRemoteForecastCounts(input, prepared);
+  if (!counts) return input;
   const completed = structuredClone(input);
-  completed.snapshot.room_network!.forecast = { ...before, trajectories: after.trajectories,
-    replayed_paths: after.replayed_paths, replicate_trajectories: [...after.replicate_trajectories] };
+  Object.assign(completed.snapshot.room_network!.forecast, counts);
   return completed;
 }
 

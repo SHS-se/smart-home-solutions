@@ -1675,6 +1675,88 @@ Deno.test('completed source capture freezes native input before the first room a
   } finally {await db.close();}
 });
 
+Deno.test('completed admission is frozen by reference with its exact JSON text and the claimed slice fence', async () => {
+  const db = await ownershipDatabase();
+  try {
+    for (const name of ['20261126153000_archive_completed_planning_inputs','20261126153100_durable_connected_planning_execution']) {
+      await db.exec(await migration(name));
+    }
+    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid);');
+    await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
+    const proconfig = await db.query<{proname:string;proconfig:string[]}>(
+      "SELECT proname,proconfig FROM pg_proc WHERE proname IN ('load_energy_owned_planning_stage','checkpoint_energy_owned_planning_stage','publish_energy_planning_job') ORDER BY proname");
+    for (const row of proconfig.rows) assert(row.proconfig.includes('statement_timeout='+(row.proname==='publish_energy_planning_job'?'30s':'8s')));
+    const match = async (a:string,b:string,omit:string[] = []) =>
+      (await db.query<{ok:boolean}>('SELECT private.planning_json_matches($1::json,$2::json,$3::text[]) AS ok',[a,b,omit])).rows[0].ok;
+    assert(await match('{"b":2,"a":0,"a":1.00}', '{"a":1e0,"b":2}'));
+    assertEquals(await match('{"a":1,"a":2}', '{"a":1}'),false);
+    assertEquals(await match('{}','{"x":null}'),false);
+    assertEquals(await match('{}','{"x":{}}',['x','y']),false);
+    assert(await match('{"x":{}}','{"x":{"y":null}}',['x','y']));
+    const frozen = {model_version:'v',reference:null,snapshot:{snapshot_id:snapshot,room_network:{
+      nodes:[{weight:1}],forecast:{seed:[1,2],replicates:2,policy:'unchanged'}}}};
+    const counts = {trajectories:4,replayed_paths:8,replicate_trajectories:[2,2]};
+    const resolve = async (next:unknown,source:unknown=frozen) =>
+      (await db.query<{v:unknown}>('SELECT private.planning_resolve_forecast_counts($1,$2) AS v',[JSON.stringify(source),JSON.stringify(next)])).rows[0].v;
+    for (const invalid of [{...counts,extra:0},{...counts,trajectories:4.5},{...counts,replayed_paths:3},
+      {...counts,replicate_trajectories:[1,1]},{...counts,replicate_trajectories:[1.5,2.5]},{...counts,replicate_trajectories:[-1,5]}]) {
+      await assertRejects(()=>resolve(invalid),Error,'Invalid forecast counts');
+    }
+    assertEquals(await resolve(null),frozen);
+    const completed = {...frozen,snapshot:{...frozen.snapshot,room_network:{...frozen.snapshot.room_network,
+      forecast:{...frozen.snapshot.room_network.forecast,...counts}}}};
+    assertEquals(await resolve(counts),completed);
+    await assertRejects(()=>resolve(counts,completed),Error,'Invalid forecast counts');
+    const population = Array.from({length:1200},(_,i)=>({weight:i+1,peers:[1,2]}));
+    const populationText = JSON.stringify(population);
+    assert(await match(populationText,JSON.stringify(population,null,1)));
+    population[population.length-1].peers.reverse();
+    assertEquals(await match(populationText,JSON.stringify(population,null,1)),false);
+    const version = 'synthetic-version';
+    const input = `{ "snapshot": { "snapshot_id": "${snapshot}", "room_network": {"nodes":[{"value":1.2300e+2}]} }, "model_version": "${version}" }`;
+    const admission = capturedSubmission(snapshot,{model_version:version,accepted_reference_revision:0});
+    const receipt = (await db.query<{value:Receipt}>(
+      `SELECT accept_energy_planning_job((left($1,-1)||', "input" : '||$2||'}')::json) AS value`,
+      [JSON.stringify({...admission,input:undefined}),input])).rows[0].value;
+    const owner = (await attemptClaim(db,receipt.job_id))!;
+    const scope = [home,owner.id,owner.fence];
+    const load = (await db.query<{value:{input:null;use_admitted_input:boolean;model_version:string;slice_fence:number}}>(
+      'SELECT load_energy_owned_planning_stage($1,$2,$3,$4,$5) AS value',[...scope,'synthetic-revision','runtime'])).rows[0].value;
+    assertEquals(load.input,null);
+    assertEquals(load.use_admitted_input,true);
+    assertEquals(load.model_version,version);
+    const update = {phase:'prepare',use_admitted_input:true};
+    const save = async (body:unknown, homeId=home, parent=owner.fence, slice=load.slice_fence, cursor=0) =>
+      (await db.query<{value:{phase:string}|null}>('SELECT checkpoint_energy_owned_planning_stage($1,$2,$3,$4,$5,$6) AS value',
+        [homeId,owner.id,parent,cursor,slice,JSON.stringify(body)])).rows[0].value;
+    assertEquals(await save(update,other),null);
+    assertEquals(await save(update,home,owner.fence+1),null);
+    assertEquals(await save(update,home,owner.fence,load.slice_fence+1),null);
+    assertEquals(await save(update,home,owner.fence,load.slice_fence,1),null);
+    await assertRejects(()=>save({phase:'prepare',input:JSON.parse(input)}),Error,'Completed admission must use the stored planning input');
+    await assertRejects(()=>save({...update,input:JSON.parse(input)}),Error,'Invalid use of admitted planning input');
+    await assertRejects(()=>save({...update,use_admitted_input:null}),Error,'Invalid use of admitted planning input');
+    assertEquals((await save(update))?.phase,'prepare');
+    assertEquals(await save(update),null);
+    assertEquals((await db.query<{input:string}>('SELECT input::text FROM private.energy_planning_execution WHERE job_id=$1',[owner.id])).rows[0].input,input);
+    const premature = {...attemptIdentity(owner),current:{input_hash:'synthetic'},run:{},use_frozen_execution:true,runtime_version:'runtime'};
+    assertEquals(await rpc(db,'publish_energy_planning_job',premature),null);
+    await assertRejects(()=>rpc(db,'publish_energy_planning_job',{...premature,execution_input:{}}),Error,'Invalid frozen publication reference');
+    await assertRejects(()=>rpc(db,'publish_energy_planning_job',{...premature,current:{snapshot:{}}}),Error,'Invalid frozen publication reference');
+    const capture = {model_version:version,snapshot:{snapshot_id:nextManual,room_network_capture:null}};
+    const second = await rpc<Receipt>(db,'accept_energy_planning_job',{...capturedSubmission(nextManual,{model_version:version,accepted_reference_revision:0}),input:capture});
+    const secondOwner = (await attemptClaim(db,second.job_id))!;
+    const secondScope = [home,secondOwner.id,secondOwner.fence];
+    const stored = (await db.query<{v:{input:unknown;use_admitted_input:boolean;slice_fence:number}}>(
+      'SELECT load_energy_owned_planning_stage($1,$2,$3,$4,$5) AS v',[...secondScope,'synthetic-revision','runtime'])).rows[0].v;
+    assertEquals(stored.use_admitted_input,false);
+    assertEquals(stored.input,capture);
+    await assertRejects(()=>db.query('SELECT checkpoint_energy_owned_planning_stage($1,$2,$3,0,$4,$5)',
+      [...secondScope,stored.slice_fence,JSON.stringify(update)]),Error,'Invalid use of admitted planning input');
+  } finally { await db.close(); }
+});
+
 Deno.test('owned forecast pages and replica writers retain exact authority, balanced barriers and terminal cleanup', async () => {
   // Independently synthetic catalog records; no household data or fitted model.
   const db = await ownershipDatabase();
@@ -1683,6 +1765,7 @@ Deno.test('owned forecast pages and replica writers retain exact authority, bala
     await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
     await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid);');
     await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
     const original = { model_version: 'synthetic-version', reference: null, snapshot: { snapshot_id: snapshot,
       slots: [{ start: '2030-01-01T00:00:00Z' }], slot_minutes: 15, room_network_capture: { rooms: [] } } };
     const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', {
@@ -1708,6 +1791,7 @@ Deno.test('owned forecast pages and replica writers retain exact authority, bala
     assertEquals(await sql('load_energy_planning_metadata($1,$2,$3)',[other,owner.id,owner.fence]),null);
     let s = await load();
     assertEquals((await load()).busy, true, 'duplicate request cannot claim the same stage');
+    await assertRejects(()=>save(s,{phase:'prepare',use_admitted_input:true}),Error,'Invalid use of admitted planning input');
     const { room_network_capture: _pending, ...derivedSnapshot } = original.snapshot;
     const execution = { ...original, snapshot: derivedSnapshot };
     assertEquals((await save(s, { phase: 'prepare', input: execution }))?.phase, 'prepare');
@@ -1795,6 +1879,7 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint) RETURNS json LANGUAGE sql AS $$
       SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
     await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
     const connected = connectedRoomSnapshot(); connected.snapshot_id = snapshot;
     connected.operating_scope = { modes: { $battery:'controlling',$pool:'controlling',$ev:'controlling','synthetic-a':'controlling' },
       device_owners: { 'synthetic-a-heater':'synthetic-a' }, external_demands: {} };
@@ -1860,7 +1945,12 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     assertEquals(stageCheckpoints.filter(stage=>stage.pending).length,1);
     assert(!calls.includes('load_energy_planning_attempt'),'parent never loads expanded admission per poll');
     assertEquals(JSON.parse(JSON.stringify(input)),original);
-    const archived=publication!.execution_input as typeof input;
+    assertEquals(publication!.use_frozen_execution,true);
+    assertEquals(publication!.execution_input,undefined);
+    assertEquals((publication!.current as {snapshot?:unknown}).snapshot,undefined);
+    const archived=(await db.query<{input:typeof input}>('SELECT input FROM private.energy_planning_current_input WHERE job_id=$1',[accepted.job_id])).rows[0].input;
+    const {room_network:_network,room_network_capture:_capture,...operational}=archived.snapshot;
+    assertEquals((await db.query<{snapshot:unknown}>('SELECT snapshot FROM energy_optimisation_current WHERE home_id=$1',[home])).rows[0].snapshot,operational);
     assertEquals(archived.snapshot.room_network_capture,undefined);assertEquals(archived.snapshot.room_network!.nodes,nodes);
     const forecast=archived.snapshot.room_network!.forecast;
     assertEquals(forecast.seed,connected.room_network!.forecast.seed);assertEquals(forecast.runtime,Deno.version.v8);

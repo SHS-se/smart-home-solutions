@@ -245,7 +245,7 @@ export class PlanningJobs {
         home_id: job.home_id, customer_id: job.customer_id, snapshot_id: snapshot.snapshot_id,
         plan_id: generated.plan_id, input_hash: inputHash, captured_at: snapshot.captured_at,
         issued_at: generated.issued_at, valid_until: generated.valid_until, binding_until: generated.binding_until,
-        status: generated.status, model_version: generated.model_version, snapshot,
+        status: generated.status, model_version: generated.model_version, ...(metadata.connected ? {} : { snapshot }),
         plan: storedPlan(generated), battery_projection: planned.battery_projection,
         updated_at: new Date().toISOString(),
       };
@@ -269,7 +269,7 @@ export class PlanningJobs {
     }
     const assembledAt = performance.now();
     const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication,
-      execution_input: loaded.input, runtime_version: Deno.version.v8 }, homeId, job.id, generated);
+      ...(metadata.connected ? { use_frozen_execution: true } : { execution_input: loaded.input }), runtime_version: Deno.version.v8 }, homeId, job.id, generated);
     console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state, planning_trigger: loaded.context.planning_trigger,
       read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
       load_ms: Math.round(loadAt - claimAt), solve_ms: Math.round(assembledAt - loadAt),

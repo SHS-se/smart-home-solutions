@@ -6,7 +6,7 @@ import { solveRulesPlan, assembleRulesPlan, type PreparedRulesInput, type Solved
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import type { ConnectedRoomForecastContext } from "./rules-connected-room-services.ts";
-import { completedRemoteCapture } from "./rules-planning-client.ts";
+import { resolvedRemoteForecastCounts } from "./rules-planning-client.ts";
 import { encodeForecastCatalogPages } from "./room-forecast-catalog.ts";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import { connectedIntegrationAccuracy } from "./planner/models/room/ensemble-accuracy.ts";
@@ -26,6 +26,7 @@ interface Context { progress: RoomPreparationProgress; forecast: ConnectedRoomFo
 interface Stage extends OwnedPlanningResponse {
   slice_fence?: number; customer_id: string; identity: string | null;
   catalog_next: number; node_count: number; input?: CapturedRulesInput;
+  use_admitted_input?: boolean; model_version?: string;
   payload: string | null; context: string | null; header: string | null; node: string | null;
   replicas?: Array<{ replica: number; work: string }>;
 }
@@ -109,10 +110,12 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
   });
   const phase = saved.dispatch.phase;
   state.guard = { cursor: saved.dispatch.cursor, identity: saved.identity, phase };
-  if (saved.input && saved.input.model_version !== RULES_MODEL_VERSION) {
+  if ((saved.use_admitted_input && saved.model_version !== RULES_MODEL_VERSION) ||
+    (saved.input && saved.input.model_version !== RULES_MODEL_VERSION)) {
     throw new PlanningError("Captured rules planner version changed", "planner_upgraded", 409, "recapture");
   }
   if (phase === "capture") {
+    if (saved.use_admitted_input) return await checkpoint({ phase: "prepare", use_admitted_input: true, payload: null });
     const input = saved.input!;
     const captured = await advanceConnectedPlanningCapture(db, { ...owner, customer_id: saved.customer_id }, input.snapshot,
       { retainParentLease: true });
@@ -132,7 +135,7 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
           identity: nativeInput.identity, node_headers: [], captured_target: context.forecast.trajectories } satisfies Header) });
     }
     if (next.room_progress) return await checkpoint({ phase: "prepare", payload: await packOwnedPlanningValue(next.room_progress) });
-    return await checkpoint({ phase: "solve", input: completedRemoteCapture(saved.input!, next.prepared!),
+    return await checkpoint({ phase: "solve", forecast_counts: resolvedRemoteForecastCounts(saved.input!, next.prepared!),
       payload: await packOwnedPlanningValue(next.prepared) });
   }
   if (phase === "catalog") {
@@ -161,7 +164,7 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     }
     const output = planner.roomNetworkFinalize({ network: header.network, work: merged.work }, trace);
     const prepared = applyCapturedConnectedForecast(saved.input!, context.progress, context.forecast, output, merged.statistics, trace);
-    return await checkpoint({ phase: "solve", input: completedRemoteCapture(saved.input!, prepared), payload: await packOwnedPlanningValue(prepared) });
+    return await checkpoint({ phase: "solve", forecast_counts: resolvedRemoteForecastCounts(saved.input!, prepared), payload: await packOwnedPlanningValue(prepared) });
   }
   if (phase === "solve") {
     const prepared = await unpackOwnedPlanningValue<PreparedRulesInput>(saved.payload!);

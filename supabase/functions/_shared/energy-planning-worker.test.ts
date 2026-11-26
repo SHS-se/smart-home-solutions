@@ -115,8 +115,6 @@ Deno.test("pure domain input validation maps to a terminal worker response at th
 
 Deno.test("owned capture authenticates and loads its fenced immutable attempt before source work", async () => {
   const owner={home_id:"synthetic-home",job_id:"synthetic-job",fence:7};
-  const snapshot=dispatchedEvSnapshot();
-  const input={model_version:RULES_MODEL_VERSION,snapshot};
   const body={protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner,action:{kind:"advance"}};
   const dispatch={phase:"capture",cursor:0,target:64,round:0,replicas:[]};
   const calls:string[]=[];
@@ -124,7 +122,7 @@ Deno.test("owned capture authenticates and loads its fenced immutable attempt be
   const db={rpc(name:string,args:Record<string,unknown>){
     calls.push(name);
     assertEquals({home:args.p_home_id,job:args.p_job_id,fence:args.p_fence},{home:owner.home_id,job:owner.job_id,fence:7});
-    if(name==="load_energy_owned_planning_stage") return Promise.resolve({data:{dispatch,slice_fence:1,customer_id:"synthetic-customer",input},error:null});
+    if(name==="load_energy_owned_planning_stage") return Promise.resolve({data:{dispatch,slice_fence:1,customer_id:"synthetic-customer",use_admitted_input:true,model_version:RULES_MODEL_VERSION},error:null});
     assertEquals(name,"checkpoint_energy_owned_planning_stage");checkpoint=args.p_update;
     return Promise.resolve({data:{...dispatch,phase:"prepare",cursor:1},error:null});
   }};
@@ -135,7 +133,7 @@ Deno.test("owned capture authenticates and loads its fenced immutable attempt be
   const response=await handleEnergyPlanningStep(request(),"secret",()=>db);
   assertEquals(response.status,200);assertEquals((await response.json()).dispatch.phase,"prepare");
   assertEquals(calls,["load_energy_owned_planning_stage","checkpoint_energy_owned_planning_stage"]);
-  assertEquals(checkpoint,{phase:"prepare",input,payload:null},"completion is stored directly, not returned over HTTP");
+  assertEquals(checkpoint,{phase:"prepare",use_admitted_input:true,payload:null},"SQL freezes the stored input without a worker upload");
   for(const invalid of [{...body,owner:{...owner,fence:0}},{...body,action:{kind:"replica",replica:4}}]) {
     assertEquals((await handleEnergyPlanningStep(request("secret",invalid),"secret",()=>db)).status,400);
   }
