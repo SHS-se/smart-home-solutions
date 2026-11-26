@@ -110,6 +110,9 @@ verify_jwt = false
 [functions.energy-room-observations]
 verify_jwt = false
 
+[functions.energy-room-connections]
+verify_jwt = false
+
 # Internal planning stages require ENERGY_PLANNING_SECRET in the handler.
 [functions.energy-optimisation-plan-step]
 verify_jwt = false

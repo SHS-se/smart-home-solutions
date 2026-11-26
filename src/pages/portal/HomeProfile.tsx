@@ -4,8 +4,6 @@ import { Home, Info, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import HomeProfileForm from '@/components/portal/home-profile/HomeProfileForm';
-import RoomConnections from '@/components/portal/home-profile/RoomConnections';
-import { useQuery } from '@tanstack/react-query';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -18,7 +16,7 @@ interface HomeProfileProps {
 }
 
 const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, isStaffView = false, customerName }) => {
-  const { user, customerData, isStaff, loading: authLoading } = useAuth();
+  const { user, customerData, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -28,35 +26,16 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
   const [homeCount, setHomeCount] = useState(0);
   const [loadingHome, setLoadingHome] = useState(true);
 
-  const linkedHomeId = searchParams.get('home');
-  const connectionsLinked = searchParams.get('section') === 'room-connections';
-  const resolveLinkedHome = connectionsLinked && !!linkedHomeId;
-  const { data: linkedHome, isPending: loadingLinkedHome } = useQuery({
-    queryKey: ['room-profile-home-link', linkedHomeId],
-    enabled: resolveLinkedHome && !!user,
-    retry: false,
-    queryFn: async () => {
-      const { data, error } = await supabase.from('homes')
-        .select('id, customer_id').eq('id', linkedHomeId ?? '').maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-  });
-  const allowedLinkedHome = linkedHome && (!propCustomerId || propCustomerId === linkedHome.customer_id);
-  const resolvedCustomerId = resolveLinkedHome
-    ? allowedLinkedHome ? linkedHome.customer_id : undefined
-    : propCustomerId || customerData?.id;
-  const selectedHomeId = resolveLinkedHome ? (allowedLinkedHome ? linkedHome.id : null) : homeId;
-  const staffContext = isStaffView || Boolean(isStaff && connectionsLinked);
+  const resolvedCustomerId = propCustomerId || customerData?.id;
   const userId = user?.id;
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
-    if (!staffContext && !authLoading && !customerData) navigate('/portal');
-  }, [user, authLoading, customerData, navigate, staffContext]);
+    if (!isStaffView && !authLoading && !customerData) navigate('/portal');
+  }, [user, authLoading, customerData, navigate, isStaffView]);
 
   useEffect(() => {
-    if (!resolvedCustomerId || resolveLinkedHome) return;
+    if (!resolvedCustomerId) return;
     const resolveHome = async () => {
       setLoadingHome(true);
       const queryHomeId = searchParams.get('home');
@@ -108,12 +87,9 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
       setLoadingHome(false);
     };
     resolveHome();
-  }, [resolvedCustomerId, searchParams, resolveLinkedHome]);
+  }, [resolvedCustomerId, searchParams, isStaffView]);
 
-  if (resolveLinkedHome && userId && !loadingLinkedHome && !allowedLinkedHome) {
-    return <Alert><AlertDescription>{t('Hemmet kunde inte öppnas.', 'The linked home could not be opened.')}</AlertDescription></Alert>;
-  }
-  if (authLoading || (!staffContext && user && !resolvedCustomerId) || !userId || (resolveLinkedHome ? loadingLinkedHome : loadingHome)) {
+  if (authLoading || (!isStaffView && user && !resolvedCustomerId) || !userId || loadingHome) {
     return (
       <>
         <div className="flex items-center justify-center min-h-[400px]">
@@ -140,10 +116,10 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
           </div>
           <HomeSelector
             customerId={resolvedCustomerId}
-            selectedHomeId={selectedHomeId}
+            selectedHomeId={homeId}
             onHomeChange={(newId) => {
               setHomeId(newId);
-              setSearchParams(connectionsLinked ? { home: newId, section: 'room-connections' } : { home: newId });
+              setSearchParams({ home: newId });
             }}
             onHomeCountChange={setHomeCount}
           />
@@ -172,11 +148,7 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
           </Alert>
         )}
 
-        {selectedHomeId && (
-          <RoomConnections key={selectedHomeId} homeId={selectedHomeId}
-            linkedRoom={searchParams.get('room')} linked={connectionsLinked} />
-        )}
-        <HomeProfileForm customerId={resolvedCustomerId} userId={userId} isStaffView={staffContext} homeId={selectedHomeId} />
+        <HomeProfileForm customerId={resolvedCustomerId} userId={userId} isStaffView={isStaffView} homeId={homeId} />
       </div>
     </>
   );

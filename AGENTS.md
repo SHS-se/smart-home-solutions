@@ -174,6 +174,12 @@ the grid, never load carried by solar or the battery. Two rules must not take
 points from the same quarter for the same mistake. When a scoring rule involves a
 choice like these, state it with a recommendation before pushing.
 
+# Room connections
+
+Room connections are owned and edited in the SHS app. The website stores the
+app’s revision-checked replica for room learning and forecasts; it must not own
+the map or provide a competing editor.
+
 # Interface copy
 
 Do not put informational notes in banners at the top of a page. Put a note beside
