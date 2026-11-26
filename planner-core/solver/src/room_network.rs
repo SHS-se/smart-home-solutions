@@ -235,7 +235,7 @@ pub(crate) fn project_minute(
         let projection = &mut kernels.projections[j];
         project(
             &interval,
-            &thermostats,
+            thermostats,
             State {
                 temperature: state.temperatures[room.node],
                 stored_heat: state.heat[room.node],
@@ -255,9 +255,11 @@ pub(crate) fn project_minute(
     let mut mean_integral: Vec<_> = state.temperatures.iter().map(|t| t * 0.5 * dt).collect();
     let mean_correction = advance_cached(
         &input.nodes,
-        slot,
-        minute,
-        dt,
+        shs_planner_models::room_network::NetworkInterval {
+            slot,
+            step: minute,
+            hours: dt,
+        },
         &mut state.temperatures,
         &mut state.heat,
         &watts,

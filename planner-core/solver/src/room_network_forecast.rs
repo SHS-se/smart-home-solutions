@@ -7,7 +7,9 @@ use crate::room_network::{
 };
 use serde::{Deserialize, Serialize};
 use shs_planner_models::room_network::use_fast_memory_transform;
-use shs_planner_models::room_regime::{event_branch, Hazard, Process, ResetPrior, Value};
+use shs_planner_models::room_regime::{
+    event_branch, EventStrata, Hazard, Process, ResetPrior, Value,
+};
 use shs_planner_models::room_uncertainty::{covariance_root, normal, thermal_noise_root, uniform};
 use std::collections::HashMap;
 
@@ -193,6 +195,57 @@ fn deadline_flags(proposed: f64, literal: f64) -> (bool, bool) {
         literal > 1e-6 && proposed <= 1e-6,
     )
 }
+#[derive(Clone, Copy)]
+struct ShortfallEstimate {
+    mean_c: f64,
+    twice_standard_error_c: f64,
+}
+#[derive(Debug)]
+struct DeadlineCertificate {
+    new_certain: bool,
+    new_possible: bool,
+    improved_certain: bool,
+    improved_possible: bool,
+}
+/// Intersect the marginal intervals with the common-path difference interval.
+/// A new miss requires a > epsilon >= b, hence a-b > 0; an improvement requires
+/// a-b < 0. These necessary inequalities eliminate impossible rectangle corners
+/// without changing either deadline predicate. In particular, identical paired
+/// shortfalls cannot create a new miss merely because their common uncertainty
+/// straddles epsilon. These remain numerical 2SE certificates, not physical bounds.
+fn deadline_certificate(
+    proposed: ShortfallEstimate,
+    literal: ShortfallEstimate,
+    difference_twice_standard_error_c: f64,
+) -> DeadlineCertificate {
+    let corners = [
+        deadline_flags(
+            proposed.mean_c - proposed.twice_standard_error_c,
+            literal.mean_c - literal.twice_standard_error_c,
+        ),
+        deadline_flags(
+            proposed.mean_c - proposed.twice_standard_error_c,
+            literal.mean_c + literal.twice_standard_error_c,
+        ),
+        deadline_flags(
+            proposed.mean_c + proposed.twice_standard_error_c,
+            literal.mean_c - literal.twice_standard_error_c,
+        ),
+        deadline_flags(
+            proposed.mean_c + proposed.twice_standard_error_c,
+            literal.mean_c + literal.twice_standard_error_c,
+        ),
+    ];
+    let difference = proposed.mean_c - literal.mean_c;
+    DeadlineCertificate {
+        new_certain: corners.iter().all(|flags| flags.0),
+        new_possible: corners.iter().any(|flags| flags.0)
+            && difference + difference_twice_standard_error_c > 0.,
+        improved_certain: corners.iter().all(|flags| flags.1),
+        improved_possible: corners.iter().any(|flags| flags.1)
+            && difference - difference_twice_standard_error_c < 0.,
+    }
+}
 fn replicate_error(stats: &Statistics, functional: impl Fn(&[f64]) -> f64) -> f64 {
     let means: Vec<_> = stats
         .replicates
@@ -249,16 +302,21 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
             let b = stride + a;
             let ae = replicate_error(stats, |values| values[a]);
             let be = replicate_error(stats, |values| values[b]);
-            let corners = [
-                deadline_flags(means[a] - ae, means[b] - be),
-                deadline_flags(means[a] - ae, means[b] + be),
-                deadline_flags(means[a] + ae, means[b] - be),
-                deadline_flags(means[a] + ae, means[b] + be),
-            ];
-            new_certain |= corners.iter().all(|flags| flags.0);
-            new_possible |= corners.iter().any(|flags| flags.0);
-            improved_certain |= corners.iter().all(|flags| flags.1);
-            improved_possible |= corners.iter().any(|flags| flags.1);
+            let certificate = deadline_certificate(
+                ShortfallEstimate {
+                    mean_c: means[a],
+                    twice_standard_error_c: ae,
+                },
+                ShortfallEstimate {
+                    mean_c: means[b],
+                    twice_standard_error_c: be,
+                },
+                replicate_error(stats, |values| values[a] - values[b]),
+            );
+            new_certain |= certificate.new_certain;
+            new_possible |= certificate.new_possible;
+            improved_certain |= certificate.improved_certain;
+            improved_possible |= certificate.improved_possible;
         }
         let a = stride - rooms + room;
         let b = stride + a;
@@ -530,8 +588,11 @@ fn start_path(
         })
         .collect();
     let horizon = input.network.hours.iter().sum();
-    let (no_event_weight, event_weight, event) =
-        event_branch(&processes, horizon, input.seed, trajectory as u32)?;
+    let EventStrata {
+        no_event_weight,
+        event_weight,
+        event,
+    } = event_branch(&processes, horizon, input.seed, trajectory as u32)?;
     let pending = event.map(|processes| InitialTrajectory {
         incoming_nodes: incoming_nodes.clone(),
         processes,
@@ -594,6 +655,14 @@ fn apply_rates(network: &mut NetworkInput, rates: &[Vec<f64>]) {
         }
     }
 }
+struct MinuteInnovations {
+    rates: Vec<Vec<f64>>,
+    noise: Vec<f64>,
+}
+struct InnovationAdvance {
+    minute: Option<MinuteInnovations>,
+    work: usize,
+}
 fn innovations(
     input: &Input,
     path: &mut Path,
@@ -602,7 +671,7 @@ fn innovations(
     minute: usize,
     noise_cache: &mut HashMap<Vec<u64>, Vec<Vec<f64>>>,
     reset_budget: usize,
-) -> Result<(Option<(Vec<Vec<f64>>, Vec<f64>)>, usize), String> {
+) -> Result<InnovationAdvance, String> {
     let network = &input.network;
     let steps = (network.hours[slot] * 60.).ceil() as usize;
     let dt = if steps > 0 {
@@ -631,7 +700,10 @@ fn innovations(
                 )?;
                 used += spent;
                 if !complete {
-                    return Ok((None, used));
+                    return Ok(InnovationAdvance {
+                        minute: None,
+                        work: used,
+                    });
                 }
                 path.rate_cursor += 1;
             }
@@ -664,7 +736,13 @@ fn innovations(
         .iter()
         .all(|node| node.thermal_noise_c2_per_h == 0.)
     {
-        return Ok((Some((rates, vec![0.; n])), used));
+        return Ok(InnovationAdvance {
+            minute: Some(MinuteInnovations {
+                rates,
+                noise: vec![0.; n],
+            }),
+            work: used,
+        });
     }
     let mut generator = vec![0.; n * n];
     for (i, node) in network.nodes.iter().enumerate() {
@@ -708,7 +786,10 @@ fn innovations(
         .iter()
         .map(|row| row.iter().zip(&normals).map(|(a, z)| a * z).sum())
         .collect();
-    Ok((Some((rates, noise)), used))
+    Ok(InnovationAdvance {
+        minute: Some(MinuteInnovations { rates, noise }),
+        work: used,
+    })
 }
 fn finish_quarter(
     input: &mut Input,
@@ -721,7 +802,7 @@ fn finish_quarter(
 ) -> Result<(), String> {
     let (slots, rooms, nodes, stride) = dimensions(&input.network);
     let hours = input.network.hours[slot];
-    for set in 0..SETS {
+    for (set, set_commands) in sets.iter().enumerate().take(SETS) {
         if path.peaks[set] > input.network.headroom_w[slot].max(path.mandatory_peaks[set]) + 1e-6 {
             path.feasible[set] = false;
         }
@@ -732,7 +813,7 @@ fn finish_quarter(
             if q.transition.carry == 0. && temperature > q.maximum_c + 1e-9 {
                 let maximum = q.maximum_c;
                 let node = room.node;
-                let mut commands = sets[set].clone();
+                let mut commands = set_commands.clone();
                 commands[j] = mandatory[j].clone();
                 let mut state = path.starts[set].clone();
                 for minute in 0..path.quarter_rates.len() {
@@ -958,7 +1039,10 @@ fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced,
         let slot = work.slot;
         let quarter_steps = (input.network.hours[slot] * 60.).ceil() as usize;
         if quarter_steps > 0 {
-            let (prepared, reset_work) = innovations(
+            let InnovationAdvance {
+                minute: prepared,
+                work: reset_work,
+            } = innovations(
                 &input,
                 &mut path,
                 global_draw(work.replica, work.statistics.trajectories)?,
@@ -969,7 +1053,7 @@ fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced,
             )?;
             spent += reset_work;
             steps += reset_work;
-            let Some((rates, noise)) = prepared else {
+            let Some(MinuteInnovations { rates, noise }) = prepared else {
                 work.path = Some(path);
                 break;
             };
@@ -1259,7 +1343,7 @@ fn commands_for_literal(input: &crate::room_heating::Input) -> Plan {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Outcome {
-    Advanced { result: Advanced },
+    Advanced { result: Box<Advanced> },
     Failed { issue: String },
 }
 pub fn advance_json(bytes: &[u8]) -> Vec<u8> {
@@ -1267,7 +1351,9 @@ pub fn advance_json(bytes: &[u8]) -> Vec<u8> {
         .map_err(|e| format!("Invalid joint room forecast input: {e}"))
         .and_then(advance);
     serde_json::to_vec(&match result {
-        Ok(result) => Outcome::Advanced { result },
+        Ok(result) => Outcome::Advanced {
+            result: Box::new(result),
+        },
         Err(issue) => Outcome::Failed { issue },
     })
     .expect("finite joint room forecast work")
@@ -1798,4 +1884,88 @@ pub fn replica_json(bytes: &[u8]) -> Vec<u8> {
 }
 pub fn merge_json(bytes: &[u8]) -> Vec<u8> {
     api(bytes, merge)
+}
+
+#[cfg(test)]
+mod deadline_certificate_tests {
+    use super::{deadline_certificate, deadline_flags, ShortfallEstimate};
+
+    fn estimate(mean_c: f64, twice_standard_error_c: f64) -> ShortfallEstimate {
+        ShortfallEstimate {
+            mean_c,
+            twice_standard_error_c,
+        }
+    }
+
+    #[test]
+    fn identical_common_shortfall_does_not_create_deadline_changes() {
+        let shared = estimate(1e-6, 2e-6);
+        let exact_pair = deadline_certificate(shared, shared, 0.);
+        assert!(!exact_pair.new_certain && !exact_pair.new_possible);
+        assert!(!exact_pair.improved_certain && !exact_pair.improved_possible);
+        // Equal point estimates alone do not establish paired equality.
+        let uncertain_pair = deadline_certificate(shared, shared, 1e-6);
+        assert!(uncertain_pair.new_possible && uncertain_pair.improved_possible);
+    }
+
+    #[test]
+    fn unequal_threshold_crossings_keep_the_original_strict_predicates() {
+        let high = estimate(1.25e-6, 0.1e-6);
+        let low = estimate(0.75e-6, 0.1e-6);
+        let worse = deadline_certificate(high, low, 0.1e-6);
+        assert!(worse.new_certain && worse.new_possible);
+        assert!(!worse.improved_certain && !worse.improved_possible);
+        let better = deadline_certificate(low, high, 0.1e-6);
+        assert!(better.improved_certain && better.improved_possible);
+        assert!(!better.new_certain && !better.new_possible);
+        let ambiguous =
+            deadline_certificate(estimate(1.1e-6, 0.4e-6), estimate(0.9e-6, 0.4e-6), 0.6e-6);
+        assert!(!ambiguous.new_certain && !ambiguous.improved_certain);
+        assert!(ambiguous.new_possible && ambiguous.improved_possible);
+        let at = estimate(1e-6, 0.);
+        let above = estimate(1.25e-6, 0.);
+        let below = estimate(0.75e-6, 0.);
+        assert!(deadline_certificate(above, at, 0.).new_certain);
+        assert!(deadline_certificate(at, above, 0.).improved_certain);
+        let both_met = deadline_certificate(at, below, 0.);
+        assert!(!both_met.new_possible && !both_met.improved_possible);
+    }
+
+    #[test]
+    fn paired_intersection_retains_every_admissible_deadline_outcome() {
+        // An independent finite grid checks interval logic on both sides of
+        // the exact deadline, including equality and zero-width paired bounds.
+        let points = [0., 0.5e-6, 1e-6, 1.5e-6, 2e-6];
+        let errors = [0., 0.5e-6, 2e-6];
+        for a in points {
+            for b in points {
+                for ae in errors {
+                    for be in errors {
+                        for de in errors {
+                            let certificate =
+                                deadline_certificate(estimate(a, ae), estimate(b, be), de);
+                            for actual_a in points {
+                                for actual_b in points {
+                                    if actual_a < a - ae
+                                        || actual_a > a + ae
+                                        || actual_b < b - be
+                                        || actual_b > b + be
+                                        || actual_a - actual_b < a - b - de
+                                        || actual_a - actual_b > a - b + de
+                                    {
+                                        continue;
+                                    }
+                                    let (new_miss, improved) = deadline_flags(actual_a, actual_b);
+                                    assert!(!new_miss || certificate.new_possible);
+                                    assert!(!improved || certificate.improved_possible);
+                                    assert!(!certificate.new_certain || new_miss);
+                                    assert!(!certificate.improved_certain || improved);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

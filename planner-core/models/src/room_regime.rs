@@ -224,12 +224,17 @@ impl Process {
 
 /// Integrate Gamma intensities out of the first-event/no-event split. Given the
 /// first event, Gamma conjugacy supplies the same fixed-intensity future law.
+pub struct EventStrata {
+    pub no_event_weight: f64,
+    pub event_weight: f64,
+    pub event: Option<Vec<Vec<Process>>>,
+}
 pub fn event_branch(
     processes: &[Vec<Process>],
     horizon_h: f64,
     seed: [u32; 2],
     draw: u32,
-) -> Result<(f64, f64, Option<Vec<Vec<Process>>>), String> {
+) -> Result<EventStrata, String> {
     let hazards: Vec<_> = processes
         .iter()
         .flatten()
@@ -253,7 +258,11 @@ pub fn event_branch(
     let no_event = (-exponent).exp();
     let probability = -(-exponent).exp_m1();
     if probability == 0. {
-        return Ok((1., 0., None));
+        return Ok(EventStrata {
+            no_event_weight: 1.,
+            event_weight: 0.,
+            event: None,
+        });
     }
     let target = -(-uniform(seed, draw, 0x4300_0000, 0, 0) * probability).ln_1p();
     let (mut lower, mut upper) = (0., horizon_h);
@@ -307,7 +316,11 @@ pub fn event_branch(
             };
         }
     }
-    Ok((no_event, probability, Some(branch)))
+    Ok(EventStrata {
+        no_event_weight: no_event,
+        event_weight: probability,
+        event: Some(branch),
+    })
 }
 
 #[cfg(test)]
@@ -339,8 +352,11 @@ mod tests {
                 }),
             )
             .unwrap();
-            let (idle, event, branch) =
-                event_branch(&[vec![process]], 72., [51, 79], draw).unwrap();
+            let EventStrata {
+                no_event_weight: idle,
+                event_weight: event,
+                event: branch,
+            } = event_branch(&[vec![process]], 72., [51, 79], draw).unwrap();
             assert!((idle + event - 1.).abs() < 2e-16);
             assert!(event > 0.);
             let first = branch.unwrap()[0][0].next_reset_h.unwrap();
@@ -388,7 +404,8 @@ mod tests {
             }),
         )
         .unwrap();
-        let (_, _, branch) = event_branch(&[vec![process]], 2., [29, 97], 4).unwrap();
+        let EventStrata { event: branch, .. } =
+            event_branch(&[vec![process]], 2., [29, 97], 4).unwrap();
         let mut complete = branch.unwrap()[0][0].clone();
         let mut divided = complete.clone();
         complete.advance(2., 10000, [29, 97], 4, 0, 0).unwrap();

@@ -45,6 +45,18 @@ pub struct Node {
     pub legacy_steps: Option<Vec<LegacyStep>>,
 }
 
+/// One physical interval in the captured room forcing/rate series.
+#[derive(Clone, Copy)]
+pub struct NetworkInterval {
+    pub slot: usize,
+    pub step: usize,
+    pub hours: f64,
+}
+struct ThermalCoefficients<'a> {
+    losses: &'a [f64],
+    lags: &'a [f64],
+}
+
 /// Exponential action by uniformization of the positive thermal generator.
 /// All receiving temperatures use the same vector. Heater storage remains a
 /// separate state, so changes in room exchange do not rescale stored heat.
@@ -59,9 +71,7 @@ pub fn advance(
 ) {
     advance_cached(
         nodes,
-        slot,
-        step,
-        hours,
+        NetworkInterval { slot, step, hours },
         temperatures,
         heat,
         watts,
@@ -81,14 +91,13 @@ pub fn use_fast_memory_transform(lag: f64, hours: f64, thermal_norm: f64) -> boo
 /// existing endpoint trapezoid. Ordinary temperature integration is unchanged.
 pub fn advance_cached(
     nodes: &[Node],
-    slot: usize,
-    step: usize,
-    hours: f64,
+    interval: NetworkInterval,
     temperatures: &mut [f64],
     heat: &mut [f64],
     watts: &[f64],
     kernels: &mut NetworkKernels,
 ) -> Vec<f64> {
+    let NetworkInterval { slot, step, hours } = interval;
     let n = nodes.len();
     let mut lags: Vec<_> = nodes.iter().map(|n| n.lag_h).collect();
     let losses: Vec<f64> = nodes
@@ -129,23 +138,26 @@ pub fn advance_cached(
             let mut term = vec![0.; n];
             term[i] = heat[i] - lag * power;
             let mut v = term.clone();
-            while rho > 0. {
-                let mut next = vec![0.; n];
-                for j in 0..n {
-                    next[j] = lag
-                        * (losses[j] * term[j]
-                            - nodes[j]
-                                .incoming
-                                .iter()
-                                .map(|e| e.rate(slot, step) * term[e.node])
-                                .sum::<f64>());
-                    v[j] += next[j];
-                }
-                let remaining = rho / (1. - rho) * next.iter().map(|x| x.abs()).fold(0., f64::max);
-                let scale = v.iter().map(|x| x.abs()).fold(0., f64::max);
-                term = next;
-                if remaining <= 32. * f64::EPSILON * scale {
-                    break;
+            if rho > 0. {
+                loop {
+                    let mut next = vec![0.; n];
+                    for j in 0..n {
+                        next[j] = lag
+                            * (losses[j] * term[j]
+                                - nodes[j]
+                                    .incoming
+                                    .iter()
+                                    .map(|e| e.rate(slot, step) * term[e.node])
+                                    .sum::<f64>());
+                        v[j] += next[j];
+                    }
+                    let remaining =
+                        rho / (1. - rho) * next.iter().map(|x| x.abs()).fold(0., f64::max);
+                    let scale = v.iter().map(|x| x.abs()).fold(0., f64::max);
+                    term = next;
+                    if remaining <= 32. * f64::EPSILON * scale {
+                        break;
+                    }
                 }
             }
             let decay = (-hours / lag).exp();
@@ -163,17 +175,7 @@ pub fn advance_cached(
     for i in 0..n {
         temperatures[i] += shift[i];
     }
-    advance_core(
-        nodes,
-        &lags,
-        slot,
-        step,
-        hours,
-        temperatures,
-        heat,
-        watts,
-        kernels,
-    );
+    advance_core(nodes, &lags, interval, temperatures, heat, watts, kernels);
     for i in 0..n {
         temperatures[i] -= endpoint[i];
     }
@@ -281,14 +283,13 @@ fn thermal_moments(
 fn advance_core(
     nodes: &[Node],
     lags: &[f64],
-    slot: usize,
-    step: usize,
-    hours: f64,
+    interval: NetworkInterval,
     temperatures: &mut [f64],
     heat: &mut [f64],
     watts: &[f64],
     kernels: &mut NetworkKernels,
 ) {
+    let NetworkInterval { slot, step, hours } = interval;
     if hours == 0. {
         return;
     }
@@ -337,14 +338,14 @@ fn advance_core(
     if lambda * hours > 16. {
         exponential(
             nodes,
-            slot,
-            step,
-            hours,
+            interval,
             temperatures,
             heat,
             watts,
-            &losses,
-            lags,
+            ThermalCoefficients {
+                losses: &losses,
+                lags,
+            },
             kernels,
         );
         apply_legacy(nodes, slot, step, &legacy, temperatures, heat, watts);
@@ -479,16 +480,15 @@ fn matrix_exponential(mut a: Vec<f64>, n: usize, hours: f64) -> Vec<f64> {
 }
 fn exponential(
     nodes: &[Node],
-    slot: usize,
-    step: usize,
-    hours: f64,
+    interval: NetworkInterval,
     temperatures: &mut [f64],
     heat: &mut [f64],
     watts: &[f64],
-    losses: &[f64],
-    lags: &[f64],
+    coefficients: ThermalCoefficients<'_>,
     kernels: &mut NetworkKernels,
 ) {
+    let NetworkInterval { slot, step, hours } = interval;
+    let ThermalCoefficients { losses, lags } = coefficients;
     let count = nodes.len();
     // Zero-lag heaters have no stored state. Omitting those coordinates keeps
     // stiff observed-only and instantaneous networks small without changing physics.
@@ -670,9 +670,11 @@ mod fast_memory_tests {
         let mut q = initial;
         let correction = advance_cached(
             nodes,
-            0,
-            0,
-            hours,
+            NetworkInterval {
+                slot: 0,
+                step: 0,
+                hours,
+            },
             &mut t,
             &mut q,
             &power,

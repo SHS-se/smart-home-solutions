@@ -22,7 +22,7 @@ fn philox(seed: [u32; 2], mut counter: [u32; 4]) -> [u32; 4] {
 pub fn uniform(seed: [u32; 2], trajectory: u32, stream: u32, step: u32, coordinate: u32) -> f64 {
     let words = philox(seed, [trajectory / 2, stream, step, coordinate]);
     let value = (words[0] as f64 + 0.5) / 4294967296.;
-    if trajectory % 2 == 0 {
+    if trajectory.is_multiple_of(2) {
         value
     } else {
         1. - value
@@ -34,12 +34,12 @@ pub fn normal(seed: [u32; 2], trajectory: u32, stream: u32, step: u32, coordinat
     let v = (words[1] as f64 + 0.5) / 4294967296.;
     let angle = std::f64::consts::TAU * v;
     let value = (-2. * u.ln()).sqrt()
-        * if coordinate % 2 == 0 {
+        * if coordinate.is_multiple_of(2) {
             angle.cos()
         } else {
             angle.sin()
         };
-    if trajectory % 2 == 0 {
+    if trajectory.is_multiple_of(2) {
         value
     } else {
         -value
@@ -62,9 +62,9 @@ pub fn covariance_root(covariance: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, String>
         .map(|v| v.abs())
         .fold(0., f64::max);
     let tolerance = 64. * f64::EPSILON * n as f64 * scale;
-    for i in 0..n {
-        for j in 0..i {
-            if (covariance[i][j] - covariance[j][i]).abs() > tolerance {
+    for (i, row) in covariance.iter().enumerate() {
+        for (j, other) in covariance.iter().take(i).enumerate() {
+            if (row[j] - other[i]).abs() > tolerance {
                 return Err("Joint room covariance is not symmetric".into());
             }
         }

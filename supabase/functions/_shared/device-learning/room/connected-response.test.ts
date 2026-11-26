@@ -1,4 +1,4 @@
-import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals, assertNotEquals } from "@std/assert";
 import { syntheticConnectedPlant, syntheticConnectedResponse, syntheticConnectedNetwork } from "../../connected-exchange.fixture.ts";
 import { advanceConnectedRoomFit, beginConnectedRoomFit, parseConnectedFitProgress } from "./connected-response.ts";
 import { roomResponseTrainingLength, connectedRoomResponseTrainingLength } from "./chronological-evidence.ts";
@@ -10,10 +10,15 @@ Deno.test("connected response learns a passive receiving equation through resuma
   let progress = beginConnectedRoomFit(evidence, { peers: ["peer"], observedOnly: true, ratedPowerW: null,
     basis: syntheticConnectedResponse().basis });
   let slices = 0;
-  while (progress.stage !== "complete" && slices++ < 1000) {
+  let checkpoint = JSON.stringify(progress);
+  while (progress.stage !== "complete") {
+    slices++;
     progress = advanceConnectedRoomFit(evidence, progress, 10);
-    const parsed = parseConnectedFitProgress(JSON.parse(JSON.stringify(progress)));
+    const nextCheckpoint = JSON.stringify(progress);
+    assertNotEquals(nextCheckpoint, checkpoint, `A bounded ${progress.stage} slice must advance its durable work`);
+    const parsed = parseConnectedFitProgress(JSON.parse(nextCheckpoint));
     assert(parsed); progress = parsed;
+    checkpoint = nextCheckpoint;
   }
   assertEquals(progress.stage, "complete");
   assert(progress.result?.response, JSON.stringify(progress.result));

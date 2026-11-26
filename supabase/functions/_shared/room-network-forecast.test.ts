@@ -2,6 +2,11 @@ import { assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import { syntheticJointRoomForecast } from "./room-network-forecast.fixture.ts";
 import type { NativeRoomNetworkAdvanceInput } from "./room-network-contract.ts";
+function packStatistics(values: number[]) {
+  const bytes = new Uint8Array(values.length * 8), view = new DataView(bytes.buffer);
+  values.forEach((value, index) => view.setFloat64(index * 8, value, true));
+  return btoa(String.fromCharCode(...bytes));
+}
 function drain(input: NativeRoomNetworkAdvanceInput) {
   const planner = nativePlanner();
   let next = input;
@@ -273,11 +278,6 @@ Deno.test("native cost certificate preserves deadline improvement exception and 
   for (const node of input.beliefs) node.hypotheses.push(structuredClone(node.hypotheses[0]));
   const base = drain({ ...input, max_minute_steps: 100000 });
   const slots = 4, rooms = 2, nodes = 2, stride = 42;
-  const pack = (values: number[]) => {
-    const bytes = new Uint8Array(values.length * 8), view = new DataView(bytes.buffer);
-    values.forEach((v,i)=>view.setFloat64(i*8,v,true));
-    return btoa(String.fromCharCode(...bytes));
-  };
   const assess = (newMiss: (replicate: number) => number) => {
     const work = structuredClone(base);
     const replicates = work.statistics.replicates.map((r,index)=>{
@@ -288,8 +288,8 @@ Deno.test("native cost certificate preserves deadline improvement exception and 
       for(let room=0;room<rooms;room++) values[stride-rooms+room] = 1;
       return values.map(v=>v*r.trajectories);
     });
-    work.statistics.total = pack(replicates[0].map((_,i)=>replicates.reduce((sum,r)=>sum+r[i],0)));
-    work.statistics.replicates.forEach((r,i)=>r.total=pack(replicates[i]));
+    work.statistics.total = packStatistics(replicates[0].map((_,i)=>replicates.reduce((sum,r)=>sum+r[i],0)));
+    work.statistics.replicates.forEach((r,i)=>r.total=packStatistics(replicates[i]));
     return nativePlanner().roomNetworkAdvance({ ...input, work }).assessment;
   };
   // Overall horizon comfort improves, but one new miss disallows higher cost.
@@ -304,6 +304,33 @@ Deno.test("native cost certificate preserves deadline improvement exception and 
   const ambiguous = assess(r=>r===3?4e-6:0);
   assertEquals(ambiguous.proposal_rejection, null);
   assertEquals(ambiguous.deadline_resolved, false);
+});
+
+Deno.test("common shortfall during a held first hour cannot invent a new deadline miss", () => {
+  const input = syntheticJointRoomForecast(2, 0, 2);
+  input.target_trajectories = 16;
+  for (const belief of input.beliefs) belief.hypotheses.push(structuredClone(belief.hypotheses[0]));
+  const work = drain({ ...input, max_minute_steps: 100000 });
+  const slots = 8, rooms = 2, nodes = 2, stride = 82;
+  // Independent synthetic replica estimates: identical held-hour shortfalls
+  // have uncertain common magnitude, but their paired difference is exactly
+  // zero. Later quarters improve comfort and justify the higher prefix cost.
+  const replicates = work.statistics.replicates.map((replica, index) => {
+    const values = Array(stride * 3).fill(0);
+    for (let quarter = 0; quarter < 4; quarter++) {
+      const cell = (rooms + 2 * nodes) * slots + quarter;
+      values[cell] = values[stride + cell] = index === 3 ? 2 ** -10 : 0;
+    }
+    values[stride + (rooms + 2 * nodes) * slots + 4] = 1;
+    for (let room = 0; room < rooms; room++) values[stride - rooms + room] = 1;
+    return values.map(value => value * replica.trajectories);
+  });
+  work.statistics.total = packStatistics(replicates[0].map((_, i) => replicates.reduce((sum, row) => sum + row[i], 0)));
+  work.statistics.replicates.forEach((replica, i) => replica.total = packStatistics(replicates[i]));
+  const assessment = nativePlanner().roomNetworkAdvance({ ...input, work }).assessment;
+  assertEquals(assessment.proposal_rejection, null);
+  assertEquals(assessment.unresolved_deadline_prefixes, 0);
+  assertEquals(assessment.deadline_resolved, true);
 });
 
 Deno.test("fast stored heat preserves the disconnected legacy owner's endpoint and interval mean", () => {
