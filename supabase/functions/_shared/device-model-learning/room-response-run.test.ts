@@ -1,3 +1,4 @@
+import { ROOM_LEARNER_VERSION } from "../room-learner-version.ts";
 import { evidenceStore, syntheticRoomConnectionCapture } from "./room-evidence.fixture.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { handleDeviceLearning } from "../device-learning-worker.ts";
@@ -52,14 +53,16 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
       let data: unknown = null;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_device_learning": {
+        case "claim_energy_learning_work": {
           // SQL drops stale scratch before returning the same claim for cold discovery.
           const bound = (progress?.metadata as { capture?: { binding?: string } } | undefined)?.capture?.binding;
           if (progress && (progress.base_revision !== (model?.model_revision ?? 0) || (bound && bound !== context.binding))) {
             progress = null; capture = null;
           }
           data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
-            owner_key: "room", generation: 1, fence: ++fence, input: {}, room_fit_progress: jsonb(progress),
+            owner_key: "room", generation: 1, fence: ++fence, work_class: !progress ? "source" : progress.cursor === ROOM_RESPONSE_CELL_COUNT ||
+              (progress.metadata as { heat_state?: {stage?: string} }).heat_state?.stage === "complete" ? "finalization" : "numerical",
+            input: { learner_version: ROOM_LEARNER_VERSION }, room_fit_progress: jsonb(progress),
             room_history_to: historyTo };
           break;
         }
@@ -129,7 +132,7 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
           progress = null; capture = null; data = true; break;
         }
         case "fail_energy_device_learning": failures.push(args); break;
-        case "release_energy_room_learning_lane":
+        case "release_energy_learning_work":
           assertEquals(args, { p_job_id: "job", p_generation: 1, p_fence: fence });
           data = true; break;
         default: throw new Error(`Unexpected synthetic RPC ${name}`);
@@ -146,7 +149,7 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
     try {
     const response = await handleDeviceLearning(new Request("https://synthetic.test/learning", { method: "POST",
       headers: { "x-energy-learning-token": "synthetic" }, body: JSON.stringify({ job_id: "job" }) }), db, () => wallNow);
-    assertEquals(reads.at(-1), "release_energy_room_learning_lane", "every handled checkpoint, reset, failure and publication relinquishes admission");
+    assertEquals(reads.at(-1), "release_energy_learning_work", "every handled checkpoint, reset, failure and publication relinquishes admission");
     return response;
     } finally { if (oneCell) performance.now = realNow; }
   };
@@ -196,7 +199,7 @@ Deno.test("a missing room horizon is a retriable owner failure preserving accept
     assertEquals(f.failures.at(-1)?.p_error, "Room learning claim has no history horizon");
     assertEquals(f.model, model);
     assertEquals(f.progress, progress);
-    assertEquals(f.reads.at(-1), "release_energy_room_learning_lane");
+    assertEquals(f.reads.at(-1), "release_energy_learning_work");
   }
 });
 
@@ -216,7 +219,7 @@ const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, ite
 Deno.test("a malformed numerical claim cannot write using a guessed cursor or revision", async () => {
   const f = fixture();
   const claim = { id: "job", home_id: "home", customer_id: "customer", owner_key: "room",
-    generation: 1, fence: 1, input: {}, room_history_to: f.range.to_at };
+    generation: 1, fence: 1, work_class: "source" as const, input: { learner_version: ROOM_LEARNER_VERSION }, room_history_to: f.range.to_at };
   for (const [field, room_fit_progress] of [
     ["progress cursor", { cursor: -1, base_revision: 0 }], ["base revision", { cursor: 0, base_revision: "0" }],
   ] as const) {
@@ -503,7 +506,7 @@ Deno.test("lost admission release does not turn an accepted publication into a s
   const f = fixture();
   await f.tick(); await f.tick();
   while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) await f.finishCell();
-  f.fail("release_energy_room_learning_lane");
+  f.fail("release_energy_learning_work");
   assertEquals(await (await f.tick()).json(), { published: true });
   assertEquals(f.writes.length, 1);
   assertEquals(f.reads.includes("fail_energy_device_learning"), false);

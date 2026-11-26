@@ -49,11 +49,11 @@ export function createDeviceLearningReplay(input: DeviceLearningReplayInput) {
       let data: unknown;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_device_learning": data = input.claim; break;
+        case "claim_energy_learning_work": data = input.claim; break;
         case "capture_energy_device_models": data = input.models; break;
         case "publish_energy_device_learning": publications.push(copy(args)); data = true; break;
         case "fail_energy_device_learning": failures.push(copy(args)); data = true; break;
-        case "release_energy_room_learning_lane": data = true; break;
+        case "release_energy_learning_work": data = true; break;
         default: throw new Error(`Uncaptured learning RPC: ${name}`);
       }
       return Promise.resolve({ data: copy(data), error: null });

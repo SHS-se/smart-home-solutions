@@ -770,15 +770,36 @@ tests passive temperature prediction, not heater gain. A zero-lag response also
 cannot identify every delayed heater's intrinsic gain from these measurements.
 
 User requirement, 24 November 2026: a changed room learner refits every room
-before it plans. The learner's version is a digest of its source
+before it plans. The learner's version follows its compiled pure mathematics,
+transitive runtime dependencies and source qualification policy
 (`scripts/room-learner-version.ts`, checked by `tests/room-learner-version.test.ts`;
-run `deno task generate:room-learner-version` after a learner change). Each fit
+run `deno task generate:room-learner-version` after a learner change). HTTP,
+database scheduling and logging edits preserve compatible numerical progress.
+The semantic manifest's initial identity retains the deployed learner ID; later
+semantic changes generate a new ID automatically. Each fit
 records the version that made it. An upload requests a refit for any room fitted
 by another version, and so does the replan button, which then holds the request
 back from Home Assistant while room learning is pending, for at most 20 minutes.
 Home Assistant answers each request once, so it must not see the request before
 the refits finish. The portal's replan button reads `get_energy_replan_progress`
 and names the stage in one word: refitting, measuring or planning.
+
+The database owns the active learner release. Deployment prepares an ordered
+release, deploys the worker, verifies its authenticated capabilities and activates
+that exact release with a predecessor comparison. A stale deployment or snapshot
+cannot downgrade the target. An incompatible release advances pending owner
+generations once; compatible releases retain capture bytes and numerical cursors.
+Already accepted models and instructions remain available throughout refitting.
+
+Room fitting uses two project-wide tickets, including queued and running work.
+Distinct owners with immutable captures can fit concurrently; an individual
+owner's arithmetic, random stream and reduction order stay sequential. Source
+history reads and finalization share one heavy-work admission per home. Invalid
+numerical scratch yields before source reacquisition. Duplicate wakes coalesce,
+releases match the original generation/fence, and expired tickets recover through
+the durable sweeper. Non-room device and pool learning retain their own paths.
+Every handled fitting slice logs its work class, outcome and stage timings;
+transport metrics include the worker's actual database requests.
 
 The descriptive lines do not identify the floor's entry storage or intrinsic
 heater gain. `measured-response.ts` therefore also fits the supporting chronological

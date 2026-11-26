@@ -2,6 +2,9 @@
 # Deploy planning executors before callers. Preserve the preflight secret.
 set -euo pipefail
 PROJECT_REF="${1:?Usage: deploy-energy-planning.sh PROJECT_REF}"
+# Only the ordered CI release may deploy the learning worker.
+RUN_ID="${2:?Supply the GitHub deployment run ID}"
+RUN_ATTEMPT="${3:?Supply the GitHub deployment run attempt}"
 cd "$(dirname "$0")/.."
 
 HAS_SECRET="$(supabase secrets list --project-ref "$PROJECT_REF" --output json |
@@ -17,8 +20,7 @@ PY
   supabase secrets set --project-ref "$PROJECT_REF" --env-file "$SECRET_DIR/env" --yes
 fi
 
-supabase functions deploy energy-device-learning --project-ref "$PROJECT_REF" --use-api --yes
-deno run --allow-run=supabase --allow-net scripts/configure-device-learning.ts "$PROJECT_REF"
+deno run --allow-run=supabase --allow-net scripts/configure-device-learning.ts "$PROJECT_REF" "$RUN_ID" "$RUN_ATTEMPT"
 
 supabase functions deploy energy-optimisation-plan-step --project-ref "$PROJECT_REF" --use-api --yes
 

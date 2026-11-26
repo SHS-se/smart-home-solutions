@@ -1,3 +1,4 @@
+import { ROOM_LEARNER_VERSION } from "../supabase/functions/_shared/room-learner-version.ts";
 import { handleDeviceLearning } from "../supabase/functions/_shared/device-learning-worker.ts";
 import {
   assert,
@@ -115,7 +116,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
   const calls: string[] = [];
   const claim = { id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
     room_history_to: "2026-01-01T00:00:00Z",
-    owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 3, input: { location: null } };
+    owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 3, work_class: "source", input: { location: null, learner_version: ROOM_LEARNER_VERSION } };
   const db = {
     rpc(name: string, args: Record<string, unknown>) {
       calls.push(name);
@@ -123,7 +124,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
         range: () => Promise.resolve({ data: null, error: { message: "synthetic training read failure" } }),
       }) };
       if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
-      if (name === "claim_energy_device_learning") return Promise.resolve({ data: claim, error: null });
+      if (name === "claim_energy_learning_work") return Promise.resolve({ data: claim, error: null });
       if (name === "capture_energy_device_models") return Promise.resolve({ data: {
         rooms: [{ room_key: claim.owner_key, model_revision: 7, trained: true }], pool: null,
       }, error: null });
@@ -133,7 +134,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
         assertStringIncludes(String(args.p_error), "synthetic training read failure");
         return Promise.resolve({ data: null, error: null });
       }
-      if (name === "release_energy_room_learning_lane") {
+      if (name === "release_energy_learning_work") {
         assertEquals(args, { p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence });
         return Promise.resolve({ data: true, error: null });
       }
@@ -146,8 +147,8 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
   }), db);
   assertEquals(response.status, 500);
   assertEquals(await response.json(), { error: "learning_failed" });
-  assertEquals(calls, ["verify_energy_learning_token", "claim_energy_device_learning", "capture_energy_device_models",
-    "get_energy_thermal_training_quarters", "fail_energy_device_learning", "release_energy_room_learning_lane"]);
+  assertEquals(calls, ["verify_energy_learning_token", "claim_energy_learning_work", "capture_energy_device_models",
+    "get_energy_thermal_training_quarters", "fail_energy_device_learning", "release_energy_learning_work"]);
   // SQL retry/retained-model semantics are independently executed by
   // tests/device-learning-lifecycle.test.ts. Ingest cannot import this worker
   // or its fitting code: tests/planner-component-boundaries.test.ts enforces it.

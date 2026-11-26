@@ -31,10 +31,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs for the same branch/PR.
+# Superseded PR checks may stop. A deployment owns this branch through remote
+# function installation and activation; newer pushes wait for that run to finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -422,7 +423,7 @@ jobs:
               continue
             elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ]; then
               if [ "$planning_deployed" = false ]; then
-                bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
+                bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
                 planning_deployed=true
               fi
             else

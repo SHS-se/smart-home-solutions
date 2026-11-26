@@ -4,7 +4,7 @@
 #   ./scripts/dev.sh [test|live]
 #   ./scripts/dev.sh migrate [test|live]
 #   ./scripts/dev.sh pull [test|live]
-#   ./scripts/dev.sh deploy [test|live] [--force]
+#   ./scripts/dev.sh deploy [test|live] [--force] (learning worker deployment requires an ordered GitHub Actions run)
 #
 # Fetches the anon key from the Supabase CLI, writes a .env.development.local
 # file (dev-mode-only, so builds never inherit it), and starts Vite on the
@@ -222,8 +222,17 @@ deploy_edge_functions() {
   (
     cd "$PROJECT_DIR"
     # Deploy planning executors before household and preflight callers.
-    bash scripts/deploy-energy-planning.sh "$PROJECT_REF"
-    supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+    bash scripts/deploy-energy-planning.sh "$PROJECT_REF" "${GITHUB_RUN_ID:-}" "${GITHUB_RUN_ATTEMPT:-}"
+    local remaining=() dir name
+    for dir in supabase/functions/*; do
+      name="${dir##*/}"
+      if [[ -f "$dir/index.ts" && "$name" != _* && "$name" != energy-device-learning && "$name" != energy-optimisation-plan-step ]]; then
+        remaining+=("$name")
+      fi
+    done
+    if (( ${#remaining[@]} )); then
+      supabase functions deploy "${remaining[@]}" --project-ref "$PROJECT_REF" --use-api --yes
+    fi
   )
 }
 

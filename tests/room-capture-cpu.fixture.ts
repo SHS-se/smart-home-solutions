@@ -1,3 +1,4 @@
+import { ROOM_LEARNER_VERSION } from "../supabase/functions/_shared/room-learner-version.ts";
 import { ROOM_FIT_CAPTURE_VERSION } from "../supabase/functions/_shared/device-model-learning/room-response-run.ts";
 import { assert, assertEquals } from "@std/assert";
 import { encodeRoomEvidenceCapture } from "../supabase/functions/_shared/device-model-learning/room-evidence-capture.ts";
@@ -73,14 +74,14 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
 
   const context = { binding: "synthetic", observed_since: at(0) };
   const claim = { id: "synthetic", home_id: "synthetic-home", customer_id: "synthetic-customer", owner_kind: "room",
-    owner_key: "synthetic", generation: 1, fence: 1, input: {}, room_history_to: at(ROWS) };
+    owner_key: "synthetic", generation: 1, fence: 1, input: { learner_version: ROOM_LEARNER_VERSION }, room_history_to: at(ROWS) };
   let saved = false, released = false, reset = false, published = false;
   return {
     rpc(name: string, args: Record<string, unknown>) {
       let data: unknown;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_device_learning": data = { ...claim, room_fit_progress: checkpoint?.progress ?? null }; break;
+        case "claim_energy_learning_work": data = { ...claim, work_class: !checkpoint ? "source" : checkpoint.progress.cursor === ROOM_MEASURED_CELL_COUNT ? "finalization" : "numerical", room_fit_progress: checkpoint?.progress ?? null }; break;
         case "capture_energy_device_models": assert(!checkpoint, "Numerical claims skip bundle discovery"); data = { pool: null, rooms: [], room_heating: { synthetic: context } }; break;
         case "get_energy_room_heating_context": assert(!checkpoint, "Numerical claims skip context discovery"); data = context; break;
         case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64),
@@ -144,7 +145,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
           assert(copy.p_run_ledger.runs.length > 0);
           published = true; data = true; break;
         }
-        case "release_energy_room_learning_lane": released = true; data = true; break;
+        case "release_energy_learning_work": released = true; data = true; break;
         default: throw new Error(`Unexpected room capture RPC: ${name}`);
       }
       return Promise.resolve({ data: JSON.parse(JSON.stringify(data)), error: null });

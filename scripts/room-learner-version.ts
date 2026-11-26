@@ -1,54 +1,91 @@
-// The room learner's version is a digest of its source. A fit records the
-// version it was made with, so any change to the learner refits every room on
-// the next upload or replan, with no version to remember to bump.
-//
-//   deno task generate:room-learner-version
-//
-// tests/room-learner-version.test.ts fails while the generated file is stale.
+// Mathematical identity is independent of worker deployment. Only the compiled
+// pure learner, its transitive dependencies and source policy define this hash.
+import { build, stop } from "npm:esbuild@0.25.12";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { diskTree, type SourceTree } from "./module-graph.ts";
 
 const ROOT = new URL("../", import.meta.url);
 export const ROOM_LEARNER_VERSION_FILE = "supabase/functions/_shared/room-learner-version.ts";
-const DIRECTORIES = [
-  { dir: "supabase/functions/_shared/device-learning/room/", match: () => true },
-  { dir: "supabase/functions/_shared/device-model-learning/", match: (name: string) => name.startsWith("room") },
-];
-const FILES = ["supabase/functions/_shared/planner/models/room/measured-evidence.ts",
-  "supabase/functions/_shared/planner/models/room/connected-exchange.ts",
-  "supabase/functions/_shared/planner/models/room/observation.ts"];
-const excluded = (name: string) => !name.endsWith(".ts") || /\.(test|fixture|experiment)\.ts$/.test(name);
+const SHARED = "supabase/functions/_shared/";
+// Exporting the pure entry points allows tree shaking to remove database and
+// worker adapters, even where an existing module also contains those adapters.
+const ENTRY = `
+export * from "./${SHARED}device-learning/room/fit-policy.ts";
+export * from "./${SHARED}device-learning/room/connected-response.ts";
+export * from "./${SHARED}device-learning/room/connected-process.ts";
+export * from "./${SHARED}device-learning/room/measured-response.ts";
+export * from "./${SHARED}device-learning/room/operation-evidence.ts";
+export { fitRoomMeans } from "./${SHARED}device-learning/room/mean-observations.ts";
+export { fitRoomsFromQuarters, thermalQuarter, TRAINING_WINDOW_DAYS } from "./${SHARED}thermal-training.ts";
+export { decodeHeatingProbeCapture } from "./${SHARED}heating-probe-wire.ts";
+export { qualifyRoomFitEvidence } from "./${SHARED}device-model-learning/room-fit-evidence.ts";
+export * from "./${SHARED}device-model-learning/room-fit-input.ts";
+export * from "./${SHARED}device-model-learning/room-band-fit-capture.ts";
+export * from "./${SHARED}device-model-learning/room-evidence-capture.ts";
+export { roomResponseEvidence, finalizeStoredRoomResponse, parseRoomSharedMetadata,
+  fitOptionalRoomResponses, bandObservations, finalizeStoredConnectedRoomResponse, ROOM_RESPONSE_IMPLEMENTATION }
+  from "./${SHARED}device-model-learning/room.ts";
+`;
 
-export async function roomLearnerSources(): Promise<string[]> {
-  const sources = [...FILES];
-  for (const { dir, match } of DIRECTORIES) {
-    for await (const entry of Deno.readDir(new URL(dir, ROOT))) {
-      const path = dir + entry.name;
-      if (entry.isFile && match(entry.name) && !excluded(entry.name) && path !== ROOM_LEARNER_VERSION_FILE) sources.push(path);
-    }
-  }
-  return sources.sort();
+async function compile(tree: SourceTree) {
+  try {
+    const result = await build({
+      stdin: { contents: ENTRY, loader: "ts", sourcefile: "room-learner-entry.ts", resolveDir: fileURLToPath(ROOT) },
+      bundle: true, platform: "node", format: "esm", target: "es2022", minify: true,
+      legalComments: "none", write: false, metafile: true, logLevel: "silent",
+      plugins: [{ name: "learner-source", setup(api) {
+        api.onResolve({ filter: /^\./ }, args => {
+          const path = join(args.namespace === "learner" ? dirname(args.importer) : "", args.path);
+          if (!tree.isFile(path)) throw new Error(`Missing learner dependency: ${path}`);
+          return { path, namespace: "learner" };
+        });
+        api.onLoad({ filter: /.*/, namespace: "learner" }, args => ({
+          // Publication writes its identity into metadata. It must not hash
+          // itself, and the generated manifest is not a mathematical input.
+          contents: args.path === ROOM_LEARNER_VERSION_FILE
+            ? 'export const ROOM_LEARNER_VERSION = "__LEARNER_IDENTITY__";'
+            : tree.read(args.path)!,
+          loader: "ts",
+        }));
+      } }],
+    });
+    return { code: result.outputFiles[0].contents,
+      sources: Object.keys(result.metafile.inputs).filter(path => path.startsWith("learner:"))
+        .map(path => path.slice("learner:".length)).filter(path => path !== ROOM_LEARNER_VERSION_FILE).sort() };
+  } finally { stop(); }
 }
 
-export async function roomLearnerDigest(): Promise<string> {
-  const encoder = new TextEncoder();
-  const parts: Uint8Array[] = [];
-  for (const path of await roomLearnerSources()) {
-    parts.push(encoder.encode(`${path}\n`), await Deno.readFile(new URL(path, ROOT)), encoder.encode("\n"));
-  }
-  const bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let offset = 0;
-  for (const part of parts) { bytes.set(part, offset); offset += part.length; }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return [...digest].map(byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+export async function roomLearnerSources(tree = diskTree(fileURLToPath(ROOT))): Promise<string[]> {
+  return (await compile(tree)).sources;
 }
 
-export function roomLearnerVersionSource(digest: string): string {
+export async function roomLearnerDigest(tree = diskTree(fileURLToPath(ROOT))): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array((await compile(tree)).code)));
+  return [...digest].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function readRoomLearnerManifest(source: string): { version: string; semanticDigest: string } {
+  const version = /export const ROOM_LEARNER_VERSION = "(room-learner:[0-9a-f]{16})";/.exec(source)?.[1];
+  const semanticDigest = /export const ROOM_LEARNER_SEMANTIC_DIGEST = "([0-9a-f]{64})";/.exec(source)?.[1];
+  if (!version || !semanticDigest) throw new Error("Missing room learner semantic manifest");
+  return { version, semanticDigest };
+}
+
+export function roomLearnerVersionSource(digest: string, version = `room-learner:${digest.slice(0, 16)}`): string {
+  if (!/^[0-9a-f]{64}$/.test(digest) || !/^room-learner:[0-9a-f]{16}$/.test(version)) throw new Error("Invalid learner identity");
   return `// Generated by scripts/room-learner-version.ts. Do not edit by hand.
-// A digest of the room learner's source: a fit made with another version is refitted.
-export const ROOM_LEARNER_VERSION = "room-learner:${digest}";
+// Pure learner semantics; scheduler, transport and logging changes keep the identity.
+// The initial semantic manifest preserves the already deployed compatible identity.
+export const ROOM_LEARNER_VERSION = "${version}";
+export const ROOM_LEARNER_SEMANTIC_DIGEST = "${digest}";
 `;
 }
 
 if (import.meta.main) {
-  await Deno.writeTextFile(new URL(ROOM_LEARNER_VERSION_FILE, ROOT), roomLearnerVersionSource(await roomLearnerDigest()));
+  const previous = readRoomLearnerManifest(await Deno.readTextFile(new URL(ROOM_LEARNER_VERSION_FILE, ROOT)));
+  const digest = await roomLearnerDigest();
+  await Deno.writeTextFile(new URL(ROOM_LEARNER_VERSION_FILE, ROOT),
+    roomLearnerVersionSource(digest, digest === previous.semanticDigest ? previous.version : undefined));
   console.log(`Wrote ${ROOM_LEARNER_VERSION_FILE}`);
 }
