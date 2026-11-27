@@ -354,6 +354,7 @@ import JSZip from "npm:jszip@3.10.1";
 import {
   marketXmlBodies,
   marketZipDirectory,
+  marketZipMemberBytes,
   marketZipStream,
 } from "./market-xml.ts";
 import {
@@ -412,6 +413,27 @@ export type NucsFlowEvidence =
       status: "no_data" | "provider_error" | "transport_error" | "parse_error";
     }
   );
+export type NucsLinkedSource = {
+  id: string;
+  evidence:
+    & { request: NucsFlowQuery }
+    & (
+      | {
+        status: "data";
+        document: {
+          horizon: "week" | "month";
+          publications: NucsPublication[];
+        };
+      }
+      | {
+        status:
+          | "no_data"
+          | "provider_error"
+          | "transport_error"
+          | "parse_error";
+      }
+    );
+};
 export type NucsNativeWriter = (
   path: string,
   bytes: Uint8Array,
@@ -473,10 +495,9 @@ export function parseNucsDomainHeader(
 /** The provider bundle contains a ZIP-wrapped IG183 plus the two XML net-position files. */
 export async function nucsDomainMember(bytes: Uint8Array) {
   const entries = marketZipDirectory(bytes, NUCS_BUNDLE_LIMITS);
-  const outer = await JSZip.loadAsync(bytes);
   const nested = entries.filter((e) => e.name.endsWith(".zip"));
   if (nested.length !== 1) throw new Error("Expected one NUCS domain ZIP");
-  const innerBytes = await outer.file(nested[0].name)!.async("uint8array");
+  const innerBytes = await marketZipMemberBytes(bytes, nested[0]);
   const innerEntries = marketZipDirectory(innerBytes, NUCS_DOMAIN_LIMITS);
   if (innerEntries.length !== 1) {
     throw new Error("Expected one NUCS domain XML");
@@ -515,7 +536,7 @@ export async function captureNucsFlowEvidence(
   query: NucsFlowQuery,
   token: string,
   writeNative: NucsNativeWriter,
-  available: { id: string; evidence: NucsFlowEvidence } | null,
+  available: NucsLinkedSource | null,
   fetchProvider: typeof fetch = fetch,
 ): Promise<NucsFlowEvidence> {
   const empty = {

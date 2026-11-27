@@ -234,3 +234,10 @@ storage. Measured XML sizes required private compressed objects and streaming
 experiment reads. Collection-health checks cover both new batch kinds and
 their source outcomes. Provider files and probe evidence stay outside the
 public repository.
+
+NUCS flow-based acquisitions run as one worker per product to fit the hosted
+CPU budget. Each horizon retains a common batch intent; the available-position
+worker commits its result before it queues the linked domain. Bounded native
+inflation handles the large nested bundles without spending the JavaScript CPU
+budget on decompression. Incomplete workers remain visible as missing products
+rather than selecting an older success.

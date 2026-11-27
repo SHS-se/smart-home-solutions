@@ -22,6 +22,8 @@ const MIGRATIONS = [
   { version: '20261113205000', name: 'test_se3_net_import_forecast' },
   { version: '20261113220000', name: 'test_se3_gross_flow_forecasts' },
   { version: '20261127170000', name: 'test_nucs_flow_based' },
+  { version: '20261127173000', name: 'test_nucs_product_workers' },
+  { version: '20261127173100', name: 'test_nucs_product_identity' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');

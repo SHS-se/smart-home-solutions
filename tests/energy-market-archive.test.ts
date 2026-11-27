@@ -21,6 +21,8 @@ function storage() {
     verifyToken(token) { verified++; return Promise.resolve(token === "private-cron-token"); },
     saveBatch() { return Promise.resolve(); },
     saveNative() { return Promise.resolve(); },
+    queueNucsProduct() { throw new Error("Unexpected NUCS queue"); },
+    loadNucsProduct() { throw new Error("Unexpected NUCS job"); },
     saveObservation(row) { rows.push(row); return Promise.resolve(); },
   };
   return { rows, store, verified: () => verified };

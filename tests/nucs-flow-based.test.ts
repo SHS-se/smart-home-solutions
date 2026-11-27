@@ -1,3 +1,7 @@
+import {
+  marketZipDirectory,
+  marketZipMemberBytes,
+} from "../supabase/functions/_shared/market-xml.ts";
 /** Independently authored synthetic NUCS publications. No measured or household data. */
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import JSZip from "npm:jszip@3.10.1";
@@ -17,7 +21,10 @@ import {
 } from "../supabase/functions/_shared/market-collection-plan.ts";
 import { assessMarketObservation } from "../supabase/functions/_shared/market-evidence-assessment.ts";
 import { marketFoundationDb } from "./helpers/market-foundation-db.ts";
-import { createMarketArchiveHandler } from "../supabase/functions/energy-market-archive/index.ts";
+import {
+  createMarketArchiveHandler,
+  type MarketArchiveObservation,
+} from "../supabase/functions/energy-market-archive/index.ts";
 
 const from = "2026-11-28T00:00:00Z", to = "2026-11-28T03:00:00Z";
 const query = (dataset: NucsFlowDataset = "nucs_week_ahead_available") => ({
@@ -218,14 +225,35 @@ Deno.test("NUCS domains archive immutable compressed bytes and stream full const
 });
 Deno.test("NUCS collector commits net positions before fetching their linked domain, retaining failures explicitly", async () => {
   const bytes = await bundle();
-  const rows: { id: string; dataset: string }[] = [];
+  const rows: MarketArchiveObservation[] = [];
+  let batch:
+    import("../supabase/functions/_shared/market-collection-plan.ts").MarketBatch;
+  const queued: string[] = [];
   const handler = createMarketArchiveHandler({
     projectUrl: "https://vxqpgbzseckgceopitpm.supabase.co",
     entsoeToken: "",
     nucsToken: "synthetic-nucs-secret",
   }, {
     verifyToken: () => Promise.resolve(true),
-    saveBatch: () => Promise.resolve(),
+    saveBatch: (value) => {
+      batch = value;
+      return Promise.resolve();
+    },
+    queueNucsProduct: (_batchId, key) => {
+      queued.push(key);
+      return Promise.resolve();
+    },
+    loadNucsProduct: (_batchId, _key) =>
+      Promise.resolve({
+        batch,
+        available: rows[0]
+          ? {
+            id: rows[0].id,
+            evidence: rows[0]
+              .result as import("../supabase/functions/_shared/nucs-flow-based.ts").NucsFlowEvidence,
+          }
+          : null,
+      }),
     saveNative: () => Promise.resolve(),
     saveObservation: (row) => {
       rows.push(row);
@@ -248,7 +276,20 @@ Deno.test("NUCS collector commits net positions before fetching their linked dom
       body: '{"flowBased":"week"}',
     }),
   );
-  assertEquals(response.status, 200, JSON.stringify(await response.json()));
+  assertEquals(response.status, 202, JSON.stringify(await response.json()));
+  assertEquals(queued.length, 2);
+  while (queued.length) {
+    const result = await handler(
+      new Request("https://example.test", {
+        method: "POST",
+        headers: { "x-energy-market-archive-token": "synthetic" },
+        body: JSON.stringify({
+          nucsProduct: { batch_id: batch!.id, request_key: queued.shift()! },
+        }),
+      }),
+    );
+    assertEquals(result.status, 200, JSON.stringify(await result.json()));
+  }
   assertEquals(rows.map((r) => r.dataset), [
     "nucs_week_ahead_available",
     "nucs_week_ahead_unavailable",
@@ -283,6 +324,16 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
         "supabase/migrations/20261127170000_test_nucs_flow_based.sql",
       ),
     );
+    await db.exec(
+      await Deno.readTextFile(
+        "supabase/migrations/20261127173000_test_nucs_product_workers.sql",
+      ),
+    );
+    await db.exec(
+      await Deno.readTextFile(
+        "supabase/migrations/20261127173100_test_nucs_product_identity.sql",
+      ),
+    );
     const plan = collectionPlan(
       "nucs_week_context",
       new Date("2026-11-27T12:00Z"),
@@ -293,6 +344,20 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
       [batchId, plan],
     );
     const item = plan[0], id = crypto.randomUUID();
+    await db.query("SELECT public.request_test_nucs_product($1,$2)", [
+      batchId,
+      item.key,
+    ]);
+    const job = await db.query<
+      { value: { batch: { id: string }; available: null } }
+    >("SELECT public.read_test_nucs_product($1,$2) value", [batchId, item.key]);
+    assertEquals(job.rows[0].value.batch.id, batchId);
+    assertEquals(job.rows[0].value.available, null);
+    await assertRejects(() =>
+      db.query("SELECT public.request_test_nucs_product($1,'missing')", [
+        batchId,
+      ])
+    );
     const result = await captureNucsFlowEvidence(
       { dataset: "nucs_week_ahead_available", from: item.from, to: item.to },
       "synthetic-nucs-secret",
@@ -326,6 +391,30 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
     const frozen = await read();
     assertEquals(frozen.products[item.dataset].id, id);
     const domainItem = plan[2], domainBytes = await bundle();
+    const linked = (await db.query<
+      {
+        value: {
+          available: {
+            id: string;
+            evidence: {
+              document: { publications: Record<string, unknown>[] };
+            };
+          };
+        };
+      }
+    >(
+      "SELECT public.read_test_nucs_product($1,$2) value",
+      [batchId, domainItem.key],
+    )).rows[0].value.available;
+    assertEquals(linked.id, id);
+    assertEquals(
+      linked.evidence.document.publications[0].id,
+      "synthetic-available",
+    );
+    assertEquals(
+      "positions" in linked.evidence.document.publications[0],
+      false,
+    );
     const domainEvidence = await captureNucsFlowEvidence(
       {
         dataset: "nucs_week_ahead_domain",
@@ -405,11 +494,45 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
     );
     await db.exec("SET ROLE authenticated");
     await assertRejects(read);
+    await assertRejects(() =>
+      db.query("SELECT public.read_test_nucs_product($1,$2)", [
+        batchId,
+        item.key,
+      ])
+    );
+    await assertRejects(() =>
+      db.query("SELECT public.request_test_nucs_product($1,$2)", [
+        batchId,
+        item.key,
+      ])
+    );
     await db.exec("RESET ROLE");
     assertEquals((await db.query("SELECT public FROM storage.buckets")).rows, [{
       public: false,
     }]);
   } finally {
     await db.close();
+  }
+});
+
+Deno.test("native NUCS ZIP extraction enforces local identity and declared expanded bounds", async () => {
+  for (const compression of ["STORE", "DEFLATE"] as const) {
+    const zip = new JSZip();
+    zip.file("synthetic.xml", "<synthetic>native</synthetic>");
+    const bytes = await zip.generateAsync({ type: "uint8array", compression });
+    const entry = marketZipDirectory(bytes)[0];
+    assertEquals(
+      new TextDecoder().decode(await marketZipMemberBytes(bytes, entry)),
+      "<synthetic>native</synthetic>",
+    );
+    await assertRejects(() =>
+      marketZipMemberBytes(bytes, { ...entry, bytes: entry.bytes - 1 })
+    );
+    await assertRejects(() =>
+      marketZipMemberBytes(bytes, { ...entry, localOffset: bytes.length })
+    );
+    await assertRejects(() =>
+      marketZipMemberBytes(bytes, { ...entry, name: "other.xml" })
+    );
   }
 });

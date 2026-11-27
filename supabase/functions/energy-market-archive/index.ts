@@ -1,4 +1,4 @@
-import { captureNucsFlowEvidence, isNucsFlowDataset, NUCS_FLOW_PRODUCTS, NUCS_NATIVE_BUCKET, type NucsFlowEvidence, type NucsFlowDataset, type NucsNativeWriter } from "../_shared/nucs-flow-based.ts";
+import { captureNucsFlowEvidence, isNucsFlowDataset, NUCS_FLOW_PRODUCTS, NUCS_NATIVE_BUCKET, type NucsLinkedSource, type NucsFlowEvidence, type NucsFlowDataset, type NucsNativeWriter } from "../_shared/nucs-flow-based.ts";
 import { svkFlowRequest, parseSvkFlowResponse, type SvkFlowDataset } from "../_shared/svk-physical-flows.ts";
 import { readMarketProvider } from "../_shared/market-provider-response.ts";
 import { entsoeParameters, parseEntsoeResponse, neighbourEntsoeParameters, EntsoeProviderError, type EntsoeResponse } from "../_shared/entsoe-market-data.ts";
@@ -58,6 +58,8 @@ export interface MarketArchiveStore {
   verifyToken(token: string): Promise<boolean>;
   saveBatch(batch: MarketBatch): Promise<void>;
   saveNative: NucsNativeWriter;
+  queueNucsProduct(batchId: string, requestKey: string): Promise<void>;
+  loadNucsProduct(batchId: string, requestKey: string): Promise<{ batch: MarketBatch; available: NucsLinkedSource | null }>;
   saveObservation(row: MarketArchiveObservation, assessment: MarketAssessment): Promise<void>;
 }
 
@@ -147,14 +149,33 @@ export function createMarketArchiveHandler(
       if (!await store.verifyToken(token)) return Response.json({ error: "unauthorized" }, { status: 401 });
     } catch { return Response.json({ error: "archive_auth_failed" }, { status: 500 }); }
     let batch: MarketBatch;
+    let productKey: string | null = null;
+    let available: NucsLinkedSource | null = null;
     try {
-      const { kind, day, flowHistoryDataset } = parseCollectionRequest(await request.text());
-      const now = clock();
-      batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day, flowHistoryDataset) };
+      const body = await request.text();
+      const payload = JSON.parse(body || "{}");
+      if (payload.nucsProduct) {
+        if (Object.keys(payload).length !== 1 ||
+            typeof payload.nucsProduct.batch_id !== "string" || typeof payload.nucsProduct.request_key !== "string") throw new Error("Invalid NUCS job");
+        productKey = payload.nucsProduct.request_key;
+        ({ batch, available } = await store.loadNucsProduct(payload.nucsProduct.batch_id, productKey!));
+        if (!["nucs_week_context", "nucs_month_context"].includes(batch.kind) || !batch.plan.some(p => p.key === productKey)) throw new Error("Invalid NUCS intent");
+      } else {
+        const { kind, day, flowHistoryDataset } = parseCollectionRequest(body);
+        const now = clock();
+        batch = { id: crypto.randomUUID(), kind, requested_at: now.toISOString(), plan: collectionPlan(kind, now, day, flowHistoryDataset) };
+      }
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
-    try { await store.saveBatch(batch); }
-    catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
-    let available: { id: string; evidence: NucsFlowEvidence } | null = null;
+    if (!productKey) {
+      try {
+        await store.saveBatch(batch);
+        if (batch.kind === "nucs_week_context" || batch.kind === "nucs_month_context") {
+          // One product per worker: native XML and bundles exceed the cumulative hosted CPU budget.
+          for (const item of batch.plan.filter(p => !p.dataset.endsWith("_domain"))) await store.queueNucsProduct(batch.id, item.key);
+          return Response.json({ batch_id: batch.id, queued: true }, { status: 202 });
+        }
+      } catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
+    }
     const collect = async ({ dataset, zone, from, to, key, station_id, neighbour, direction }: typeof batch.plan[number]) => {
       const identity = { id: crypto.randomUUID(), batch_id: batch.id, request_key: key, zone,
         requested_from: from, requested_to: to, requested_at: clock().toISOString() };
@@ -184,17 +205,17 @@ export function createMarketArchiveHandler(
       return row;
     };
     const outcomes: PromiseSettledResult<MarketArchiveObservation>[] = [];
-    if (batch.kind === "nucs_week_context" || batch.kind === "nucs_month_context") {
-      for (const item of batch.plan) {
-        try { outcomes.push({ status: "fulfilled", value: await collect(item) }); }
-        catch (reason) { outcomes.push({ status: "rejected", reason }); }
-      }
-    } else {
-      outcomes.push(...await Promise.allSettled(batch.plan.map(collect)));
-    }
+    const planned = productKey ? batch.plan.filter(p => p.key === productKey) : batch.plan;
+    outcomes.push(...await Promise.allSettled(planned.map(collect)));
     const rows = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
     const observations = rows.map(row => ({ id: row.id, dataset: row.dataset, status: row.result.status }));
-    if (rows.length !== batch.plan.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
+    if (rows.length !== planned.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
+    if (productKey && rows.some(r => isNucsFlowDataset(r.dataset) && NUCS_FLOW_PRODUCTS[r.dataset].product === "available")) {
+      try {
+        const domain = batch.plan.find(p => p.dataset.endsWith("_domain"))!;
+        await store.queueNucsProduct(batch.id, domain.key);
+      } catch { return Response.json({ error: "nucs_domain_queue_failed", observations }, { status: 500 }); }
+    }
     return Response.json({ batch_id: batch.id, observations });
   };
 }
@@ -212,6 +233,15 @@ if (import.meta.main) {
     async saveBatch(batch) {
       const { error } = await client.from("energy_market_collection_batches").insert(batch);
       if (error) throw new Error("Archive batch storage failed");
+    },
+    async queueNucsProduct(batchId, requestKey) {
+      const { error } = await client.rpc("request_test_nucs_product", { p_batch_id: batchId, p_request_key: requestKey });
+      if (error) throw new Error("NUCS product queue failed");
+    },
+    async loadNucsProduct(batchId, requestKey) {
+      const { data, error } = await client.rpc("read_test_nucs_product", { p_batch_id: batchId, p_request_key: requestKey });
+      if (error || !data) throw new Error("NUCS product intent missing");
+      return data;
     },
     async saveNative(path, bytes) {
       const { error } = await client.storage.from(NUCS_NATIVE_BUCKET).upload(path, bytes, { contentType: "application/zip", upsert: false });
