@@ -87,3 +87,23 @@ Deno.test('entirely uncontrolled hot water does not create an empty scheduled ba
   assertEquals(result.consumption.series, []);
   assertEquals(result.consumption.baseValues, [5000]);
 });
+
+Deno.test('missing measured charging stays unknown in the middle and newest quarter', () => {
+  const rows = [row(0, true), row(1, true), row(2, true)];
+  delete rows[1].deviceW.charger;
+  delete rows[2].deviceW.charger;
+  const result = project(rows, []);
+  assertEquals(result.consumption.baseValues, [1000, NaN, NaN]);
+  assertEquals(result.consumption.series.find(series => series.key === 'charger')?.values, [1000, NaN, NaN]);
+  assertEquals(result.consumption.issues, [null, { missingDevices: ['charger'] }, { missingDevices: ['charger'] }]);
+  assertEquals(result.consumption.series.find(series => series.key === 'heater')?.values, [1000, 1000, 1000]);
+});
+
+Deno.test('an unavailable measured boiler counter cannot become zero hot-water consumption', () => {
+  const rows = [row(0, true), row(1, true)];
+  delete rows[1].deviceW.boiler;
+  const result = project(rows, [], { name: 'Hot water', colour: '#654321', keys: ['boiler'], byStart: new Map() });
+  assertEquals(result.consumption.baseValues, [1000, NaN]);
+  assertEquals(result.consumption.series.find(series => series.key === 'boiler')?.values, [1000, NaN]);
+  assertEquals(result.consumption.issues[1]?.missingDevices, ['boiler']);
+});

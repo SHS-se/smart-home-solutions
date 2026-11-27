@@ -216,15 +216,19 @@ Deno.test("duplicate meter identities cannot manufacture base consumption", () =
   assert(Number.isNaN(split.baseValues[0]));
 });
 
-Deno.test('missing planned meter contributes zero without losing household consumption', () => {
+Deno.test('missing planned meters leave base load unknown and name the affected devices', () => {
   const split = splitConsumption([
-    candidate({ key: 'sensor.pool_pump_energy', name: 'Pool pump', values: [NaN, 0] }),
-    candidate({ key: 'heater', values: [0, 0] }),
+    candidate({ key: 'charger', name: 'Car charger', values: [NaN, 0] }),
+    candidate({ key: 'heater', values: [800, 800] }),
   ], [2600, 2600]);
-  assertEquals(split.invalidIndices, []);
-  assertEquals(split.issues, [null, null]);
-  assertEquals(split.baseValues, [2600, 2600]);
-  assertEquals(split.baseKwh, 1.3);
+  assertEquals(split.invalidIndices, [0]);
+  assertEquals(split.issues, [{ missingDevices: ['Car charger'] }, null]);
+  assert(Number.isNaN(split.baseValues[0]));
+  assertEquals(split.baseValues[1], 1800);
+  assert(Number.isNaN(split.baseKwh));
+  assertEquals(split.series.find(series => series.key === 'heater')!.values, [800, 800]);
+  assertEquals(consumptionGapDescription(split.issues[0]!, (_sv, en) => en),
+    'Missing readings for: Car charger. Base load cannot be calculated.');
 });
 
 Deno.test('inconsistent consumption is not described as a missing device', () => {
@@ -242,19 +246,30 @@ Deno.test('one missing device leaves other device readings intact, including sma
     candidate({ key: 'small-known', values: [50, 50, 50, 50, 50] }),
   ], flat(3000, 5));
   assertEquals(split.series.find(s => s.key === 'heater')!.values, flat(1800, 5));
-  assertEquals(split.baseValues[1], 1150);
+  assert(Number.isNaN(split.baseValues[1]));
   assertEquals(split.series.find(s => s.key === 'small-known')!.values[1], 50);
-  assertEquals(split.series.find(s => s.key === 'small-missing')!.values[1], 0);
+  assert(Number.isNaN(split.series.find(s => s.key === 'small-missing')!.values[1]));
   assert(split.series.every(s => s.key !== '$other_planned'));
-  assertEquals(split.invalidIndices, []);
-  assertEquals(split.issues, flat(0, 5).map(() => null));
-  split.baseValues.forEach((base, i) => assertEquals(base + split.series.reduce((sum, s) => sum + s.values[i], 0), 3000));
+  assertEquals(split.invalidIndices, [1]);
+  assertEquals(split.issues[1], { missingDevices: ['pump', 'small-missing'] });
+  split.baseValues.forEach((base, i) => {
+    if (i !== 1) assertEquals(base + split.series.reduce((sum, s) => sum + s.values[i], 0), 3000);
+  });
 });
 
-Deno.test('absent and non-finite device readings are zero while negative readings remain invalid', () => {
+Deno.test('absent and non-finite readings stay unknown while negative readings remain invalid', () => {
   const split = splitConsumption([candidate({ key: 'heater', values: [1800, NaN, Infinity, -10] })], flat(3000, 5));
-  assertEquals(split.series[0].values, [1800, 0, 0, -10, 0]);
-  assertEquals(split.baseValues.slice(0, 3), [1200, 3000, 3000]);
-  assertEquals(split.baseValues[4], 3000);
-  assertEquals(split.invalidIndices, [3]);
+  assertEquals(split.series[0].values, [1800, NaN, NaN, -10, NaN]);
+  assertEquals(split.baseValues, [1200, NaN, NaN, NaN, NaN]);
+  assertEquals(split.invalidIndices, [1, 2, 3, 4]);
+});
+
+Deno.test('a later complete capture repairs the split without retaining earlier missing readings', () => {
+  const missing = candidate({ key: 'charger', values: [NaN, 0] });
+  const first = splitConsumption([missing], [9000, 800]);
+  const repaired = splitConsumption([{ ...missing, values: [8200, 0] }], [9000, 800]);
+  assertEquals(first.invalidIndices, [0]);
+  assertEquals(repaired.invalidIndices, []);
+  assertEquals(repaired.baseValues, [800, 800]);
+  assertEquals(repaired.series[0].values, [8200, 0]);
 });

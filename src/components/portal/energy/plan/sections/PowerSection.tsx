@@ -123,6 +123,7 @@ const PowerSection: React.FC<{
     ...(hiddenSeries.has('base') ? [consumption.baseValues] : []),
     ...consumption.series.filter(entry => hiddenSeries.has(`load:${entry.key}`)).map(entry => entry.values),
   ];
+  const missingDeviceNames = [...new Set(consumption.issues.flatMap(issue => issue?.missingDevices ?? []))];
   useEffect(() => {
     if (!trace) return;
     trace.record({
@@ -243,9 +244,11 @@ const PowerSection: React.FC<{
       {hasHistory && <p className="text-xs text-muted-foreground">{t(
         'Historisk förbrukning visas med denna plans enhetsindelning.',
         'Historical consumption is reclassified using this plan’s device roles.')}</p>}
-      {consumption.invalidIndices.length > 0 && <p role="status" className="text-xs text-muted-foreground">{t(
-        'Baslasten saknas när mätvärden inte kan stämmas av. Tillgängliga enhetsvärden visas fortfarande; ≥ anger en ofullständig grupp.',
-        'Base load is unavailable when readings cannot be reconciled. Available device readings remain visible; ≥ marks an incomplete group.')}</p>}
+      {consumption.invalidIndices.length > 0 && <p role="status" className="text-xs text-muted-foreground">{missingDeviceNames.length
+        ? t(`Mätvärden saknas för: ${missingDeviceNames.join(', ')}. Baslasten kan inte beräknas för berörda kvartar.`,
+          `Missing readings for: ${missingDeviceNames.join(', ')}. Base load cannot be calculated for the affected quarters.`)
+        : t('Baslasten saknas när mätvärden inte kan stämmas av. Tillgängliga enhetsvärden visas fortfarande.',
+          'Base load is unavailable when readings cannot be reconciled. Available device readings remain visible.')}</p>}
       <div className="mt-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>

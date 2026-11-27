@@ -119,7 +119,7 @@ export function projectPlanChart(input: {
     colour: waterDevice?.colour ?? hotWater.colour,
     values: view.map((row, i) => panelRows[i].hotWater?.state === 'uncontrolled' ? 0
       : panelRows[i].hotWater?.expectedW
-        ?? [...waterKeys].reduce((sum, key) => sum + (deviceValue(row, key) || 0), 0)),
+        ?? [...waterKeys].reduce((sum, key) => sum + deviceValue(row, key), 0)),
   }] : [];
   const consumption = splitConsumption([...[...active].filter(key => catalogue.has(key)).map(key => ({
     key, name: catalogue.get(key)!.name, colour: catalogue.get(key)!.colour,

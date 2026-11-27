@@ -1380,7 +1380,7 @@ test.describe('requesting a replan', () => {
     await storage.screenshot({ path: testInfo.outputPath('estimated-driving.png'), animations: 'disabled' });
   });
 
-  test('missing device readings contribute zero and preserve base load in the tooltip', async ({ page }, testInfo) => {
+  test('complete device readings preserve measured base load in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{
       start_ts: new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString(),
@@ -1406,6 +1406,32 @@ test.describe('requesting a replan', () => {
     await expect(tooltip).toContainText('2.60 kW');
     await expect(tooltip).not.toContainText('NaN');
     await page.screenshot({ path: testInfo.outputPath('partial-consumption.png') });
+  });
+
+  test('missing measured device energy leaves a base-load gap and names the device', async ({ page }) => {
+    replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
+    replan.history = [{
+      start_ts: new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString(),
+      total_load_kwh: 2.5,
+    }];
+    replan.devices = [
+      { id: 'heater-id', device_key: 'pool_heater', name: 'Synthetic heater', planning_role_override: 'controllable' },
+      { id: 'pump-id', device_key: 'pool_pump', name: 'Synthetic pump', planning_role_override: 'controllable' },
+    ];
+    replan.deviceHistory = [{ start_ts: replan.history[0].start_ts, device_energy_kwh: { 'heater-id': 0.45 } }];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    await chart.focus();
+    await chart.press('ArrowLeft');
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toContainText(/Ej tillgänglig|Unavailable/);
+    await expect(tooltip).toContainText(/Mätvärden saknas för: Synthetic pump|Missing readings for: Synthetic pump/);
+    await expect(tooltip).toContainText('1.80 kW');
+    await expect(tooltip).toContainText('10.00 kW');
+    await expect(tooltip).not.toContainText('8.20 kW');
+    await expect(tooltip).not.toContainText('NaN');
+    await expect(page.getByRole('status').filter({ hasText: /Synthetic pump/ })).toBeVisible();
   });
 
   test('boiler slot control appears without an economic audit or rule score', async ({ page }, testInfo) => {

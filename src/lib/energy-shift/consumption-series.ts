@@ -19,7 +19,7 @@ export interface ConsumptionSeries {
   name: string;
   values: number[];
   kwh: number;
-  /** Missing device readings contribute zero to consumption statistics. */
+  /** Quarters without a finite device reading. */
   partial: boolean[];
   colour: string;
 }
@@ -64,7 +64,7 @@ const totalKwh = (values: readonly number[]): number =>
  * Split the window's meters into bands and background.
  *
  * `houseDemandW` is gross household consumption. Subtract all Planned meters,
- * Missing device readings contribute zero;
+ * Missing device readings leave the remainder unknown;
  * inconsistent household/device totals still leave the base unknown.
  */
 export const splitConsumption = (
@@ -73,7 +73,7 @@ export const splitConsumption = (
 ): ConsumptionSplit => {
   const length = houseDemandW.length;
   candidates = candidates.map(candidate => ({ ...candidate,
-    values: Array.from({ length }, (_, i) => Number.isFinite(candidate.values[i]) ? candidate.values[i] : 0),
+    values: Array.from({ length }, (_, i) => Number.isFinite(candidate.values[i]) ? candidate.values[i] : NaN),
   }));
 
   const series = candidates
@@ -83,7 +83,7 @@ export const splitConsumption = (
       name: candidate.name,
       values: [...candidate.values],
       kwh: totalKwh(candidate.values),
-      partial: candidate.values.map(() => false),
+      partial: candidate.values.map(value => !Number.isFinite(value)),
       colour: candidate.colour,
     }));
 

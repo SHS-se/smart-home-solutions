@@ -771,7 +771,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             strokeDasharray="1 3" strokeLinecap="round"
           />
 
-          {[...series].reverse().map((entry, index) => control(`load:${entry.key}`, entry.name, entry.colour, load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
+          {[...series].reverse().map((entry, index) => control(`load:${entry.key}`, entry.name, entry.colour, load.top + 12 + index * 18, `${entry.partial.some(Boolean) ? "≥ " : ""}${entry.kwh.toFixed(1)} kWh`))}
           {control('base', t('Baslast', 'Base load'), PLAN_COLOURS.base, load.top + 12 + series.length * 18, energy(baseValues))}
           {control('solar:outline', t('Solproduktion', 'Solar production'), PLAN_COLOURS.solar, load.top + 30 + series.length * 18, energy(rows.map(row => row.solarW)))}
 
