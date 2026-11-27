@@ -49,6 +49,8 @@ import { PLAN_COLOURS } from '../../charts/palette';
 import { ownerColour, type EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
 import { poolHeaters } from '../../../../../../supabase/functions/_shared/planner/pool-devices';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
+import PlanEnergySummary from '../PlanEnergySummary';
+import type { EnergySeriesId } from '../../charts/series-interaction';
 
 const RULE_LABEL = new Map(DEFAULT_RULES.map(rule => [rule.key, rule.label]));
 const total = (points: Record<string, number>) => Object.values(points).reduce((a, b) => a + b, 0);
@@ -90,6 +92,7 @@ const PowerSection: React.FC<{
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
+  const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<EnergySeriesId>>(() => new Set());
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
   const { plan, current } = model;
@@ -116,6 +119,10 @@ const PowerSection: React.FC<{
     hotWater, planSlots: model.active.slots, poolHeaterKeys: new Set(poolHeaterKeys),
   }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater, model.active.slots, poolHeaterKeys]);
   const { rows: panelRows, consumption, hotWaterSeriesKey } = chart;
+  const excludedLoads = [
+    ...(hiddenSeries.has('base') ? [consumption.baseValues] : []),
+    ...consumption.series.filter(entry => hiddenSeries.has(`load:${entry.key}`)).map(entry => entry.values),
+  ];
   useEffect(() => {
     if (!trace) return;
     trace.record({
@@ -178,6 +185,7 @@ const PowerSection: React.FC<{
   if (view.length === 0) {
     return (
       <>
+        <PlanEnergySummary rows={view} excludedLoads={excludedLoads} dayWindow={dayWindow} />
         <div className="mb-2 flex justify-end">
           <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
         </div>
@@ -198,11 +206,13 @@ const PowerSection: React.FC<{
 
   return (
     <>
+      <PlanEnergySummary rows={view} excludedLoads={excludedLoads} dayWindow={dayWindow} />
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-medium">{title}</h3>
         <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
       </div>
       <EnergyChart
+        visibility={{ hidden: hiddenSeries, onChange: setHiddenSeries }}
         rows={panelRows}
         colours={colours}
         series={consumption.series}

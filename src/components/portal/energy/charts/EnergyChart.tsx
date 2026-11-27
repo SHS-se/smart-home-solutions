@@ -253,12 +253,17 @@ export interface EnergyChartProps {
   rooms?: readonly EnergyRoomLine[];
   /** Explicit device relationships used only for linked highlighting. */
   relations?: readonly EnergySeriesRelation[];
+  /** Share legend selection with totals for the displayed window. */
+  visibility?: {
+    hidden: ReadonlySet<EnergySeriesId>;
+    onChange: (hidden: ReadonlySet<EnergySeriesId>) => void;
+  };
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
   colours, rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, relations = NO_RELATIONS,
+  costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, relations = NO_RELATIONS, visibility,
 }) => {
   const { t } = useLanguage();
   const contextTimeZone = useHomeTimeZone();
@@ -270,7 +275,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   const [pointer, setPointer] = useState<{ left: number; top: number } | null>(null);
   const [pointedSeries, setPointedSeries] = useState<EnergySeriesId | null>(null);
   const [focusedSeries, setFocusedSeries] = useState<EnergySeriesId | null>(null);
-  const [hidden, setHidden] = useState<ReadonlySet<EnergySeriesId>>(() => new Set());
+  const [localHidden, setLocalHidden] = useState<ReadonlySet<EnergySeriesId>>(() => new Set());
+  const hidden = visibility?.hidden ?? localHidden;
   const activeSeries = pointedSeries ?? focusedSeries;
   const spotlight = useMemo(() => spotlightSeries(activeSeries !== null && hidden.has(activeSeries) ? null : activeSeries,
     [...BUILTIN_RELATIONS, ...relations]), [activeSeries, hidden, relations]);
@@ -501,11 +507,12 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   });
   const point = (id: EnergySeriesId | null) => { setPointedSeries(id); setHover(null); setPointer(null); };
   const focus = (id: EnergySeriesId | null) => { setFocusedSeries(id); setHover(null); setPointer(null); };
-  const toggle = (id: EnergySeriesId) => setHidden(current => {
-    const next = new Set(current);
+  const toggle = (id: EnergySeriesId) => {
+    const next = new Set(hidden);
     if (!next.delete(id)) next.add(id);
-    return next;
-  });
+    if (visibility) visibility.onChange(next);
+    else setLocalHidden(next);
+  };
   const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, hatched = false, anchorX?: number) => (
     <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} anchorX={anchorX} hatched={hatched}
       right={right} width={viewWidth} hidden={hidden.has(id)} active={spotlight?.has(id) ?? false}

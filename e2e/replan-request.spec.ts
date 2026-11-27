@@ -1386,8 +1386,11 @@ test.describe('requesting a replan', () => {
       start_ts: new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString(),
       total_load_kwh: 0.65,
     }];
-    replan.devices = [{ id: 'heater-id', device_key: 'pool_heater', name: 'Pool heater', planning_role_override: 'controllable' }];
-    replan.deviceHistory = [{ start_ts: replan.history[0].start_ts, device_energy_kwh: { 'heater-id': 0.45 } }];
+    replan.devices = [
+      { id: 'heater-id', device_key: 'pool_heater', name: 'Pool heater', planning_role_override: 'controllable' },
+      { id: 'pump-id', device_key: 'pool_pump', name: 'Synthetic pump', planning_role_override: 'controllable' },
+    ];
+    replan.deviceHistory = [{ start_ts: replan.history[0].start_ts, device_energy_kwh: { 'heater-id': 0.45, 'pump-id': 0 } }];
     await page.goto('/portal/energy-modeling?tab=plan');
     await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
     const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
@@ -1805,6 +1808,60 @@ test.describe('requesting a replan', () => {
       await page.screenshot({ path: testInfo.outputPath('measured-room-without-forecast.png'), fullPage: true });
     });
   }
+
+  test('hidden consumption series update totals across windows and restore original amounts', async ({ page }, testInfo) => {
+    // Synthetic constant loads isolate the displayed exclusion from planning.
+    const device = mixedModeFixture.plan.device_models[0];
+    const loads = [{ key: 'synthetic-a', watts: 4000 }, { key: 'synthetic-b', watts: 2000 }];
+    replan.publishedPlan = { ...PLAN,
+      device_models: loads.map(load => ({ ...device, key: load.key, name: load.key, planning_service: undefined })),
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({
+        ...slot, load_w: 8000, base_w: 2000, pv_w: 2000, grid_import_w: 6000, grid_export_w: 0,
+        battery_charge_w: 0, battery_discharge_w: 0, boiler_consumption_w: 0,
+        import_price_sek_per_kwh: 2, export_price_sek_per_kwh: 0.5,
+        import_cost_sek: 3, export_revenue_sek: 0,
+        device_loads_w: Object.fromEntries(loads.map(load => [load.key, load.watts])),
+        device_commands: Object.fromEntries(loads.map(load => [load.key, { type: 'switch_schedule' as const, on_seconds: 900 }])),
+      })) } },
+    };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const cards = page.getByTestId('energy-totals').locator(':scope > div');
+    const expectTotals = async (perQuarter: { consumption: number; imported: number; exported: number; cost: number }, today = false) => {
+      const slots = replan.publishedPlan!.plans.priority.slots.filter(slot => !today
+        || new Date(slot.start).toLocaleDateString('sv-SE', { timeZone: 'Europe/Stockholm' })
+          === new Date(CAPTURED_AT).toLocaleDateString('sv-SE', { timeZone: 'Europe/Stockholm' }));
+      const n = slots.length, priced = slots.filter(slot => slot.binding).length;
+      const energy = (value: number) => `${(n * value).toFixed(1)} kWh`;
+      for (const [index, value] of [0.5, perQuarter.consumption, perQuarter.imported, perQuarter.exported].entries()) {
+        await expect(cards.nth(index)).toContainText(energy(value));
+      }
+      await expect(cards.nth(4)).toContainText(`${(priced * perQuarter.cost).toFixed(2)} SEK`);
+    };
+    const a = page.locator('[data-series-control="load:synthetic-a"] button');
+    const b = page.locator('[data-series-control="load:synthetic-b"] button');
+    const base = page.locator('[data-series-control="base"] button');
+    const original = { consumption: 2, imported: 1.5, exported: 0, cost: 3 };
+    await expectTotals(original);
+    await a.click();
+    await expectTotals({ consumption: 1, imported: 0.5, exported: 0, cost: 1 });
+    await expect(page.getByTestId('visible-load-estimate')).toBeVisible();
+    await b.focus();
+    await b.press('Space');
+    await expectTotals({ consumption: 0.5, imported: 0, exported: 0, cost: 0 });
+    await base.click();
+    await expectTotals({ consumption: 0, imported: 0, exported: 0.5, cost: -0.25 });
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    await expectTotals({ consumption: 0, imported: 0, exported: 0.5, cost: -0.25 }, true);
+    await expect(a).toHaveAttribute('aria-pressed', 'false');
+    await a.click(); await b.click(); await base.click();
+    await expectTotals(original, true);
+    await expect(page.getByTestId('visible-load-estimate')).toHaveCount(0);
+    const totals = await cards.allTextContents();
+    await page.locator('[data-series-control="soc:home"] button').click();
+    await expect(cards).toHaveText(totals);
+    await a.click();
+    await page.getByTestId('energy-totals').screenshot({ path: testInfo.outputPath('visible-load-totals.png') });
+  });
 
   test('series controls hide and restore bands and storage independently', async ({ page }, testInfo) => {
     await page.goto('/portal/energy-modeling?tab=plan');

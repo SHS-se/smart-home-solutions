@@ -41,7 +41,6 @@ import {
 } from './plan/types';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import {
-  formatHomeDayMonth,
   formatHomeStamp,
   formatHomeTime,
   formatHomeTimeWithSeconds,
@@ -50,7 +49,6 @@ import {
   availableDayWindows,
   buildEnergyTimeline,
   dayWindowRange,
-  summariseTimeline,
   unpricedMeasuredQuarters,
   type DayWindow,
   type PoolSlotRow,
@@ -62,7 +60,6 @@ export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
 import {
   EmptyState,
-  Kpi,
 } from './plan/ui';
 import { usePlanModel } from './plan/usePlanModel';
 import PowerSection from './plan/sections/PowerSection';
@@ -677,27 +674,6 @@ const PlanView: React.FC<{
   }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, plannedPoolC, poolActuals, prices, roomActuals, roomPlan]);
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
-  const windowSummary = summariseTimeline(timeline, timelineRange);
-  const windowLabel = dayWindow === 'upcoming'
-    ? t('kommande plan', 'upcoming plan')
-    : dayWindow === 'all'
-    ? t('hela perioden', 'the whole period')
-    : dayWindow === 0
-      ? t('idag', 'today')
-      : formatHomeDayMonth(
-        timeline[timelineRange.from]?.start ?? nowMs,
-        homeTimeZone,
-      );
-  // "Today" is part measured and part forecast. Saying which is which is the
-  // difference between a number and a claim.
-  const provenance = windowSummary.measuredSlotCount > 0 && windowSummary.plannedSlotCount > 0
-    ? t(
-      `${windowSummary.measuredSlotCount} uppmätta · ${windowSummary.plannedSlotCount} planerade kvartar`,
-      `${windowSummary.measuredSlotCount} measured · ${windowSummary.plannedSlotCount} planned quarters`,
-    )
-    : windowSummary.plannedSlotCount > 0
-      ? t('planerat', 'planned')
-      : t('uppmätt', 'measured');
 
   return (
     <div className="space-y-6">
@@ -912,37 +888,6 @@ const PlanView: React.FC<{
         </CardHeader>
         <CardContent>
           {section === 'plan' && (
-          <>
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
-            <Kpi
-              label={t('Solproduktion', 'Solar production')}
-              value={`${windowSummary.solarKwh.toFixed(1)} kWh`}
-              detail={provenance}
-            />
-            <Kpi
-              label={t('Husets förbrukning', 'House consumption')}
-              value={`${windowSummary.consumptionKwh.toFixed(1)} kWh`}
-              detail={t('all last i perioden', 'all load in the period')}
-            />
-            <Kpi
-              label={t('Nätimport', 'Grid import')}
-              value={`${windowSummary.gridImportKwh.toFixed(1)} kWh`}
-              detail={windowLabel}
-            />
-            <Kpi
-              label={t('Nätexport', 'Grid export')}
-              value={`${windowSummary.gridExportKwh.toFixed(1)} kWh`}
-              detail={windowLabel}
-            />
-            <Kpi
-              label={t('Nettokostnad', 'Net cost')}
-              value={`${windowSummary.netCostSek.toFixed(2)} SEK`}
-              detail={windowSummary.fullyPriced
-                ? t('import minus exportersättning', 'import minus export credit')
-                : t('endast prissatta kvartar', 'priced quarters only')}
-              tone={windowSummary.netCostSek > 0 ? undefined : 'good'}
-            />
-          </div>
           <PowerSection
             model={model}
             trace={current.home_id === homeId ? trace : undefined}
@@ -959,7 +904,6 @@ const PlanView: React.FC<{
             poolTargetC={plannedPoolTarget(plan)}
             rooms={chartRooms}
           />
-          </>
           )}
 
           {section === 'thermal' && (
