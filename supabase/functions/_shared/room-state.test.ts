@@ -20,6 +20,22 @@ const input = (mean = 20, intervals: RoomStateInterval[] = []) => ({
   fallback: { outdoor_c: 0, house_c: 20, solar_w_per_m2: 0 },
 });
 
+Deno.test("time-aware indoor estimates retain native spans and estimated provenance", () => {
+  const physics = { ...model(), house_coupling_per_h: 1 };
+  const spans: Array<{ start_ms: number; end_ms: number }> = [];
+  const result = estimateRoomState(physics, {
+    reading: { start_ms: 0, end_ms: 0, mean_c: 20 },
+    intervals: [0, 1].map(i => row(i / 4, (i + 1) / 4, 0)),
+    fallback: { outdoor_c: 0, house_c: span => {
+      spans.push({ start_ms: span.start_ms, end_ms: span.end_ms }); return span.start_ms === 0 ? 10 : 15;
+    } },
+  }, H / 2);
+  const first = 10 + (20 - 10) * Math.exp(-.25);
+  assertAlmostEquals(result.temperature_c, 15 + (first - 15) * Math.exp(-.25), 1e-12);
+  assertEquals(spans, [{ start_ms: 0, end_ms: H / 4 }, { start_ms: H / 4, end_ms: H / 2 }]);
+  assertEquals(result.estimated_boundary, [{ start_ms: 0, end_ms: H / 2, fields: ["house_c"] }]);
+});
+
 /** Independent RK4 integration includes integral(T), without the production
  * endpoint or observation kernels. */
 function integrate(physics: DynamicThermalZoneModel, initial: number[], hours: number, watts: number, outdoor = 0) {

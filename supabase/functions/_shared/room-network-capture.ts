@@ -1,4 +1,5 @@
 import { roomHeatingDirectionKnown } from "./planner/models/room/observation.ts";
+import { connectedRoomBoundary, type ConnectedBoundaryRoom } from "./planner/models/room/connected-state.ts";
 import {
   type ConnectedFilterDiagnostics,
   type ConnectedRoomObservation,
@@ -36,17 +37,11 @@ export function assembleConnectedRoomNodes(
   snapshot: OptimisationSnapshot,
   captures: readonly ConnectedRoomFilterCapture[],
   observations: ReadonlyMap<string, RoomStateReading>,
-  boundaryModels: readonly ConnectedRoomResponse[] = captures.map((c) =>
-    c.model
-  ),
+  boundaryRooms: readonly ConnectedBoundaryRoom[] = captures.map(c => ({ key: c.room.key, model: c.room.connected_exchange ?? c.model })),
 ) {
   const warnings: ReturnType<typeof planningWarning>[] = [],
     nodes: ConnectedRoomPlanningNode[] = [];
   const clock = roomPlanClock(snapshot);
-  const outside =
-    snapshot.outdoor_temperature_c?.filter((c): c is number =>
-      typeof c === "number" && Number.isFinite(c)
-    ) ?? [];
   for (const { room, model, rows, filtered } of captures) {
     try {
       const { posterior, diagnostics } = filtered ??
@@ -87,36 +82,10 @@ export function assembleConnectedRoomNodes(
           exchange = rates.reduce((a, b) => a + b, 0),
           t = model.thermal,
           h = t.heater;
-        const elapsed = Math.max(0, clock.start_ms - reading.start_ms) /
-          3_600_000;
-        // At the coldest node positive exchange cannot cool further. Include
-        // every supported boundary and the most negative uncontrolled forcing;
-        // missing peer heat is never replaced by an assumed warm neighbour.
-        const supported = [
-          reading.mean_c,
-          ...outside,
-          ...[...observations.values()].map((value) => value.mean_c),
-          ...boundaryModels.filter((model) =>
-            model.reference_state.observations > 0
-          ).map((model) => model.reference_state.temperature_c),
-          ...captures.flatMap((capture) => {
-            const last = capture.rows.findLast((row) =>
-              row.room_c !== null && Number.isFinite(row.room_c)
-            );
-            return last
-              ? [last.room_c!]
-              : observations.has(capture.room.key)
-              ? [observations.get(capture.room.key)!.mean_c]
-              : capture.model.reference_state.observations > 0
-              ? [capture.model.reference_state.temperature_c]
-              : [];
-          }),
-        ];
-        const lower = Math.min(...supported) +
-          Math.min(
-              0,
-              ...boundaryModels.map((model) => model.thermal.background_per_h),
-            ) * elapsed;
+        const nowcast = snapshot.outdoor_temperature_c?.[0];
+        const outdoor = typeof nowcast === "number" && Number.isFinite(nowcast) ? nowcast :
+          rows.findLast(row => row.outdoor_c !== null && Number.isFinite(row.outdoor_c))?.outdoor_c ?? reading.mean_c;
+        const boundary = connectedRoomBoundary(room.key, boundaryRooms, observations, rows, outdoor, rates);
         const scalar: DynamicThermalZoneModel = {
           response_family: "finite",
           gain_c_per_wh: h?.gain_c_per_wh ?? 0,
@@ -145,17 +114,18 @@ export function assembleConnectedRoomNodes(
               : 0,
             outdoor_c: row.outdoor_c,
             solar_w_per_m2: row.solar_w_per_m2,
-            house_c: exchange > 0
+            house_c: exchange > 0 && model.incoming.every(edge =>
+              typeof row.peer_c?.[edge.from] === "number" && Number.isFinite(row.peer_c[edge.from]))
               ? model.incoming.reduce(
                 (sum, edge, i) =>
-                  sum + rates[i] * (row.peer_c?.[edge.from] ?? lower),
+                  sum + rates[i] * row.peer_c![edge.from]!,
                 0,
               ) / exchange
-              : lower,
+              : null,
           })),
           fallback: {
-            outdoor_c: outside[0] ?? lower,
-            house_c: lower,
+            outdoor_c: outdoor,
+            house_c: boundary,
             solar_w_per_m2: 0,
           },
         }, clock.start_ms);

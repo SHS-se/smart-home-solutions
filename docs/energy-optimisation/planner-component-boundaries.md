@@ -94,6 +94,21 @@ after positive-part comfort shortfall and closed-loop thermostat decisions.
 Finite-path feasibility is a numerical replay statistic, not a universal
 physical guarantee. Existing execution safety remains authoritative.
 
+When capture-time neighbour readings are late, starting-state reconstruction
+uses the frozen indoor observations and keyed receiving models. A matching
+native interval supplies its measured mean directly. Otherwise native means
+condition indoor endpoint estimates, with no unknown heater, stored-heat, solar
+or positive-background credit. A cooling envelope over the transitive incoming
+component advances those conditional anchors across the actual missing span.
+Internal exchange redistributes indoor warmth; it is not an additional outdoor
+loss. Only observed historical weather and the current nowcast enter that
+reconstruction, never colder future forecast slots or disconnected rooms.
+Asynchronous anchors remain conditional effective-model estimates, not absolute
+confidence bounds over stochastic disturbances. The same frozen boundary basis
+is used in staged and full capture. Estimates retain their late/missing-data
+diagnostics and are recomputed when observations arrive, without a refit or
+persisting inferred temperatures as measurements.
+
 Observed passive rooms, and controlled rooms with no identified heater response,
 can supply a passive receiving equation. An unidentifiable gain is represented
 by `heater: null`, without inventing a gain. Existing controls and empirical demand remain separate; only

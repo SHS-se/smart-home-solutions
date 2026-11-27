@@ -54,7 +54,7 @@ const FILTER_BUDGET_MS = 600;
 const FILTER_ROWS = 128;
 // Explicit protocol covers capture/qualification/assembly orchestration outside
 // the model digest. Bump on any incompatible derived-state semantic change.
-export const CONNECTED_CAPTURE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}:${ROOM_LEARNER_VERSION}:planning_capture_v3`;
+export const CONNECTED_CAPTURE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}:${ROOM_LEARNER_VERSION}:planning_capture_v4`;
 
 /** One bounded action in the existing planning attempt. Standalone checkpoints
  * release their lease; the owned worker retains it for the parent's bounded wave.
@@ -278,6 +278,6 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
   }
   if (state.phase !== "assemble" || !state.posterior || !state.diagnostics) throw new Error("Invalid connected planning assembly");
   const assembled = assembleConnectedRoomNodes(snapshot, [{ room, model, rows, filtered: { posterior: state.posterior, diagnostics: state.diagnostics } }],
-    new Map(pending.observations), pending.rooms.flatMap(room => room.connected_exchange ? [room.connected_exchange] : []));
+    new Map(pending.observations), pending.rooms.flatMap(room => room.connected_exchange ? [{ key: room.key, model: room.connected_exchange }] : []));
   return checkpoint({ ...startRoom(state.room + 1, [...state.warnings, ...assembled.warnings]), completed_nodes: assembled.nodes });
 }

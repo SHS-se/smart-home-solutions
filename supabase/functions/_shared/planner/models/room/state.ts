@@ -29,8 +29,9 @@ export interface RoomStateInterval {
 export interface RoomStateHistory {
   reading: RoomStateReading;
   intervals: readonly RoomStateInterval[];
-  /** Available boundary estimates, not asserted physical lower bounds. */
-  fallback: { outdoor_c: number; house_c: number; solar_w_per_m2?: number };
+  /** Available boundary estimates, not asserted physical lower bounds. A house
+   * evaluator receives the actual uncovered span and retains estimate provenance. */
+  fallback: { outdoor_c: number; house_c: number | ((span: { start_ms: number; end_ms: number }) => number); solar_w_per_m2?: number };
 }
 type Span = { start_ms: number; end_ms: number };
 type Boundary = "outdoor_c" | "house_c" | "solar_w_per_m2";
@@ -46,11 +47,13 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 
 /** Fill only actual gaps, then coalesce identical inputs. Work scales with the
  * received history, never the number of quarters in a missing span. */
-function historySpans(history: readonly RoomStateInterval[], from: number, to: number): RoomStateInterval[] {
+function historySpans(history: readonly RoomStateInterval[], from: number, to: number, estimateIndoor = false): RoomStateInterval[] {
   const result: RoomStateInterval[] = [];
   const append = (row: RoomStateInterval) => {
     const last = result.at(-1);
-    if (last && last.end_ms === row.start_ms && last.heater_w === row.heater_w &&
+    // A missing indoor value may be evaluated from different native peer means
+    // in adjacent intervals. Do not erase those source boundaries by coalescing.
+    if (last && (!estimateIndoor || finite(last.house_c) && finite(row.house_c)) && last.end_ms === row.start_ms && last.heater_w === row.heater_w &&
       last.outdoor_c === row.outdoor_c && last.house_c === row.house_c && last.solar_w_per_m2 === row.solar_w_per_m2) {
       last.end_ms = row.end_ms;
     } else result.push(row);
@@ -84,6 +87,7 @@ export function estimateRoomState(model: DynamicThermalZoneModel, input: RoomSta
     reading.end_ms < reading.start_ms || coupling < 0 || lag < 0) throw new Error("Malformed room state inputs");
   const history = input.intervals.filter(row => finite(row.start_ms) && finite(row.end_ms) && row.end_ms > row.start_ms)
     .slice().sort((a, b) => a.start_ms - b.start_ms);
+  const estimateIndoor = typeof input.fallback.house_c === "function";
   const missing_power: Span[] = [], estimated_boundary: EstimatedRoomState["estimated_boundary"] = [];
   const missing = (row: Span) => {
     const last = missing_power.at(-1);
@@ -95,7 +99,8 @@ export function estimateRoomState(model: DynamicThermalZoneModel, input: RoomSta
     const boundary = (field: Boundary, needed: boolean): number => {
       if (finite(row[field])) return row[field];
       if (!needed) return 0;
-      const value = input.fallback[field];
+      const fallback = input.fallback[field];
+      const value = typeof fallback === "function" ? fallback(row) : fallback;
       if (!finite(value)) throw new Error(`Room state needs an available ${field} estimate`);
       fields.push(field);
       return value;
@@ -129,7 +134,7 @@ export function estimateRoomState(model: DynamicThermalZoneModel, input: RoomSta
   // independently reconstructed; a room mean never invents floor energy.
   let state: RoomState = { temperature_c: 0, stored_heat_c: heat };
   let decay = 1, integralDecay = 0, integralOffset = 0;
-  const observationSpans = historySpans(history, reading.start_ms, reading.end_ms);
+  const observationSpans = historySpans(history, reading.start_ms, reading.end_ms, estimateIndoor);
   for (const row of observationSpans) {
     const c = conditions(row), op = roomMeanObservation(coupling, lag, c.hours);
     const forcing = model.cooling_constant_per_h * c.outdoor_c + house * c.house_c + c.background_c_per_h;
@@ -151,12 +156,12 @@ export function estimateRoomState(model: DynamicThermalZoneModel, input: RoomSta
     // to the requested instant; before entry, retain that estimate without
     // reversing dissipative dynamics or relabeling the observation timestamp.
     state = { temperature_c: (reading.mean_c - meanOffset) / meanDecay, stored_heat_c: heat };
-    for (const row of historySpans(history, reading.start_ms, Math.max(reading.start_ms, toMs))) {
+    for (const row of historySpans(history, reading.start_ms, Math.max(reading.start_ms, toMs), estimateIndoor)) {
       const c = conditions(row, false, false);
       state = stepRoom(roomTransition(model, c), state, c.watts);
     }
   } else {
-    for (const row of historySpans(history, reading.end_ms, toMs)) {
+    for (const row of historySpans(history, reading.end_ms, toMs, estimateIndoor)) {
       const c = conditions(row);
       state = stepRoom(roomTransition(model, c), state, c.watts);
     }
