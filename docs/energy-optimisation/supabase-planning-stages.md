@@ -252,10 +252,18 @@ alongside the existing retry backoff. Trace propagation is not stripped or reset
 Each subordinate writer holds its own lease and cursor under the active parent
 fence. Shared home/current/job authority locks avoid serializing sibling work;
 no lock spans computation or HTTP. A late child after parent release or takeover
-cannot checkpoint. The balanced barrier merges completed replicas in index order,
-then applies the unchanged accuracy test. Unresolved integration increases the
-balanced target. Deterministic physics evaluates one path and records zero counts
-for the other replicas. There is no trajectory cap or whole-job timeout.
+cannot checkpoint. The balanced barrier merges completed replicas in index order.
+New forecasts freeze the v3 estimation policy at capture: 64 stochastic
+trajectories across four independent replicas, or one exact trajectory for
+deterministic physics with zero counts for the other replicas. The native
+comfort, cost and electrical comparisons still select the command vector from
+those joint physical paths. Publication does not wait for repeated doubling to
+stabilize every future temperature or energy mean to a display tolerance.
+These are finite-sample estimates; a borderline decision can differ from one
+made with more samples. Actual trajectory, conditional-path and replica counts
+are archived after evaluation. Completed historical captures retain their
+recorded counts; unfinished v2 captures require a fresh capture. There is no
+whole-job timeout.
 
 The parent loads the completed execution input and result once for atomic
 publication. Publication, supersession and terminal failure delete compiled

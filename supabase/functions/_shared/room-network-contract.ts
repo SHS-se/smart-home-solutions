@@ -1,6 +1,6 @@
 import artifact from "./planner-wasm/artifact.json" with { type: "json" };
-import { CONNECTED_INTEGRATION_REVISION } from "./planner/models/room/ensemble-accuracy.ts";
 import type { ConnectedRoomForecastIdentity } from "./planner/models/room/network.ts";
+import { PlanningError } from "./planning-errors.ts";
 export const ROOM_NETWORK_WORK_REVISION =
   "joint_regime_replicas_philox_v3" as const;
 
@@ -212,6 +212,17 @@ export interface NativeRoomNetworkAdvanced {
       no_improvement: boolean;
     };
   };
+}
+
+const CONNECTED_INTEGRATION_REVISION = "connected_integration_accuracy_v3";
+
+/** A completed capture records the native draw count. New captures freeze the policy alone. */
+export function connectedForecastTarget(forecast: ConnectedRoomForecastIdentity): number {
+  if (forecast.trajectories !== undefined) return forecast.trajectories;
+  if (forecast.accuracy_revision !== CONNECTED_INTEGRATION_REVISION) {
+    throw new PlanningError("Room forecast policy changed. A fresh capture is required.", "planner_upgraded", 409, "recapture");
+  }
+  return 64;
 }
 
 /** Frozen numerical identity travels with the complete replay input. */

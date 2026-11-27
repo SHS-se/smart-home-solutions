@@ -810,7 +810,14 @@ fn finish_quarter(
             let room = &input.network.rooms[j];
             let q = &room.input.quarters[slot];
             let temperature = path.states[set].temperatures[room.node];
-            if q.transition.carry == 0. && temperature > q.maximum_c + 1e-9 {
+            // A mandatory target would replay the same quarter from the same
+            // start with identical innovations. Only a different target can
+            // turn a still-feasible command vector into an infeasible one.
+            if path.feasible[set]
+                && q.transition.carry == 0.
+                && temperature > q.maximum_c + 1e-9
+                && set_commands[j].targets_c[slot] != mandatory[j].targets_c[slot]
+            {
                 let maximum = q.maximum_c;
                 let node = room.node;
                 let mut commands = set_commands.clone();

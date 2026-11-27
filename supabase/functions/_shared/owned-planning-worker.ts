@@ -5,13 +5,12 @@ import { prepareOwnedRulesProposals, applyCapturedConnectedForecast } from "./ru
 import { solveRulesPlan, assembleRulesPlan, type PreparedRulesInput, type SolvedRulesInput } from "./rules-planner.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import type { RoomPreparationProgress } from "./rules-room-services.ts";
-import { connectedForecastLayout, compileConnectedNodeBelief, type ConnectedRoomCatalog, type ConnectedRoomProposalNetwork } from "./rules-connected-room-services.ts";
+import { compileConnectedNodeBelief, type ConnectedRoomCatalog, type ConnectedRoomProposalNetwork } from "./rules-connected-room-services.ts";
 import { resolvedForecastCounts } from "./rules-planning-client.ts";
 import { encodeForecastCatalogPages } from "./room-forecast-catalog.ts";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
-import { connectedIntegrationAccuracy } from "./planner/models/room/ensemble-accuracy.ts";
-import type { NativeRoomNetworkNodeHeader, NativeRoomNetworkInput, NativeRoomNetworkOutput,
-  NativeRoomNetworkReplicaWork, NativeRoomNetworkSelectedHypothesis } from "./room-network-contract.ts";
+import { connectedForecastTarget, type NativeRoomNetworkNodeHeader, type NativeRoomNetworkInput, type NativeRoomNetworkOutput,
+  type NativeRoomNetworkReplicaWork, type NativeRoomNetworkSelectedHypothesis } from "./room-network-contract.ts";
 import { OWNED_PLANNING_REVISION, type OwnedPlanningAction, type OwnedPlanningDispatch,
   type OwnedPlanningOwner, type OwnedPlanningResponse } from "./owned-planning-contract.ts";
 import { hashOwnedSnapshot, type OwnedSnapshotHashHeader } from "./owned-snapshot-hash.ts";
@@ -22,7 +21,7 @@ import type { PlanningTrace } from "./planning-trace.ts";
 
 interface Header {
   network: NativeRoomNetworkInput; node_headers: NativeRoomNetworkNodeHeader[];
-  seed: [number, number]; captured_target?: number;
+  seed: [number, number]; target: number;
 }
 interface Context { progress: RoomPreparationProgress; forecast: ConnectedRoomCatalog["context"] }
 interface QualifiedForecast { output: NativeRoomNetworkOutput; counts: { trajectories: number; replayed_paths: number; replicates: Array<{trajectories:number}> } }
@@ -99,7 +98,7 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
       target_local_draws: saved.target_local_draws,
       // A warm Edge execution may serve another replica before retiring. Leave
       // CPU for that action and the compressed checkpoint after each native slice.
-      max_work: Math.max(1, Math.min(131072, Math.floor(12288 * (9 / header.network.nodes.length) ** 2))),
+      max_work: Math.max(1, Math.min(131072, Math.floor(24576 * (9 / header.network.nodes.length) ** 2))),
       work, selected_hypotheses: hypotheses }, trace);
     const dispatch = await rpc<OwnedPlanningDispatch | null>("checkpoint_energy_forecast_replica", {
       p_replica: action.replica, p_slice_fence: saved.slice_fence, p_cursor: saved.cursor,
@@ -152,7 +151,7 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
       const identityPrefix = JSON.stringify({snapshot: saved.input!.snapshot.snapshot_id, forecast, network, beliefs: []}).slice(0, -2);
       return await checkpoint({ phase: "catalog", node_keys: network.nodes.map(node => node.key), identity_prefix: identityPrefix, payload: null,
         context: await packOwnedPlanningValue({ progress: next.progress, forecast: context } satisfies Context),
-        header: await packOwnedPlanningValue({ network, seed: forecast.seed, node_headers: [], captured_target: forecast.trajectories } satisfies Header) });
+        header: await packOwnedPlanningValue({ network, seed: forecast.seed, node_headers: [], target: connectedForecastTarget(forecast) } satisfies Header) });
     }
     if (next.progress) return await checkpoint({ phase: "prepare", payload: await packOwnedPlanningValue(next.progress) });
     return await checkpoint({ phase: "solve", forecast_counts: null, payload: await packOwnedPlanningValue(next.prepared) });
@@ -174,12 +173,11 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     return await checkpoint({ phase: complete ? "integrate" : "catalog", node: saved.catalog_next,
       count: belief.hypotheses.length, pages, identity_before_records: framing.slice(0, start), identity_after_records: framing.slice(start),
       header: await packOwnedPlanningValue(header),
-      ...(complete ? { replica_count: deterministic ? 1 : 4, target: deterministic ? 1 : header.captured_target ?? 64 } : {}) });
+      ...(complete ? { replica_count: deterministic ? 1 : 4, target: deterministic ? 1 : header.target } : {}) });
   }
   if (phase === "qualify") {
     if (saved.qualified == null) {
       const result = await qualifyOwnedRoomForecast(saved, trace);
-      if (result.target !== undefined) return await checkpoint({ phase: "integrate", target: result.target, replica_count: 4 });
       return await checkpoint({ phase: "qualify", qualified: await packOwnedPlanningValue(result) });
     }
     const qualified = await unpackOwnedPlanningValue<QualifiedForecast>(saved.qualified);
@@ -202,11 +200,6 @@ async function qualifyOwnedRoomForecast(saved: Stage, trace?: PlanningTrace) {
   for (const row of saved.replicas!) replicas.push(await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(row.work));
   const planner = nativePlanner(trace);
   const merged = planner.roomNetworkMerge({ network: header.network, seed: header.seed, identity: saved.identity!, replicas }, trace);
-  if (!merged.work.deterministic) {
-    const accuracy = connectedIntegrationAccuracy(merged.statistics, { ...connectedForecastLayout(header.network),
-      proposalRejected: merged.assessment.proposal_rejection !== null, deadlineResolved: merged.assessment.deadline_resolved });
-    if (header.captured_target === undefined && !accuracy.converged) return { target: accuracy.next_trajectories };
-  }
   const { trajectories, replayed_paths, replicates } = merged.statistics;
   const counts = { trajectories, replayed_paths, replicates: replicates.map(({trajectories}) => ({trajectories})) };
   return { output: planner.roomNetworkFinalize({ network: header.network, work: merged.work }, trace), counts };

@@ -1,5 +1,5 @@
-/** Numerical integration accuracy, not a comfort policy, risk percentile or
- * observation-quality gate. Sampling continues durably until resolved. */
+/** Historical v2 publication precision, retained for regression comparison.
+ * Completed v2 captures replay their recorded draw counts. */
 export interface ConnectedIntegrationStatistics {
   trajectories: number;
   total: number[];
@@ -22,7 +22,6 @@ export interface ConnectedIntegrationAccuracy {
   maximum_error_ratio: number; maximum_temperature_error_c: number;
   maximum_energy_error_wh: number; maximum_shortfall_error_c_h: number;
 }
-export const CONNECTED_INTEGRATION_REVISION = "connected_integration_accuracy_v2";
 const INITIAL_TRAJECTORIES = 64;
 const REPLICATES = 4;
 // The published thermal forecast is displayed to one decimal place. Comparator

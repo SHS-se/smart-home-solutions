@@ -5,7 +5,7 @@ import { compileRoomSchedule, storeRoomCommands, electricalSource, retainedRoomT
 import { heatingDraw } from "./planner/weather-heating.ts";
 import { heatingModelRuns, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
 import { connectedRoomHeaterSupported, roomResponseEvidenceLimited } from "./planner/room-response.ts";
-import { PlanningInputError } from "./planning-errors.ts";
+import { PlanningError, PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { heaterResponse, isEquilibrium, usesHouse } from "./planner/models/room/thermal.ts";
@@ -204,7 +204,10 @@ function advanceRoomPreparation(inputs: RoomPlanningInputs,
       else if (completion === "capture") capturedForecast=compileConnectedRoomForecast(inputs,result,networkPlans,disabled);
       else networkWork=advanceConnectedRoomBarrier(inputs,result,networkPlans,disabled,previous?.network_work,trace,Number.isFinite(limit)&&start<zones.length);
     }
-    catch(error){resetConnected(roomNetwork.nodes.filter(node=>!disabled.has(node.key)).map(node=>node.key),error,zones);}
+    catch(error){
+      if (error instanceof PlanningError && error.code === "planner_upgraded") throw error;
+      resetConnected(roomNetwork.nodes.filter(node=>!disabled.has(node.key)).map(node=>node.key),error,zones);
+    }
   }
   return {snapshot_id: snapshot.snapshot_id, next_room, services: result, ...(networkPlans ? {network_plans: networkPlans} : {}), ...(disabled.size ? {network_disabled_keys:[...disabled]} : {}), ...(networkWork?{network_work:networkWork}:{}), ...(capturedForecast?{captured_forecast:capturedForecast}:{}), ...(catalog?{catalog}:{}), ...(forecastPending?{forecast_pending:true as const}:{})};
 }

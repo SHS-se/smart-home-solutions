@@ -187,7 +187,7 @@ export async function connectedDenseReplicaCpuInput() {
     assert(next.room_progress);
     next = prepareCapturedRoomProposals(capture, next.room_progress);
   }
-  const pair = await replicaCpuPair(next.forecast.nativeInput, 5889);
+  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(24576 * (9 / 13) ** 2));
   return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */
@@ -214,6 +214,7 @@ export async function connectedReplicaCpuInputs(): Promise<
     node_headers,
     seed: input.seed,
     identity: input.identity,
+    target: 64,
   });
   const dispatch = {
     phase: "integrate",
@@ -333,8 +334,8 @@ export async function connectedReplicaCpuInputs(): Promise<
       ),
     },
   };
-  // Archived fixed-count replay exercises finalization without changing the
-  // numerical convergence policy used by the ordinary qualification fixture.
+  // Archived fixed-count replay and fresh bounded forecasts both exercise
+  // native finalization with their actual balanced completed counts.
   fixtures.finish = {
     ...fixtures.qualify,
     header: await packOwnedPlanningValue({
@@ -342,7 +343,7 @@ export async function connectedReplicaCpuInputs(): Promise<
       node_headers,
       seed: input.seed,
       identity: input.identity,
-      captured_target: 64,
+      target: 64,
     }),
   };
   const merged = planner.roomNetworkMerge({network: input.network, seed: input.seed, identity: input.identity, replicas: complete});
@@ -444,7 +445,7 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture) {
           (checkpoint.p_update as { node: number }).node,
           0,
         );
-      } else if (fixture.phase === "finish") {
+      } else if (fixture.phase === "finish" || fixture.phase === "qualify") {
         const update = checkpoint.p_update as {phase:string;qualified:string};
         assertEquals(update.phase, "qualify");
         const result = await unpackOwnedPlanningValue<{counts:{trajectories:number}}>(update.qualified);

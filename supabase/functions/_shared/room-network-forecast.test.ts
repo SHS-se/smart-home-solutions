@@ -1,4 +1,5 @@
 import { assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
+import { createHash } from "node:crypto";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import { syntheticJointRoomForecast } from "./room-network-forecast.fixture.ts";
 import type { NativeRoomNetworkAdvanceInput } from "./room-network-contract.ts";
@@ -27,6 +28,51 @@ Deno.test("joint trajectories are invariant to minute continuation boundaries", 
     nativePlanner().roomNetworkFinalize({ network: input.network, work: a }),
     nativePlanner().roomNetworkFinalize({ network: input.network, work: b }),
   );
+});
+
+Deno.test("hot-room counterfactuals preserve each checkpoint, physical outcome and feasibility decision", () => {
+  // Computed with the original unconditional minute-by-minute counterfactual
+  // replay. Each digest includes every returned continuation and the final
+  // command output, including packed Float64 totals and per-replica statistics.
+  const equal = [
+    "afc172ca027ca015c0e0cf1171b9ca4687e585248a9fdd1eb6045afc02f6a726",
+    "b070ee08e934b385e9afb63954ddf497a4248d099625ebfafe87e342bdccc6c6",
+  ];
+  const rejected = [
+    "4d1ddfe2eeeea0abac60a0b557b3a0b4fabc891275f3306e9e68913ef19ba2e3",
+    "176aa6d06699a8d0f9ee848c1ea4eb086126403e5181c1ec66db9c98710d5572",
+  ];
+  for (const cause of ["equal", "overheat", "headroom"] as const) {
+    const input = syntheticJointRoomForecast(2, .25, .5, .01);
+    input.target_trajectories = 8;
+    for (const [r, room] of input.network.rooms.entries()) {
+      for (const [q, quarter] of room.input.quarters.entries()) {
+        quarter.transition = { ...quarter.transition, carry: 0 };
+        quarter.maximum_c = cause === "headroom" && q === 0 ? 100 : 15;
+        quarter.fixed_targets_c = [null];
+        quarter.room_target = { ...quarter.room_target!, fixed_c: null, preferred_c: 5 };
+        input.network.accepted![r].targets_c[q] = [cause !== "equal" && r === 0 ? 35 : 5];
+      }
+    }
+    if (cause === "headroom") input.network.headroom_w[0] = 100;
+    const planner = nativePlanner();
+    for (const [run, budget] of [100000, 7].entries()) {
+      const trace = createHash("sha256");
+      let work: NativeRoomNetworkAdvanceInput["work"];
+      for (;;) {
+        const advanced = planner.roomNetworkAdvance({ ...input, work, max_minute_steps: budget });
+        trace.update(JSON.stringify(advanced));
+        work = advanced.work;
+        if (advanced.reached_target) break;
+        work = JSON.parse(JSON.stringify(work));
+      }
+      const output = planner.roomNetworkFinalize({ network: input.network, work });
+      trace.update(JSON.stringify(output));
+      assertEquals(work.statistics.infeasible, [cause === "equal" ? 0 : 8, 0, 0]);
+      assertEquals(output.plans[0].targets_c, [[5], [5]]);
+      assertEquals(trace.digest("hex"), (cause === "equal" ? equal : rejected)[run]);
+    }
+  }
 });
 
 Deno.test("opaque checkpoint Float64 bytes equal completed numeric statistics across JSON transport", () => {

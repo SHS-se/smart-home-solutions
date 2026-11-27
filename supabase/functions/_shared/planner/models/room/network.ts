@@ -29,7 +29,7 @@ export function connectedRoomDependencies(
 }
 export interface ConnectedRoomForecastIdentity {
   revision: "joint_regime_replicas_philox_v3";
-  accuracy_revision: "connected_integration_accuracy_v2";
+  accuracy_revision: "connected_integration_accuracy_v2" | "connected_integration_accuracy_v3";
   seed: [number, number];
   replicates: 4;
   wasm_sha256: string;

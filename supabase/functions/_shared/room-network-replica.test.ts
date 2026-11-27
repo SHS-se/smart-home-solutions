@@ -5,6 +5,7 @@ import { nativePlanner } from "./planner-wasm/runtime.ts";
 import { advanceOwnedPlanningWorker } from "./owned-planning-worker.ts";
 import { packOwnedPlanningValue, unpackOwnedPlanningValue } from "./owned-planning-codec.ts";
 import { PlanningTrace } from "./planning-trace.ts";
+import { connectedIntegrationAccuracy } from "./planner/models/room/ensemble-accuracy.ts";
 import { syntheticJointRoomForecast } from "./room-network-forecast.fixture.ts";
 import type {
   NativeRoomNetworkAdvanceInput,
@@ -298,6 +299,44 @@ Deno.test("catalog selection preserves antithetic global addresses and missing r
   const h = structuredClone(input.beliefs[0]);
   h.hypotheses[0].posterior.covariance[0][2] = 1;
   assertThrows(() => planner.roomNetworkHeader({ belief: h }));
+});
+
+Deno.test("64 noisy stochastic draws publish the native paired command choice and demand ledger", async () => {
+  const input = fixture("resets");
+  input.target_trajectories = 64;
+  for (const belief of input.beliefs) belief.hypotheses[1].posterior.temperature_c += 8;
+  input.network.accepted![0].targets_c.forEach(row => row[0] = 30);
+  const planner = nativePlanner(), workers = replicas(input, 100000, [0,1,2,3]);
+  const {network, seed, identity} = input;
+  const merged = planner.roomNetworkMerge({network, seed, identity, replicas: workers});
+  const expected = planner.roomNetworkFinalize({network, work: merged.work});
+  const accuracyV2 = connectedIntegrationAccuracy(merged.statistics, {
+    rooms: 2, nodes: 2, slots: network.hours.length, hours: network.hours, roomNodeIndexes: [0,1],
+    roomPowerW: [1500,1500], actuatorPowerW: [1500,1500], maximumPricePerKwh: .2, deadlineResolved: true,
+  });
+  assert(accuracyV2.maximum_temperature_error_c > .05);
+  assert(accuracyV2.maximum_energy_error_wh > 1500 / 60);
+  const stride = merged.statistics.total.length / 3;
+  const prefixCosts = merged.statistics.replicates.map(({total, trajectories}) =>
+    (total[stride - 1] - total[2 * stride - 1]) / trajectories);
+  assert(Math.max(...prefixCosts) > Math.min(...prefixCosts));
+  assert(!accuracyV2.converged);
+  const header = await packOwnedPlanningValue({network, seed, target: 64,
+    node_headers: input.beliefs.map(belief => planner.roomNetworkHeader({belief}))});
+  const rows = await Promise.all(workers.map(async work => ({replica:work.replica, work:await packOwnedPlanningValue(work)})));
+  const dispatch = {phase: "qualify", cursor: 9, round: 1, target: 64, replicas: []};
+  let qualified: string | undefined;
+  await advanceOwnedPlanningWorker({rpc(name, args) {
+    if (name === "load_energy_owned_planning_stage") return Promise.resolve({data:{dispatch,slice_fence:1,identity,header,replicas:rows},error:null});
+    assertEquals(name, "checkpoint_energy_owned_planning_stage");
+    const update = args.p_update as {phase: string; qualified: string};
+    assertEquals(update.phase, "qualify");
+    qualified = update.qualified;
+    return Promise.resolve({data:dispatch,error:null});
+  }}, {home_id:"synthetic",job_id:"synthetic",fence:1}, {kind:"advance"});
+  assert(qualified);
+  assertEquals(await unpackOwnedPlanningValue(qualified), {output:expected,
+    counts:{trajectories:64, replayed_paths:128, replicates:[0,1,2,3].map(() => ({trajectories:16}))}});
 });
 
 

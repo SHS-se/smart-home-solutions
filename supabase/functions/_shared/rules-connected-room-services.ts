@@ -9,7 +9,6 @@ import {
   connectedProcessWeightedHypotheses,
   forecastConnectedExchange,
 } from "./planner/models/room/connected-exchange.ts";
-import { connectedIntegrationAccuracy } from "./planner/models/room/ensemble-accuracy.ts";
 import { connectedRoomDependencies, type ConnectedRoomPlanningNode, type ConnectedRoomForecastIdentity } from "./planner/models/room/network.ts";
 import { roomPlanClock } from "./planner/models/room/state.ts";
 import { isThermostat } from "./planner/thermostat.ts";
@@ -26,6 +25,7 @@ import type {
 import type { PlanningTrace } from "./planning-trace.ts";
 import { planningWarning } from "./planner/planning-warnings.ts";
 import {
+  connectedForecastTarget,
   type NativeRoomNetworkBelief,
   type NativeRoomNetworkInput,
   type NativeRoomNetworkOutput,
@@ -368,20 +368,6 @@ export function compileConnectedRoomCatalog(
   return { network: prepared.native, context: { compiled: prepared.compiled, stage: prepared.stage, forecast } };
 }
 
-/** Native room inputs already contain the ordered thermostats, powers and clock used for accuracy. */
-export function connectedForecastLayout(network: NativeRoomNetworkInput) {
-  return {
-    sets: 3,
-    rooms: network.rooms.length,
-    roomNodeIndexes: network.rooms.map(room => room.node),
-    nodes: network.nodes.length,
-    slots: network.hours.length,
-    hours: network.hours,
-    roomPowerW: network.rooms.map(room => room.input.thermostats.reduce((sum, actuator) => sum + actuator.power_w, 0)),
-    actuatorPowerW: network.rooms.flatMap(room => room.input.thermostats.map(actuator => actuator.power_w)),
-    maximumPricePerKwh: Math.max(...network.import_sek_per_kwh.map(Math.abs), ...network.export_sek_per_kwh.map(Math.abs)),
-  };
-}
 export type ConnectedRoomCatalog = NonNullable<ReturnType<typeof compileConnectedRoomCatalog>>;
 
 export function compileConnectedRoomForecast(inputs: RoomPlanningInputs, result: RoomServices,
@@ -393,7 +379,7 @@ export function compileConnectedRoomForecast(inputs: RoomPlanningInputs, result:
   const beliefs = network.nodes.map(({key}) => compileConnectedNodeBelief(nodes.get(key) ?? null, network));
   const identity = Array.from(sha256(new TextEncoder().encode(JSON.stringify({ snapshot: inputs.snapshot.snapshot_id, forecast, network, beliefs }))),
     byte => byte.toString(16).padStart(2, "0")).join("");
-  return { context: { ...context, identity, layout: connectedForecastLayout(network) }, nativeInput: { network, beliefs, seed: forecast.seed, identity, replicate_count: forecast.replicates } };
+  return { context: { ...context, identity }, nativeInput: { network, beliefs, seed: forecast.seed, identity, replicate_count: forecast.replicates } };
 }
 export type ConnectedRoomForecastRequest = NonNullable<ReturnType<typeof compileConnectedRoomForecast>>;
 export type ConnectedRoomForecastContext = ConnectedRoomForecastRequest["context"];
@@ -428,13 +414,14 @@ export function advanceConnectedRoomBarrier(
   const request = compileConnectedRoomForecast(inputs, result, accepted, disabled);
   if (!request) return;
   const { context, nativeInput } = request;
-  const { identity, layout, forecast } = context;
+  const { identity, forecast } = context;
   if (forecast.replicates !== 4 || previous && previous.replicas.length !== 4) throw new Error("Invalid frozen forecast replicas");
   const planner = nativePlanner(trace), started = performance.now();
   const headers = nativeInput.beliefs.map(belief => planner.roomNetworkHeader({ belief }, trace));
   const deterministic = headers.every(header => header.deterministic);
   const replicas: Array<NativeRoomNetworkReplicaWork | null> = previous?.replicas.slice() ?? Array(4).fill(null);
-  let target = previous?.target_trajectories ?? forecast.trajectories ?? 64;
+  const capturedTarget = connectedForecastTarget(forecast);
+  const target = deterministic ? 1 : capturedTarget;
   let cursor = previous?.cursor ?? 0, lastDuration = 0;
   const maxWork = initialOnly ? 1 : Math.max(1, Math.min(131072, Math.floor(24576 * (9 / nativeInput.network.nodes.length) ** 2)));
   for (;;) {
@@ -445,15 +432,9 @@ export function advanceConnectedRoomBarrier(
     if (nextReplica < 0) {
       const merged = planner.roomNetworkMerge({ network: nativeInput.network, identity, seed: forecast.seed,
         replicas: replicas.slice(0, count).map(work => work!) }, trace);
-      const accuracy = deterministic ? null : connectedIntegrationAccuracy(merged.statistics, { ...layout,
-        proposalRejected: merged.assessment.proposal_rejection !== null,
-        deadlineResolved: merged.assessment.deadline_resolved });
-      if (deterministic || forecast.trajectories !== undefined || accuracy?.converged) {
-        const output = planner.roomNetworkFinalize({ network: nativeInput.network, work: merged.work }, trace);
-        applyConnectedRoomForecast(inputs, result, context, output, merged.statistics);
-        return;
-      }
-      target = accuracy!.next_trajectories;
+      const output = planner.roomNetworkFinalize({ network: nativeInput.network, work: merged.work }, trace);
+      applyConnectedRoomForecast(inputs, result, context, output, merged.statistics);
+      return;
     } else {
       const replica = nextReplica as NativeRoomReplica, work = replicas[replica], complete = work?.statistics.trajectories ?? 0;
       const selections = planner.roomNetworkSelect({ node_headers: headers, seed: forecast.seed, replica,

@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "6435ee0160d0841073ebba0e48d883df53f0d820c95d9dc813ac4748eb2bec91",
-  "source_sha256": "f750e1b874c63b75bf616c99cc998d5e1f0ed023d39606c527b99e5e1e70656d",
+  "wasm_sha256": "8399476ecae49c20105d89065597f5e044966a5b0b89f95f3173fae8bba39db8",
+  "source_sha256": "49b4bb8208881f57df7fbbb2d610f1b0804ba692653e1f83c9628e018a815dc8",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -89,7 +89,6 @@
     "supabase/functions/_shared/planner/models/pool/electrical.ts",
     "supabase/functions/_shared/planner/models/room/connected-exchange.ts",
     "supabase/functions/_shared/planner/models/room/control.ts",
-    "supabase/functions/_shared/planner/models/room/ensemble-accuracy.ts",
     "supabase/functions/_shared/planner/models/room/measured-evidence.ts",
     "supabase/functions/_shared/planner/models/room/network.ts",
     "supabase/functions/_shared/planner/models/room/observation.ts",
