@@ -39,8 +39,10 @@ fi
     }).output();
     const success = await run();
     assertEquals(success.code, 0, new TextDecoder().decode(success.stderr));
-    assertStringIncludes(new TextDecoder().decode(success.stdout), 'Deployed the TEST collector.');
     const invocations = await Deno.readTextFile(calls);
+    for (const name of ['energy-market-archive', 'energy-market-nucs-week', 'energy-market-nucs-month']) {
+      assertStringIncludes(invocations, `functions deploy ${name} --project-ref vxqpgbzseckgceopitpm --use-api --yes`);
+    }
     assertStringIncludes(invocations, '--agent no --output json --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-weather-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertStringIncludes(invocations, 'functions delete energy-price-experiment --project-ref vxqpgbzseckgceopitpm --yes');
