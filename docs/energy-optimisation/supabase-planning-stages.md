@@ -134,6 +134,27 @@ capabilities. A compatible rollout preserves the captured observations, progress
 and physical lease. In-flight older workers may finish their owned request; they
 cannot acquire new work after activation. This does not schedule another fit.
 
+Protocol 4 adds a thin dispatcher that directly awaits up to two learning
+requests at a time, using the same two physical tickets and fair owner queue.
+A dispatcher starts at most 24 children during a 25-second start window; its
+last group may take another 25 seconds. It imports no fitting kernel. One
+`pg_net` wake starts each dispatcher rather than each numerical slice. Only an
+observed terminal 546 response permits immediate delivery recovery. A timeout
+retains the reservation because it does not prove that the worker stopped.
+The one-second observer examines the bounded reservations and recorded request
+IDs; root expiry never cancels an assigned child.
+
+Body fitting receives a losslessly compressed immutable numerical descriptor
+and original capture bytes. Publication retains its full original database
+metadata. A damaged derived packet is discarded and rebuilt from that capture,
+without discarding the optimizer checkpoint. Replica pages remain independent.
+Each numerical request budgets 400 ms, including replica unpacking, with unpack
+and pack timings reported separately. Parent populations are indexed once per
+replica advance rather than scanned for every particle; floating-point order
+and random draws are unchanged. This pure-code optimization follows the normal
+generated learner-identity transition and therefore causes one initial refit.
+Both dispatcher and fitting-worker capabilities must match before activation.
+
 Planning source capture also reuses a certified fitted block that overlaps the
 start of the model's history. It retains the original envelope and digest; the
 existing qualifier clips native intervals to the requested population. Binding,

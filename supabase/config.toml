@@ -161,3 +161,6 @@ verify_jwt = false
 
 [functions.energy-device-learning]
 verify_jwt = false
+
+[functions.energy-learning-dispatch]
+verify_jwt = false

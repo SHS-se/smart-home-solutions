@@ -17,12 +17,13 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
   const prepare = "/rest/v1/rpc/prepare_energy_learning_release", configure = "/rest/v1/rpc/configure_energy_device_learning";
   const probe = "/functions/v1/energy-device-learning", activate = "/rest/v1/rpc/activate_energy_learning_release";
   const tokenPath = "/rest/v1/rpc/get_energy_learning_worker_token";
-  const expected = [prepare, "deploy", configure, tokenPath, probe, activate];
-  for (const failure of ["", "stale", "deploy", "missing_token", "mismatch", "missing_runtime", "extra", "cas"]) {
+  const dispatch = "/functions/v1/energy-learning-dispatch";
+  const expected = [prepare, "deploy", configure, tokenPath, probe, dispatch, activate];
+  for (const failure of ["", "stale", "deploy", "missing_token", "mismatch", "missing_runtime", "extra", "dispatcher", "cas"]) {
     const events: string[] = [];
     const run = () => deployLearningRelease(deployment, base, (path, body, token) => {
       events.push(path);
-      assertEquals(token, path === probe ? "synthetic-learner" : undefined);
+      assertEquals(token, [probe, dispatch].includes(path) ? "synthetic-learner" : undefined);
       if (path === prepare) {
         const manifest = Object.fromEntries(Object.entries(worker).filter(([key]) => key !== "runtime"));
         assertEquals(body, { p_deployment: deployment, p_manifest: manifest });
@@ -36,7 +37,8 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
         assertEquals(body, {});
         return Promise.resolve(failure === "missing_token" ? null : "synthetic-learner");
       }
-      if (path === probe) {
+      if (path === probe || path === dispatch) {
+        if (path === dispatch && failure === "dispatcher") return Promise.resolve({ ...worker, runtime: "wrong" });
         assertEquals(body, { action: "capabilities" });
         if (failure === "mismatch") return Promise.resolve({ ...worker, semantic_digest: "synthetic-wrong" });
         if (failure === "missing_runtime") return Promise.resolve({ ...worker, runtime: "" });
@@ -54,7 +56,7 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
     if (failure) await assertRejects(run);
     else await run();
     const count = failure === "stale" ? 1 : failure === "deploy" ? 2 : failure === "missing_token" ? 4 :
-      ["mismatch", "missing_runtime", "extra"].includes(failure) ? 5 : 6;
+      ["mismatch", "missing_runtime", "extra"].includes(failure) ? 5 : failure === "dispatcher" ? 6 : 7;
     assertEquals(events, expected.slice(0, count));
   }
 });

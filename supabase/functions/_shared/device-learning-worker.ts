@@ -19,15 +19,14 @@ type LearningClaim = LearningOwner & (
   { owner_kind: "room"; work_class: "source" | "numerical" | "finalization" } |
   { owner_kind: "pool" | "device"; work_class: "device" }
 );
+const isolateId = crypto.randomUUID();
+let isolateRequests = 0;
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
 export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
-  const { data: authorized, error: authError } = await db.rpc("verify_energy_learning_token", {
-    p_token: request.headers.get("x-energy-learning-token") ?? "",
-  });
-  if (authError) return Response.json({ error: "authentication_unavailable" }, { status: 503 });
-  if (!authorized) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const token = request.headers.get("x-energy-learning-token") ?? "";
+  const isolateRequest = ++isolateRequests;
   const capability = roomLearningWorkerCapabilities();
   const trace: RoomSliceTrace = {};
   const started = performance.now();
@@ -37,13 +36,20 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
   try {
     const raw = await request.text();
     if (raw.length > 1024) return Response.json({ error: "request_too_large" }, { status: 413 });
-    const { job_id, action } = JSON.parse(raw);
-    if (action === "capabilities") return Response.json(capability);
+    const { job_id, action, delivery_id } = JSON.parse(raw);
+    if (action === "capabilities") {
+      const { data, error } = await db.rpc("verify_energy_learning_token", { p_token: token });
+      if (error) return Response.json({ error: "authentication_unavailable" }, { status: 503 });
+      if (data !== true) return Response.json({ error: "unauthorized" }, { status: 401 });
+      return Response.json(capability);
+    }
     if (typeof job_id !== "string" || !job_id) return Response.json({ error: "invalid_job_id" }, { status: 400 });
     const claimStarted = performance.now();
-    const result = await db.rpc("claim_energy_learning_work", { p_job_id: job_id, p_worker: capability });
+    const result = await db.rpc("claim_energy_learning_request", { p_job_id: job_id, p_worker: capability,
+      p_token: token, p_delivery_id: delivery_id ?? null });
     claimMs = Math.round(performance.now() - claimStarted);
     if (result.error) throw new Error(result.error.message);
+    if (result.data === false) return Response.json({ error: "unauthorized" }, { status: 401 });
     claim = result.data;
     if (!claim) return Response.json({ claimed: false });
     const wallNow = now();
@@ -100,7 +106,8 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
       }
     }
     const queueMs = claim?.queue_ms;
-    if (claim) console.info(JSON.stringify({ event: "energy_learning_slice", job_id: claim.id, kind: claim.owner_kind,
+    if (claim) console.info(JSON.stringify({ event: "energy_learning_slice", isolate: isolateId, isolate_request: isolateRequest,
+      job_id: claim.id, kind: claim.owner_kind,
       generation: claim.generation, fence: claim.fence, work_class: claim.work_class, outcome,
       queue_ms: typeof queueMs === "number" && Number.isSafeInteger(queueMs) && queueMs >= 0 ? queueMs : null, claim_ms: claimMs,
       release_ms: Math.round(performance.now() - releaseStarted), elapsed_ms: Math.round(performance.now() - started), ...trace }));

@@ -421,7 +421,7 @@ jobs:
               continue
             elif [ "$name" = planner-bench-edge ] || [ "$name" = planner-bench-score ]; then
               continue
-            elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ]; then
+            elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ] || [ "$name" = energy-learning-dispatch ]; then
               if [ "$planning_deployed" = false ]; then
                 bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
                 planning_deployed=true

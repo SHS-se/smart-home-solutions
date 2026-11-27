@@ -8,6 +8,7 @@ import { OwnedPlanningArtifactError, packOwnedPlanningValue, unpackOwnedPlanning
 type Member = ConnectedProcessBelief["hypotheses"][number];
 type Work = NonNullable<ConnectedProcessProgress["work"]>;
 type Priors = Omit<ConnectedProcessBelief, "replicas" | "hypotheses">;
+export interface RoomReplicaTiming { unpack_ms?: number; pack_ms?: number }
 interface SharedProcess {
   result: ConnectedRoomFit & { response: ConnectedRoomResponse };
   priors: Priors;
@@ -110,7 +111,7 @@ function restoreReplica(packet: Packet, index: number) {
 
 /** The body fit has finished. Numerical replicas have independent random streams.
  * At a mid-row split earlier replicas already own the next native-row boundary. */
-export async function checkpointConnectedFit(next: ConnectedFitProgress, rows: RoomMeanQuarter[]): Promise<ConnectedFitTurn> {
+export async function checkpointConnectedFit(next: ConnectedFitProgress, rows: RoomMeanQuarter[], timing: RoomReplicaTiming = {}): Promise<ConnectedFitTurn> {
   if (next.stage === "complete") {
     if (!next.result) throw new Error("Missing completed connected fit");
     return { kind: "result", result: next.result };
@@ -119,32 +120,40 @@ export async function checkpointConnectedFit(next: ConnectedFitProgress, rows: R
   if (!next.result?.response) throw new Error("Missing fitted connected response");
   const process = next.processPosterior ?? beginConnectedProcessInference(next.result.response, rows);
   const { hypotheses, replicas: descriptors, ...priors } = process.belief;
+  const started = performance.now();
   const replicas = await Promise.all(descriptors.map(async (descriptor, index) => {
     const row = process.cursor + Number(process.work !== undefined && index < process.work.replica);
     const work = process.work?.replica === index ? process.work : undefined;
     return { index, row, done: row === rows.length && !work, blob: await packReplica(descriptor,
       hypotheses.filter(member => member.replica === index), 0, work) };
   }));
+  timing.pack_ms = Math.round(performance.now() - started);
   return { kind: "start_process", shared: { result: { ...next.result, response: process.model }, priors,
     numerical_failures: process.numerical_failures }, replicas };
 }
 
 export async function advanceRoomFitReplica(claim: Extract<ProcessClaim, { kind: "replica" }>, rows: RoomMeanQuarter[],
-  milliseconds: number): Promise<Extract<ConnectedFitTurn, { kind: "replica" }>> {
+  milliseconds: number, timing: RoomReplicaTiming = {}): Promise<Extract<ConnectedFitTurn, { kind: "replica" }>> {
+  const started = performance.now();
   const { model, priors, window, replica } = claim;
   if (replica.done || !rows.length || window.row_from !== replica.row || replica.row + rows.length > window.total_rows) {
     throw new OwnedPlanningArtifactError("Invalid connected fit observation page");
   }
   const { descriptor, members, failures, work } = await unpackReplica(replica, 0);
+  timing.unpack_ms = Math.round(performance.now() - started);
   // The kernel uses an index local to this array. Restore the global ordinal
   // only when assembling the four descriptors and their ordered populations.
   const previous: ConnectedProcessProgress = { version: 2, model, cursor: 0, complete: false, numerical_failures: failures,
     belief: { ...priors, replicas: [descriptor], hypotheses: members }, identified: [], ...(work ? { work } : {}) };
   const last = rows.at(-1)!;
-  const next = advanceConnectedProcessInference(rows, previous, last.start_ms + (last.duration_s ?? 900) * 1000, milliseconds);
+  const next = advanceConnectedProcessInference(rows, previous, last.start_ms + (last.duration_s ?? 900) * 1000,
+    Math.max(1, milliseconds - (performance.now() - started)));
   const row = replica.row + next.cursor;
+  const packing = performance.now();
+  const blob = await packReplica(next.belief.replicas[0], next.belief.hypotheses, next.numerical_failures, next.work);
+  timing.pack_ms = Math.round(performance.now() - packing);
   return { kind: "replica", replica: { index: replica.index, row, done: next.complete && row === window.total_rows,
-    blob: await packReplica(next.belief.replicas[0], next.belief.hypotheses, next.numerical_failures, next.work) } };
+    blob } };
 }
 
 export async function finishConnectedFit(claim: Exclude<ProcessClaim, { kind: "replica" }>, rows: number): Promise<ConnectedRoomFit> {

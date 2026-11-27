@@ -42,6 +42,11 @@ export async function deployLearningRelease(deployment: string, projectUrl: stri
     Object.entries(manifest).some(([key, value]) => Reflect.get(worker, key) !== value)) {
     throw new Error("Deployed learning worker capabilities differ from the prepared release");
   }
+  const dispatcher = await post("/functions/v1/energy-learning-dispatch", { action: "capabilities" }, token);
+  if (!dispatcher || typeof dispatcher !== "object" || Object.keys(dispatcher).length !== Object.keys(worker).length ||
+    Object.entries(worker).some(([key, value]) => Reflect.get(dispatcher, key) !== value)) {
+    throw new Error("Deployed learning dispatcher capabilities differ from the worker");
+  }
   const active = await post("/rest/v1/rpc/activate_energy_learning_release", { p_deployment: deployment, p_worker: worker });
   if (active !== true) throw new Error("Learning release activation refused the deployment");
 }
@@ -60,7 +65,7 @@ if (import.meta.main) {
   const url = `https://${project}.supabase.co`;
   await deployLearningRelease(deployment, url, deploymentPost(url, key), async () => {
     const status = await new Deno.Command("supabase", {
-      args: ["functions", "deploy", "energy-device-learning", "--project-ref", project, "--use-api", "--yes"],
+      args: ["functions", "deploy", "energy-device-learning", "energy-learning-dispatch", "--project-ref", project, "--use-api", "--yes"],
       stdout: "inherit", stderr: "inherit",
     }).spawn().status;
     if (!status.success) throw new Error("Learning worker deployment failed");

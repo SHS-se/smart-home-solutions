@@ -124,7 +124,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
         range: () => Promise.resolve({ data: null, error: { message: "synthetic training read failure" } }),
       }) };
       if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
-      if (name === "claim_energy_learning_work") return Promise.resolve({ data: claim, error: null });
+      if (name === "claim_energy_learning_request") return Promise.resolve({ data: claim, error: null });
       if (name === "capture_energy_room_learning_context") return Promise.resolve({ data: {
         model: { room_key: claim.owner_key, model_revision: 7, trained: true }, context: null,
       }, error: null });
@@ -147,7 +147,7 @@ Deno.test("a failed training read belongs to its durable learning attempt and ne
   }), db);
   assertEquals(response.status, 500);
   assertEquals(await response.json(), { error: "learning_failed" });
-  assertEquals(calls, ["verify_energy_learning_token", "claim_energy_learning_work", "capture_energy_room_learning_context",
+  assertEquals(calls, ["claim_energy_learning_request", "capture_energy_room_learning_context",
     "get_energy_thermal_training_quarters", "fail_energy_device_learning", "release_energy_learning_work"]);
   // SQL retry/retained-model semantics are independently executed by
   // tests/device-learning-lifecycle.test.ts. Ingest cannot import this worker

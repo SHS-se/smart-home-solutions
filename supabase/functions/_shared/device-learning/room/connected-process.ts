@@ -190,9 +190,12 @@ function advancePopulation(state: ConnectedProcessProgress, row: RoomMeanQuarter
   const work = state.work ??= { through_ms: through, replica: 0, parent: 0, copy: 0,
     rng_state: state.belief.replicas[0].rng_state, children: [], candidates: [] };
   if (work.through_ms !== through) throw new Error("Changed in-flight native observation");
+  // A replica's parents stay immutable until its reduction finishes. Keep their
+  // original order once instead of scanning every replica for every particle.
+  const populations = state.belief.replicas.map((_, replica) => state.belief.hypotheses.filter(h => h.replica === replica));
   do {
     const replica = work.replica, descriptor = state.belief.replicas[replica], rng = new Random(work.rng_state);
-    const population = state.belief.hypotheses.filter(h => h.replica === replica), parent = population[work.parent];
+    const population = populations[replica], parent = population[work.parent];
     if (parent) {
       const hours = Math.max(0, through - parent.posterior.through_ms) / 3_600_000;
       const survival = parent.hazards.map((hazard, i) => enabled[i] ? -hazard.shape * Math.log1p(hours / hazard.rate_h) : 0);

@@ -5,6 +5,7 @@ import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../device-learning/room/native-mean.fixture.ts";
 import { learnMeasuredRoomResponse as learnRoomResponse, ROOM_MEASURED_CELL_COUNT as ROOM_RESPONSE_CELL_COUNT } from "../device-learning/room/measured-response.ts";
 import { parseRoomSharedMetadata } from "./room.ts";
+import { decodeRoomFitNumericalInput, encodeRoomFitNumericalInput, roomFitNumericalInput } from "./room-fit-transport.ts";
 import { packOwnedPlanningValue } from "../owned-planning-codec.ts";
 import { runRoomLearning, type RoomLearningClaim } from "./room-response-run.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
@@ -54,7 +55,7 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
       let data: unknown = null;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_learning_work": {
+        case "claim_energy_learning_request": {
           // SQL drops stale scratch before returning the same claim for cold discovery.
           const bound = (progress?.metadata as { capture?: { binding?: string } } | undefined)?.capture?.binding;
           if (progress && (progress.base_revision !== (model?.model_revision ?? 0) || (bound && bound !== context.binding))) {
@@ -514,7 +515,7 @@ Deno.test("unreadable derived replica scratch resets at the claimed cursor durin
   for (const kind of ["replica", "finish"] as const) {
     const f = fixture(undefined, true);
     await f.tick(); await f.tick();
-    const claim = (await f.db.rpc("claim_energy_learning_work", {})).data as RoomLearningClaim;
+    const claim = (await f.db.rpc("claim_energy_learning_request", {})).data as RoomLearningClaim;
     const progress = claim.room_fit_progress as { cursor: number; capture_base64: string; metadata: { row_count: number; sha256: string; capture: { fromAt: string } } };
     const { row_count: count, sha256, capture } = progress.metadata;
     const blob = kind === "finish" ? await packOwnedPlanningValue({}) : "invalid gzip";
@@ -529,4 +530,34 @@ Deno.test("unreadable derived replica scratch resets at the claimed cursor durin
     assertEquals(f.writes, []);
     assertEquals(f.failures, []);
   }
+});
+
+Deno.test("compressed numerical input round-trips the original capture exactly and excludes publication data", async () => {
+  const f = fixture(undefined, true);
+  await f.tick(); await f.tick();
+  const envelope = f.progress!.metadata as { capture: unknown; numeric_packet: string };
+  const metadata = parseRoomSharedMetadata(envelope.capture)!;
+  const decoded = await decodeRoomFitNumericalInput(envelope.numeric_packet);
+  assertEquals(decoded, roomFitNumericalInput(metadata, decoded.capture_base64));
+  assertEquals(Object.hasOwn(decoded.capture, "library"), false);
+  assertEquals(Object.hasOwn(decoded.capture, "sourceFreshness"), false);
+  assertEquals(await decodeRoomFitNumericalInput(await encodeRoomFitNumericalInput(decoded)), decoded);
+  await assertRejects(() => decodeRoomFitNumericalInput("broken"));
+});
+
+Deno.test("valid gzip with damaged numerical bytes rebuilds the packet without resetting optimizer progress", async () => {
+  const f = fixture(undefined, true);
+  await f.tick(); await f.tick();
+  const before = structuredClone(f.progress!);
+  const envelope = before.metadata as { capture: unknown; numeric_packet: string };
+  const decoded = await decodeRoomFitNumericalInput(envelope.numeric_packet);
+  const corrupt = await encodeRoomFitNumericalInput({ ...decoded, capture_base64: "AQID" });
+  const result = await f.db.rpc("claim_energy_learning_request", {});
+  const claim = result.data as RoomLearningClaim;
+  claim.room_fit_progress = { ...before, metadata: { ...envelope, capture: undefined, numeric_packet: undefined }, numeric_packet: corrupt };
+  const calls: string[] = [];
+  const output = await runRoomLearning({ rpc(name: string) { calls.push(name); return Promise.resolve({ data: true, error: null }); } }, claim, f.now);
+  assertEquals(output, { kind: "handled", result: { checkpointed: true } });
+  assertEquals(calls, ["clear_energy_room_fit_numeric_packet"]);
+  assertEquals(f.progress, before);
 });

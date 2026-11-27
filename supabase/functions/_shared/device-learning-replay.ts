@@ -49,7 +49,7 @@ export function createDeviceLearningReplay(input: DeviceLearningReplayInput) {
       let data: unknown;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_learning_work": data = input.claim; break;
+        case "claim_energy_learning_request": data = input.claim; break;
         case "capture_energy_device_models": data = input.models; break;
         case "publish_energy_device_learning": publications.push(copy(args)); data = true; break;
         case "fail_energy_device_learning": failures.push(copy(args)); data = true; break;

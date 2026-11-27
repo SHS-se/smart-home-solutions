@@ -81,7 +81,7 @@ export function replayRoomCapture(input: ArrayBuffer | RoomNumericCheckpoint, ob
       let data: unknown;
       switch (name) {
         case "verify_energy_learning_token": data = true; break;
-        case "claim_energy_learning_work": data = { ...claim, work_class: !checkpoint ? "source" : checkpoint.progress.cursor === ROOM_MEASURED_CELL_COUNT ? "finalization" : "numerical", room_fit_progress: checkpoint ? { ...checkpoint.progress, capture_base64: checkpoint.capture } : null }; break;
+        case "claim_energy_learning_request": data = { ...claim, work_class: !checkpoint ? "source" : checkpoint.progress.cursor === ROOM_MEASURED_CELL_COUNT ? "finalization" : "numerical", room_fit_progress: checkpoint ? { ...checkpoint.progress, capture_base64: checkpoint.capture } : null }; break;
         case "capture_energy_room_learning_context": assert(!checkpoint, "Numerical claims skip context discovery"); data = { model: null, context }; break;
         case "get_energy_room_evidence_work": data = { source_revision: 1, policy_fingerprint: "b".repeat(64),
           connected: syntheticRoomConnectionCapture("b".repeat(64)), next: null }; break;

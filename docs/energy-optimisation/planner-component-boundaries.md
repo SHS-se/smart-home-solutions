@@ -948,3 +948,14 @@ new Boolean instructions. Protected fixed-relay behavioral contracts retain
 their independent electricity and temperature assertions. Ordinary tests that
 required shared room-relay cycling or numeric room-device targets are superseded
 by the explicit 27 November requirement above.
+
+### Room learning dispatch ownership
+
+`learning-dispatch.ts` owns bounded HTTP delivery only. The database's existing
+learning jobs, two physical tickets and generation/fence checks own admission
+and numerical progress. A delivery UUID identifies a particular child and a
+separate run fence identifies its dispatcher. Termination recovery preserves
+checkpoints and revokes only a matching terminated child; dispatcher expiry
+does not cancel children. Immutable numerical packets exclude publication
+metadata, which stays with the original fit record. The mathematical learner
+keeps its prior, ordered particles, random draws and stopping rules.
