@@ -1,3 +1,4 @@
+import { isNucsFlowDataset, NUCS_FLOW_PRODUCTS, type NucsFlowDocument, type NucsDomainArchive } from './nucs-flow-based.ts';
 import { marketDate, marketDaySpan } from './demand-forecast-quality.ts';
 import type { SmhiDocument } from './smhi-observations.ts';
 import type { EntsoeInterval } from './entsoe-market-data.ts';
@@ -24,7 +25,32 @@ export function assessMarketObservation(row: AssessedObservation): MarketAssessm
   }
   if (result.status !== 'data' || !result.document || typeof result.document !== 'object') return assessment;
   const doc = result.document as Record<string, unknown>;
-  if (row.dataset === 'nucs_week_ahead_ntc' || row.dataset === 'nucs_transmission_outages') {
+  if (isNucsFlowDataset(row.dataset)) {
+    const native = result.document as NucsFlowDocument | NucsDomainArchive;
+    const spec = NUCS_FLOW_PRODUCTS[row.dataset];
+    const positions = native.publications.flatMap(p => 'positions' in p ? p.positions : []);
+    const groups = new Map<string, typeof positions>();
+    for (const position of positions) {
+      const key = position.bidding_zone + '/' + position.direction;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(position);
+    }
+    const archives = native.publications.flatMap(p => 'archive' in p ? [p.archive] : []);
+    assessment.facts = { kind: spec.product === 'domain' ? 'nucs_domain_archive' : 'network_bounds',
+      semantics: native.semantics, horizon: spec.horizon, product: spec.product,
+      validation: spec.product === 'domain' ? 'zip_directory_and_publication_header' : 'native_net_position_blocks',
+      documents: native.publications.length,
+      publications: native.publications.map(p => ({ id: p.id, revision: p.revision, status: p.status, created_at: p.created_at })),
+      cancelled_documents: native.publications.filter(p => p.status === 'A09').length,
+      unspecified_status_documents: native.publications.filter(p => p.status === null).length,
+      compressed_bytes: archives.reduce((n, a) => n + a.bytes, 0),
+      expanded_xml_bytes: archives.reduce((n, a) => n + a.expanded_bytes, 0),
+      issues: spec.product !== 'domain' && !['import', 'export'].every(direction => positions.some(p => p.bidding_zone === '10Y1001A1001A46L' && p.direction === direction)) ? ['missing_se3_net_position_direction'] : [],
+      series: [...groups].map(([label, values]) => ({ label, ...intervalCoverage(values.map(p => ({
+        startMs: Date.parse(p.start), endMs: Date.parse(p.end), value: p.value_mw,
+      })), Date.parse(row.requested_from), Date.parse(row.requested_to)) })),
+    };
+  } else if (row.dataset === 'nucs_week_ahead_ntc'  || row.dataset === 'nucs_transmission_outages') {
     const native = result.document as import('./nucs-market-data.ts').NucsDocument;
     assessment.facts = { ...assessment.facts, kind: 'regional_border_context', semantics: native.semantics,
       in_domain: native.in_domain, out_domain: native.out_domain, documents: native.notices.length,

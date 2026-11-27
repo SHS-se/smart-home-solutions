@@ -1,3 +1,5 @@
+import { isNucsFlowDataset, NUCS_NATIVE_BUCKET, type NucsFlowDataset, type NucsFlowEvidence, type NucsDomainArchive } from '../supabase/functions/_shared/nucs-flow-based.ts';
+import { streamNucsDomain } from '../supabase/functions/_shared/nucs-domain-reader.ts';
 /** TEST-only bounded reads. Credentials never become report artifacts. */
 import { readMarketProvider } from '../supabase/functions/_shared/market-provider-response.ts';
 import { PROBE_PROJECT, testProbeServiceKey } from './planner-probe-auth.ts';
@@ -9,6 +11,12 @@ export interface MarketIndex extends Omit<AssessedObservation, 'result'> {
   sequence: number; batch_id: string | null; request_key: string | null; recorded_at: string; requested_at: string;
   status: string; assessor_version: string | null; http_status: number | null; error_code: string | null;
   body_sha256: string | null; facts: Record<string, unknown> | null;
+}
+export interface NucsForecastContext {
+  known_at: string;
+  from: string;
+  to: string;
+  products: Record<NucsFlowDataset, { id: string | null; batch_id: string; sequence: number | null; status: string; requested_at: string; recorded_at: string | null } | null>;
 }
 export async function marketEvidenceClient() {
   const key = await testProbeServiceKey();
@@ -26,6 +34,25 @@ export async function marketEvidenceClient() {
     return await response.json();
   }
   return {
+    nucsContext: (from: string, to: string) => read<NucsForecastContext | null>('rpc/read_test_nucs_forecast_context', { p_from: from, p_to: to }),
+    async *nucsDomains(id: string, from: string, to: string) {
+      const rows = await read<{ dataset: string; result: NucsFlowEvidence }[]>('rpc/read_test_market_documents', { p_ids: [id] });
+      const row = rows[0];
+      if (rows.length !== 1 || !isNucsFlowDataset(row.dataset) || !row.dataset.endsWith('_domain') ||
+          row.result.status !== 'data' || !('source_observation_id' in row.result.document)) throw new Error('Expected a committed NUCS domain archive');
+      const native = row.result.document as NucsDomainArchive;
+      for (const publication of native.publications) {
+        const archive = publication.archive;
+        if (archive.bucket !== NUCS_NATIVE_BUCKET || !/^nucs\/[a-f0-9]{64}\.zip$/.test(archive.path)) throw new Error('Invalid NUCS archive path');
+        const response = await fetch('https://' + PROBE_PROJECT + '.supabase.co/storage/v1/object/authenticated/' + archive.bucket + '/' + archive.path, { headers });
+        if (!response.ok) throw new Error('TEST NUCS archive download failed');
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const sha = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        const digest = Array.from(sha, b => b.toString(16).padStart(2, '0')).join('');
+        if (digest !== archive.sha256 || bytes.length !== archive.bytes) throw new Error('NUCS native archive integrity mismatch');
+        yield* streamNucsDomain(bytes, publication, { from, to });
+      }
+    },
     research: (query: Record<string, unknown>) => readMarketProvider(new URL(`https://${PROBE_PROJECT}.supabase.co/functions/v1/energy-market-research`), key,
       (url, options) => fetch(url, { ...options, method: 'POST', headers, body: JSON.stringify({ provider: 'nucs', ...query }) })),
     saveBatch: async (batch: MarketBatch) => { await send('energy_market_collection_batches', batch); },

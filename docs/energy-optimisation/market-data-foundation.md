@@ -172,3 +172,65 @@ no additional consumer code or label handling is required. Normal tools include
 the historical records automatically. Current feed status and baseline pointers
 use the native requested window so a download of older dates does not replace a
 forward-looking collection. Original forecast snapshots remain intact.
+
+### Forecasted NUCS flow-based publications
+
+The six-hour regional schedule also requests independent week-ahead and
+month-ahead batches. Each batch records IG-184 available net positions, IG-182
+unavailable net positions, and the exact linked IG-183 domain. These are the six
+`nucs_{week,month}_ahead_{available,unavailable,domain}` products. Collection windows
+cover the current and following week or calendar month in Stockholm time.
+
+Live probes established that forecast requests return the Nordic publication
+across bidding zones even with an SE3 area parameter. Each product is collected
+once per horizon. Signed net positions retain native sparse blocks, units,
+directions, revisions and cancellation status. Separate extrema describe
+individual feasible limits and require their native interpretation.
+
+IG-183 downloads use the documented publication-ID bundle interface,
+`mRID`, `documentVersion` and `fbBatch=true`, pinned to the IG-184 observation
+committed earlier in the same batch. The time-based domain interface timed out
+during verification. The bundle contains a nested domain ZIP plus the two
+net-position XML documents.
+
+Domain XML expands to hundreds of megabytes. The collector validates ZIP
+directories, the domain publication header and its link to IG-184, then stores
+the compressed bundle in the private `test-energy-market-native` bucket under
+its SHA-256. The observation retains the immutable path, checksum, size,
+publication identities and the source observation ID. SQL rejects a domain
+manifest without its stored object and committed source. Repeated identical
+bundles share their object. Each acquisition retains its own journal identity.
+
+Experiments freeze the current committed input IDs before calculation.
+
+```ts
+const client = await marketEvidenceClient();
+const context = await client.nucsContext(from, to);
+// Save context with the experiment before calculating predictions.
+const ids = Object.values(context!.products).flatMap(p => p?.id ? [p.id] : []);
+const observations = await client.documents(ids);
+// Net-position observations contain parsed native blocks.
+// Domain observations contain headers and private archive manifests.
+for (const id of ids.filter(id => observations.some(
+  (o: { id: string; dataset: string }) => o.id === id && o.dataset.endsWith('_domain'),
+))) {
+  for await (const record of client.nucsDomains(id, from, to)) {
+    // Consume native CNECs, RAM, all bidding zones' PTDFs and series reasons.
+  }
+}
+```
+
+The context exposes latest collection intents, including failed, no-data and
+incomplete outcomes. An unfinished collection stays explicit in the snapshot.
+Domain reads verify the compressed checksum and stream the entire XML through
+a strict parser, releasing each constraint as it is emitted. Records retain
+native period boundaries, point positions and curve types. Consumers commit
+experiment outputs only after fully consuming the iterator, so malformed XML
+fails the read. Empty optional metadata and absent PTDF sets stay explicit.
+
+The design uses the Codex candidate's journal and frozen input IDs, with the
+Claude candidate's independent domain invocations and content-addressed native
+storage. Measured XML sizes required private compressed objects and streaming
+experiment reads. Collection-health checks cover both new batch kinds and
+their source outcomes. Provider files and probe evidence stay outside the
+public repository.

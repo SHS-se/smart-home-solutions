@@ -3,10 +3,11 @@ export async function readMarketProvider(
   url: URL,
   token: string,
   fetchProvider: typeof fetch,
+  limits: { maxBytes: number; timeoutMs: number } = { maxBytes: 8 * 1024 * 1024, timeoutMs: 60_000 },
 ) {
   try {
     const response = await fetchProvider(url, {
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(limits.timeoutMs),
       redirect: "error",
     });
     const reader = response.body?.getReader();
@@ -16,7 +17,7 @@ export async function readMarketProvider(
       const part = await reader.read();
       if (part.done) break;
       size += part.value.length;
-      if (size > 8 * 1024 * 1024) {
+      if (size > limits.maxBytes) {
         await reader.cancel();
         throw new Error("Provider body exceeds limit");
       }

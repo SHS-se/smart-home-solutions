@@ -108,6 +108,7 @@
     "globals": "^15.15.0",
     "jscpd": "^5.4.2",
     "resend": "6.37.0",
+    "saxes": "6.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.72.1",

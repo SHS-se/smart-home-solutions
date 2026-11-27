@@ -2,7 +2,9 @@
 import JSZip from "npm:jszip@3.10.1";
 const XML_LIMIT = 2 * 1024 * 1024;
 const TOTAL_LIMIT = 16 * 1024 * 1024;
-function preflightZip(bytes: Uint8Array): number {
+export interface MarketZipLimits { memberBytes: number; totalBytes: number; maxMembers: number; extensions: string[] }
+const DEFAULT_LIMITS: MarketZipLimits = { memberBytes: XML_LIMIT, totalBytes: TOTAL_LIMIT, maxMembers: 199, extensions: [".xml"] };
+export function marketZipDirectory(bytes: Uint8Array, limits: MarketZipLimits = DEFAULT_LIMITS): { name: string; bytes: number }[] {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = -1;
   for (
@@ -25,7 +27,7 @@ function preflightZip(bytes: Uint8Array): number {
   const count = view.getUint16(end + 10, true),
     size = view.getUint32(end + 12, true),
     offset = view.getUint32(end + 16, true);
-  if (count >= 200) {
+  if (count > limits.maxMembers) {
     throw new Error(
       "Market ZIP may be truncated at the provider document limit",
     );
@@ -35,6 +37,7 @@ function preflightZip(bytes: Uint8Array): number {
   }
   let cursor = offset, total = 0;
   const names = new Set<string>();
+  const entries: { name: string; bytes: number }[] = [];
   for (let i = 0; i < count; i++) {
     if (cursor + 46 > end || view.getUint32(cursor, true) !== 0x02014b50) {
       throw new Error("Invalid market ZIP member");
@@ -48,7 +51,7 @@ function preflightZip(bytes: Uint8Array): number {
       commentLength = view.getUint16(cursor + 32, true);
     if (
       flags & 1 || ![0, 8].includes(method) || compressed === 0xffffffff ||
-      expanded > XML_LIMIT || view.getUint32(cursor + 42, true) === 0xffffffff
+      expanded > limits.memberBytes || view.getUint32(cursor + 42, true) === 0xffffffff
     ) throw new Error("Unsupported or oversized market ZIP member");
     if (
       cursor + 46 + nameLength + extraLength + commentLength > offset + size
@@ -57,12 +60,13 @@ function preflightZip(bytes: Uint8Array): number {
       bytes.subarray(cursor + 46, cursor + 46 + nameLength),
     );
     if (
-      !name.endsWith(".xml") || name.startsWith("/") ||
+      !limits.extensions.some(extension => name.endsWith(extension)) || name.startsWith("/") ||
       name.split("/").includes("..") || names.has(name)
     ) throw new Error("Unsupported market ZIP filename");
     names.add(name);
+    entries.push({ name, bytes: expanded });
     total += expanded;
-    if (total > TOTAL_LIMIT) {
+    if (total > limits.totalBytes) {
       throw new Error("Market ZIP exceeds total expanded size limit");
     }
     cursor += 46 + nameLength + extraLength + commentLength;
@@ -70,15 +74,15 @@ function preflightZip(bytes: Uint8Array): number {
   if (cursor !== offset + size) {
     throw new Error("Invalid market ZIP central directory size");
   }
-  return count;
+  return entries;
 }
-export async function marketXmlBodies(bytes: Uint8Array): Promise<string[]> {
+export async function marketXmlBodies(bytes: Uint8Array, limits: MarketZipLimits = DEFAULT_LIMITS): Promise<string[]> {
   if (
     bytes.length >= 4 &&
     new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true) ===
       0x04034b50
   ) {
-    const expectedCount = preflightZip(bytes);
+    const expectedCount = marketZipDirectory(bytes, limits).length;
     const zip = await JSZip.loadAsync(bytes);
     const members = Object.values(zip.files);
     if (members.length !== expectedCount) {
@@ -89,24 +93,12 @@ export async function marketXmlBodies(bytes: Uint8Array): Promise<string[]> {
     for (const member of members) {
       const chunks: Uint8Array[] = [];
       let size = 0;
-      await new Promise<void>((resolve, reject) => {
-        // JSZip 3.10.1 implements file.internalStream but omits it from its typings.
-        const stream = (member as JSZip.JSZipObject & {
-          internalStream(
-            type: "uint8array",
-          ): JSZip.JSZipStreamHelper<Uint8Array>;
-        }).internalStream("uint8array");
-        stream.on("data", (chunk) => {
-          size += chunk.length;
-          total += chunk.length;
-          if (size > XML_LIMIT || total > TOTAL_LIMIT) {
-            stream.pause();
-            reject(new Error("Market ZIP expanded size exceeds limit"));
-            return;
-          }
-          chunks.push(chunk);
-        }).on("error", reject).on("end", resolve).resume();
-      });
+      for await (const chunk of marketZipStream(member, limits.memberBytes)) {
+        size += chunk.length;
+        total += chunk.length;
+        if (total > limits.totalBytes) throw new Error("Market ZIP expanded size exceeds limit");
+        chunks.push(chunk);
+      }
       const body = new Uint8Array(size);
       let at = 0;
       for (const chunk of chunks) {
@@ -117,8 +109,44 @@ export async function marketXmlBodies(bytes: Uint8Array): Promise<string[]> {
     }
     return bodies;
   }
-  if (bytes.length > XML_LIMIT) {
+  if (bytes.length > limits.memberBytes) {
     throw new Error("Market XML exceeds size limit");
   }
   return [new TextDecoder("utf-8", { fatal: true }).decode(bytes)];
+}
+
+
+/** Backpressure keeps large native domain XML out of memory. */
+export function marketZipStream(member: JSZip.JSZipObject, maxBytes: number): ReadableStream<Uint8Array> {
+  let size = 0;
+  let finished = false;
+  const stream = (member as JSZip.JSZipObject & {
+    internalStream(type: "uint8array"): JSZip.JSZipStreamHelper<Uint8Array>;
+  }).internalStream("uint8array");
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      stream.on("data", chunk => {
+        if (finished) return;
+        size += chunk.length;
+        if (size > maxBytes) {
+          stream.pause();
+          finished = true;
+          controller.error(new Error("Market XML expanded size exceeds limit"));
+          return;
+        }
+        controller.enqueue(chunk);
+        if ((controller.desiredSize ?? 0) <= 0) stream.pause();
+      }).on("error", error => {
+        if (finished) return;
+        finished = true;
+        controller.error(error);
+      }).on("end", () => {
+        if (finished) return;
+        finished = true;
+        controller.close();
+      });
+    },
+    pull() { if (!finished) stream.resume(); },
+    cancel() { finished = true; stream.pause(); },
+  });
 }

@@ -21,6 +21,7 @@ const MIGRATIONS = [
   { version: '20261113152000', name: 'retire_open_meteo' },
   { version: '20261113205000', name: 'test_se3_net_import_forecast' },
   { version: '20261113220000', name: 'test_se3_gross_flow_forecasts' },
+  { version: '20261127170000', name: 'test_nucs_flow_based' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');

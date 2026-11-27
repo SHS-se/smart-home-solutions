@@ -1,12 +1,11 @@
-/** Closed, TEST research products for Nordic week-ahead flow-based net positions. */
+/** Closed NUCS requests and native border evidence. */
+import { isNucsFlowDataset, nucsFlowParameters } from "./nucs-flow-based.ts";
 import {
   marketBodyBase64,
   readMarketProvider,
 } from "./market-provider-response.ts";
 import { NEIGHBOUR_EIC } from "./entsoe-market-data.ts";
 export type NucsDataset =
-  | "nucs_week_ahead_available"
-  | "nucs_week_ahead_unavailable"
   | "nucs_week_ahead_ntc"
   | "nucs_transmission_outages";
 export function nucsParameters(query: unknown): URLSearchParams {
@@ -14,22 +13,18 @@ export function nucsParameters(query: unknown): URLSearchParams {
     throw new Error("Invalid NUCS query");
   }
   const q = query as Record<string, unknown>;
-  const pair = q.dataset === "nucs_week_ahead_ntc" ||
-    q.dataset === "nucs_transmission_outages";
+  if (isNucsFlowDataset(q.dataset)) return nucsFlowParameters(query);
+
   if (
     Object.keys(q).sort().join(",") !==
-      (pair
-        ? "dataset,direction,from,neighbour,provider,to"
-        : "dataset,direction,from,provider,to") ||
+      "dataset,direction,from,neighbour,provider,to" ||
     q.provider !== "nucs" ||
     ![
-      "nucs_week_ahead_available",
-      "nucs_week_ahead_unavailable",
       "nucs_week_ahead_ntc",
       "nucs_transmission_outages",
     ].includes(String(q.dataset)) ||
     !["import", "export"].includes(String(q.direction)) ||
-    (pair && !Object.hasOwn(NEIGHBOUR_EIC, String(q.neighbour)))
+    !Object.hasOwn(NEIGHBOUR_EIC, String(q.neighbour))
   ) throw new Error("Unsupported NUCS product");
   const parse = (value: unknown) => {
     if (
@@ -57,33 +52,14 @@ export function nucsParameters(query: unknown): URLSearchParams {
   const params = new URLSearchParams({
     documentType: q.dataset === "nucs_week_ahead_ntc"
       ? "A61"
-      : q.dataset === "nucs_week_ahead_unavailable"
-      ? "B31"
       : "A78",
     periodStart: compact(from),
     periodEnd: compact(to),
   });
-  if (pair) {
-    const neighbour = NEIGHBOUR_EIC[q.neighbour as keyof typeof NEIGHBOUR_EIC];
-    params.set(
-      "in_Domain",
-      q.direction === "import" ? "10Y1001A1001A46L" : neighbour,
-    );
-    params.set(
-      "out_Domain",
-      q.direction === "import" ? neighbour : "10Y1001A1001A46L",
-    );
-    if (q.dataset === "nucs_week_ahead_ntc") {
-      params.set("contract_MarketAgreement.Type", "A02");
-    }
-  } else {
-    params.set("processType", "A31");
-    params.set("fbForecast", "true");
-    params.set(
-      q.direction === "import" ? "in_Domain" : "out_Domain",
-      "10Y1001A1001A46L",
-    );
-  }
+  const neighbour = NEIGHBOUR_EIC[q.neighbour as keyof typeof NEIGHBOUR_EIC];
+  params.set("in_Domain", q.direction === "import" ? "10Y1001A1001A46L" : neighbour);
+  params.set("out_Domain", q.direction === "import" ? neighbour : "10Y1001A1001A46L");
+  if (q.dataset === "nucs_week_ahead_ntc") params.set("contract_MarketAgreement.Type", "A02");
   return params;
 }
 

@@ -1,4 +1,5 @@
 /** Fixed provider products and cadences. This is acquisition policy, never a price model. */
+import { NUCS_FLOW_PRODUCTS, type NucsFlowDataset } from './nucs-flow-based.ts';
 import { ZONE_STATIONS } from './market-wind.ts';
 import { nucsParameters, type NucsArchiveDataset } from './nucs-market-data.ts';
 import type { SmhiDataset } from './smhi-observations.ts';
@@ -9,9 +10,9 @@ export const GENERATION_DATASETS = [...ARCHIVED_MARKET_DATASETS.filter(dataset =
   'production_outages', 'generation_outages', 'installed_generation_units'] as const;
 export const NEIGHBOUR_ZONES = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 export type NeighbourZone = typeof NEIGHBOUR_ZONES[number];
-export type CollectionKind = 'day_ahead' | 'generation' | 'market_context' | 'weather_truth' | 'regional_context' | 'market_history';
+export type CollectionKind = 'day_ahead' | 'generation' | 'market_context' | 'weather_truth' | 'regional_context' | 'market_history' | 'nucs_week_context' | 'nucs_month_context';
 export type ArchiveDataset = typeof GENERATION_DATASETS[number] | 'load_actual' |
-  'spot_price' | 'svk_physical_imports' | 'svk_physical_exports' | 'jao_day_ahead_border_flows' | 'jao_day_ahead_net_position' | 'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges' | SmhiDataset | NucsArchiveDataset;
+  'spot_price' | 'svk_physical_imports' | 'svk_physical_exports' | 'jao_day_ahead_border_flows' | 'jao_day_ahead_net_position' | 'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges' | SmhiDataset | NucsArchiveDataset | NucsFlowDataset;
 export type MarketZone = 'SE3' | NeighbourZone | 'NORDIC_CCR';
 export interface MarketRequest { key: string; dataset: ArchiveDataset; zone: MarketZone; from: string; to: string; station_id?: string; neighbour?: NeighbourZone; direction?: 'import' | 'export' }
 export interface MarketBatch { id: string; kind: CollectionKind; requested_at: string; plan: MarketRequest[] }
@@ -31,6 +32,7 @@ export function parseCollectionRequest(body: string): { kind: CollectionKind; da
   if (keys.length === 1 && 'context' in value && value.context === true) return { kind: 'market_context' };
   if (keys.length === 1 && 'truth' in value && value.truth === true) return { kind: 'weather_truth' };
   if (keys.length === 1 && 'regional' in value && value.regional === true) return { kind: 'regional_context' };
+  if (keys.length === 1 && 'flowBased' in value && ['week', 'month'].includes(String(value.flowBased))) return { kind: value.flowBased === 'week' ? 'nucs_week_context' : 'nucs_month_context' };
   const [key] = keys;
   if (keys.length === 1 && (key === 'history' || Object.hasOwn(FLOW_HISTORY_DATASETS, key))) {
     const day = (value as Record<string, unknown>)[key];
@@ -54,7 +56,27 @@ export function collectionPlan(kind: CollectionKind, now: Date, day?: string, fl
     const start = new Date(from).toISOString(), end = new Date(to).toISOString();
     requests.push({ key: `${dataset}/${zone}/${start}/${end}`, dataset, zone, from: start, to: end });
   };
-  if (kind === 'regional_context') {
+  if (kind === 'nucs_week_context' || kind === 'nucs_month_context') {
+    const horizon = kind === 'nucs_week_context' ? 'week' : 'month';
+    const localDay = marketDate(now.getTime());
+    const date = new Date(localDay + 'T00:00:00Z');
+    let first: Date, last: Date;
+    if (horizon === 'week') {
+      first = new Date(date.getTime() - ((date.getUTCDay() + 6) % 7) * DAY);
+      last = new Date(first.getTime() + 14 * DAY);
+    } else {
+      first = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+      last = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 2, 1));
+    }
+    const from = marketDaySpan(first.toISOString().slice(0, 10))[0];
+    const to = marketDaySpan(last.toISOString().slice(0, 10))[0];
+    // Net positions commit before their exact linked domain bundle is fetched.
+    for (const product of ['available', 'unavailable', 'domain']) {
+      for (const [dataset, spec] of Object.entries(NUCS_FLOW_PRODUCTS)) {
+        if (spec.horizon === horizon && spec.product === product) add(dataset as NucsFlowDataset, 'NORDIC_CCR', from, to);
+      }
+    }
+  } else if (kind === 'regional_context') {
     requests.push(...regionalCollectionPlan(new Date(today - DAY).toISOString(), new Date(today + 9 * DAY).toISOString()));
   } else if (kind === 'weather_truth') {
     const to = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
@@ -115,8 +137,6 @@ export function collectionPlan(kind: CollectionKind, now: Date, day?: string, fl
 }
 
 export const MARKET_CAPABILITY_GAPS = [
-  { source: 'NUCS flow-based week-ahead net positions (IG-182/184)', status: 'token_verified_no_matching_flow_based_publications_for_tested_weeks' },
-  { source: 'Full Nordic flow-based domain', status: 'not_collected' },
   { source: 'Hourly week-ahead demand', status: 'provider_publishes_daily_extrema' },
   { source: 'Operational weather issue time', status: 'not_exposed_by_provider' },
 ] as const;

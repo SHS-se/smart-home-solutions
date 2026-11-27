@@ -1,3 +1,4 @@
+import { captureNucsFlowEvidence, isNucsFlowDataset, NUCS_FLOW_PRODUCTS, NUCS_NATIVE_BUCKET, type NucsFlowEvidence, type NucsFlowDataset, type NucsNativeWriter } from "../_shared/nucs-flow-based.ts";
 import { svkFlowRequest, parseSvkFlowResponse, type SvkFlowDataset } from "../_shared/svk-physical-flows.ts";
 import { readMarketProvider } from "../_shared/market-provider-response.ts";
 import { entsoeParameters, parseEntsoeResponse, neighbourEntsoeParameters, EntsoeProviderError, type EntsoeResponse } from "../_shared/entsoe-market-data.ts";
@@ -31,7 +32,7 @@ type SvkArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | n
   ({ status: "data"; document: ReturnType<typeof parseSvkFlowResponse> } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
 type SmhiArchiveResult = Omit<ResultEvidence, 'raw_xml'> & { raw_body: string | null; request: { station_id: string; dataset: SmhiDataset } } &
   ({ status: 'data'; document: SmhiDocument } | { status: 'provider_error' | 'transport_error' | 'parse_error' });
-export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | SvkArchiveResult | EntsoeArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
+export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | SvkArchiveResult | EntsoeArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]> | NucsFlowEvidence;
 interface ObservationIdentity {
   id: string;
   batch_id: string;
@@ -50,11 +51,13 @@ export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: SmhiDataset; result: SmhiArchiveResult }
   | { dataset: JaoDataset; result: JaoArchiveResult }
   | { dataset: SvkFlowDataset; result: SvkArchiveResult }
+  | { dataset: NucsFlowDataset; result: NucsFlowEvidence }
   | CapacityObservation
 );
 export interface MarketArchiveStore {
   verifyToken(token: string): Promise<boolean>;
   saveBatch(batch: MarketBatch): Promise<void>;
+  saveNative: NucsNativeWriter;
   saveObservation(row: MarketArchiveObservation, assessment: MarketAssessment): Promise<void>;
 }
 
@@ -151,10 +154,13 @@ export function createMarketArchiveHandler(
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     try { await store.saveBatch(batch); }
     catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
-    const outcomes = await Promise.allSettled(batch.plan.map(async ({ dataset, zone, from, to, key, station_id, neighbour, direction }) => {
+    let available: { id: string; evidence: NucsFlowEvidence } | null = null;
+    const collect = async ({ dataset, zone, from, to, key, station_id, neighbour, direction }: typeof batch.plan[number]) => {
       const identity = { id: crypto.randomUUID(), batch_id: batch.id, request_key: key, zone,
         requested_from: from, requested_to: to, requested_at: clock().toISOString() };
-      const row: MarketArchiveObservation = dataset === 'nucs_week_ahead_ntc' || dataset === 'nucs_transmission_outages'
+      const row: MarketArchiveObservation = isNucsFlowDataset(dataset)
+        ? { ...identity, dataset, result: await captureNucsFlowEvidence({ dataset, from, to }, config.nucsToken, store.saveNative, available, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === 'nucs_week_ahead_ntc' || dataset === 'nucs_transmission_outages'
         ? { ...identity, dataset, result: await captureNucsEvidence({ dataset, neighbour: neighbour!, direction: direction!, from, to }, config.nucsToken, fetchProvider), resolved_at: clock().toISOString() }
         : dataset === 'smhi_wind_10m_observed' || dataset === 'smhi_temperature_2m_observed'
         ? { ...identity, dataset, result: await smhiResult(dataset, station_id!, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
@@ -172,8 +178,20 @@ export function createMarketArchiveHandler(
         ? { ...identity, dataset, result: await jaoResult(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : { ...identity, dataset, result: await entsoeResult(dataset, from, to, config.entsoeToken, fetchProvider, zone), resolved_at: clock().toISOString() };
       await store.saveObservation(row, assessMarketObservation(row));
+      if (isNucsFlowDataset(row.dataset) && NUCS_FLOW_PRODUCTS[row.dataset].product === "available") {
+        available = { id: row.id, evidence: row.result as NucsFlowEvidence };
+      }
       return row;
-    }));
+    };
+    const outcomes: PromiseSettledResult<MarketArchiveObservation>[] = [];
+    if (batch.kind === "nucs_week_context" || batch.kind === "nucs_month_context") {
+      for (const item of batch.plan) {
+        try { outcomes.push({ status: "fulfilled", value: await collect(item) }); }
+        catch (reason) { outcomes.push({ status: "rejected", reason }); }
+      }
+    } else {
+      outcomes.push(...await Promise.allSettled(batch.plan.map(collect)));
+    }
     const rows = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
     const observations = rows.map(row => ({ id: row.id, dataset: row.dataset, status: row.result.status }));
     if (rows.length !== batch.plan.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
@@ -194,6 +212,11 @@ if (import.meta.main) {
     async saveBatch(batch) {
       const { error } = await client.from("energy_market_collection_batches").insert(batch);
       if (error) throw new Error("Archive batch storage failed");
+    },
+    async saveNative(path, bytes) {
+      const { error } = await client.storage.from(NUCS_NATIVE_BUCKET).upload(path, bytes, { contentType: "application/zip", upsert: false });
+      // The path is the SHA-256 of the bytes. Concurrent identical acquisitions share the immutable object.
+      if (error && !("statusCode" in error && error.statusCode === "409")) throw new Error("NUCS native archive storage failed");
     },
     async saveObservation(row, assessment) {
       const { error } = await client.rpc("record_test_market_observation", { p_observation: row, p_assessment: assessment });
