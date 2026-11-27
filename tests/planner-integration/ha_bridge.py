@@ -135,6 +135,11 @@ class History:
         self.pool_w = pool_w
 
     async def statistics(self, start, end, entities, period, units, kinds):
+        if period == "month":
+            assert kinds == {"max", "min"}
+            assert units == {"power": "W"}
+            # No monthly aggregates in this invented recorder; five-minute and state evidence remain available.
+            return {entity: [] for entity in entities}
         assert period == "5minute"
         if kinds == {"mean"}:
             if set(entities) == {"sensor.synthetic_soc"}:
@@ -204,6 +209,9 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
         raise AssertionError("capture must not mutate configuration")
     async def inventory():
         return deepcopy(devices)
+    async def electrical_device_draws(_mappings):
+        # This synthetic plant has recorder evidence, but no persisted learned attribution.
+        return {}
     def spawn(coroutine, _name):
         coroutine.close()
         raise AssertionError("capture must not start background jobs")
@@ -221,7 +229,7 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
         entity_areas=lambda: {}, inventory=inventory, battery_report=lambda _entity: None,
         history=History(room, 0 if battery else 1200 if manual_pool_w is None else manual_pool_w),
         utcnow=lambda: captured, recovering=lambda: False, repair=lambda *_args: None, publish=lambda: None, spawn=spawn,
-        electrical_power_bounds=electrical_power_bounds)
+        electrical_power_bounds=electrical_power_bounds, electrical_device_draws=electrical_device_draws)
     household = Household(ports, SimpleNamespace(), store=DurableRecord(Store(), json.dumps, json.loads),
                           battery_inputs_store=Store(), connection_store=Store(), control_authority=True)
     if battery:
@@ -309,6 +317,9 @@ async def consume(payload):
     room = payload.get("room", False)
     options, states, _devices = room_scenario(room == "thermostat") if room else scenario(payload["amps"], payload["connected"])
     assert options == payload["options"], "consumer uses the exact producer configuration"
+    if room == "thermostat":
+        # Execution sees a real ambient observation, independent of the planner's forecast.
+        states["climate.synthetic_room"].attributes["current_temperature"] = payload["ambient_c"]
     states["switch.synthetic_pool"].state = "off"
     # Force both physical paths to emit a command, including a disconnected EV.
     states["switch.synthetic_charge"].state = "on" if not payload.get("connected", True) else "off"

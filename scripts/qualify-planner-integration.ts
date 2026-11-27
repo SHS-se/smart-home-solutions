@@ -100,7 +100,7 @@ results.push({ scenario: "delayed_charging_handoffs", tested_directions: ["EV_to
 {
   const produced = JSON.parse(await command(python, [bridge, haRepo, "produce-battery"]));
   const snapshot: OptimisationSnapshot = produced.snapshot;
-  assertEquals(snapshot.schema_version, 11);
+  assertEquals(snapshot.schema_version, 12);
   assertEquals(snapshot.battery, {
     capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: 1,
     charge_max_w: 4000, discharge_max_w: 5000,
@@ -226,7 +226,7 @@ for (const amps of [12, 15]) {
     const snapshot: OptimisationSnapshot = produced.snapshot;
     assertEquals(
       snapshot.schema_version,
-      11,
+      12,
       "use the real current producer schema",
     );
     assertEquals(
@@ -444,6 +444,7 @@ for (const amps of [12, 15]) {
       plan,
       options: produced.options,
       room: "thermostat",
+      ambient_c: 20.5,
     }),
   );
   assertEquals(consumed.admitted, true);
@@ -454,20 +455,32 @@ for (const amps of [12, 15]) {
   );
   const scheduled =
     plan.execution_plan!.plans.priority.slots[0].device_commands[heater.key];
-  assert(scheduled.type === "setpoint");
+  assertEquals(scheduled, { type: "heating_schedule", heating: true });
   assertEquals(
     consumed.commands.find((c: { domain: string; service: string }) =>
       c.domain === "climate" && c.service === "set_temperature"
     ).value,
-    scheduled.target_c,
+    22,
+    "controller must cross the live 20.5 C ambient plus 1 C margin on the half-degree grid",
   );
+  const cooler = JSON.parse(await command(python, [bridge, haRepo, "consume"], {
+    plan, options: produced.options, room: "thermostat", ambient_c: 18,
+  }));
+  assertEquals(cooler.admitted, true);
+  assertEquals(cooler.commands.find((c: { domain: string; service: string }) =>
+    c.domain === "climate" && c.service === "set_temperature").value, 19.5,
+    "the same heat instruction must produce a different setpoint from different live ambient");
   const projection = plan.execution_plan!.thermal_projection!.zones[0];
   assert(
     projection.planned_temperature_c.at(-1)! >= 20,
     "idle-at-capture synthetic heater must recover comfort",
   );
   assert(projection.planned_power_w.some((w) => w > 300));
-  assert(projection.planned_power_w.every((w) => w >= 0 && w <= 1200 + 1e-6));
+  for (const [i, slot] of plan.execution_plan!.plans.priority.slots.entries()) {
+    const command = slot.device_commands[heater.key];
+    assert(command.type === "heating_schedule");
+    assertAlmostEquals(projection.planned_power_w[i], command.heating ? 1200 : 0, 1e-6);
+  }
   results.push({
     scenario: "idle_thermostat",
     observed_on_w: heater.active_power_w,

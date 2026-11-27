@@ -47,7 +47,9 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
     initial_state: { at: anchor, pending_heat_kwh: 2, source_depletion_kwh: 0 },
     state: { at: anchor, pending_heat_kwh: 2, source_depletion_kwh: 0 },
   };
-  assertEquals(produced.actuals.length, 2, "manual exchange must carry both completed quarters");
+  // The current uploader also re-offers older quarters to repair late statistics.
+  const recent = produced.actuals.filter(row => Date.parse((row as { start: string }).start) >= boundary - 2 * 900_000);
+  assertEquals(recent.length, 2, "manual exchange must carry both completed quarters");
   assert(s.capabilities.pool && s.pool?.electrical_history?.counters.length);
   const { state, warnings: captureWarnings } = await capturedPoolResponseState(observationDatabase(produced.actuals, at), context.home_id, s, model);
   assertEquals(captureWarnings, []);
@@ -63,7 +65,7 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
   assertEquals(late.warnings.map(w => w.code), ["pool_history_late"]);
   // Time the uploader has moved past is a visible warning, still thermal.
   const older = new Date(boundary - 4 * 900_000).toISOString();
-  const hole = await capturedPoolResponseState(observationDatabase(produced.actuals, at), context.home_id, s,
+  const hole = await capturedPoolResponseState(observationDatabase(recent, at), context.home_id, s,
     { ...model, state: { ...model.state, at: older }, initial_state: { ...model.initial_state, at: older } });
   assertEquals(hole.warnings.map(w => w.code), ["pool_history_missing"]);
   assert(Number.isFinite(hole.state.pending_heat_kwh));
