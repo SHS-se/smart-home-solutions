@@ -17,6 +17,52 @@ function drain(input: NativeRoomNetworkAdvanceInput) {
     next = { ...input, work: JSON.parse(JSON.stringify(advanced.work)) };
   }
 }
+Deno.test("fixed peer power charges and releases the learned heat store in proposals and joint forecasts", () => {
+  const input = syntheticJointRoomForecast(2, 0, 1), { network } = input;
+  network.rooms.pop();
+  network.accepted!.pop();
+  network.stage = 0;
+  // An isolated receiving equation gives an independent closed-form reference.
+  // Its outgoing edge still transmits the delayed temperature rise to room 0.
+  const node = network.nodes[1];
+  node.start_c = 20;
+  node.start_stored_heat_c = .2;
+  node.lag_h = .5;
+  node.outdoor_per_h = 0;
+  node.forcing_c_per_h.fill(0);
+  node.incoming = [];
+  input.beliefs[1].hypotheses = [];
+  node.gain_c_per_wh = [.001, .002, .002, .001];
+  const watts = [400, 400, 0, 0];
+  network.fixed_heaters = [{node: 1, watts}];
+  network.nodes[0].incoming[0].rates = network.hours.map(h => Array(Math.ceil(h * 60)).fill(.2));
+  for (const [i, quarter] of network.rooms[0].input.quarters.entries()) {
+    quarter.fixed_targets_c = [5];
+    quarter.room_target = { ...quarter.room_target!, fixed_c: 5, preferred_c: 5 };
+    network.accepted![0].targets_c[i] = [5];
+  }
+  let temperature = node.start_c, stored = node.start_stored_heat_c;
+  const expected = network.hours.map((hours, i) => {
+    const gain = node.gain_c_per_wh[i] * watts[i], carry = Math.exp(-hours / node.lag_h);
+    const next = stored * carry + gain * node.lag_h * (1 - carry);
+    temperature += gain * hours + stored - next;
+    stored = next;
+    return temperature;
+  });
+  const planner = nativePlanner();
+  const proposal = planner.roomNetwork(network);
+  const final = planner.roomNetworkFinalize({network, work: drain(input)});
+  for (const projected of [proposal, final]) {
+    projected.temperature_c[1].forEach((t, i) => assertAlmostEquals(t, expected[i], 1e-10));
+    assertEquals(projected.plans[0].power_w, [0, 0, 0, 0]);
+  }
+  network.fixed_heaters = [];
+  const unheated = planner.roomNetworkFinalize({network, work: drain(input)});
+  for (let i = 0; i < network.hours.length; i++) {
+    assertEquals(final.literal[0].temperature_c[i], final.plans[0].temperature_c[i]);
+    assertEquals(final.temperature_c[0][i] > unheated.temperature_c[0][i], true);
+  }
+});
 Deno.test("joint trajectories are invariant to minute continuation boundaries", () => {
   const input = syntheticJointRoomForecast(2, .65, 2, .02);
   input.target_trajectories = 8;

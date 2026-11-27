@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
-import { connectedRoomHeaterSupported } from "./planner/room-response.ts";
+import { connectedRoomHeaterSupported, roomResponseEvidenceLimited } from "./planner/room-response.ts";
 import {
   MAX_ROOM_RELAYS,
   type RoomHeatingPlan,
@@ -11,10 +11,11 @@ import {
 } from "./planner/models/room/connected-exchange.ts";
 import { connectedRoomDependencies, type ConnectedRoomPlanningNode, type ConnectedRoomForecastIdentity } from "./planner/models/room/network.ts";
 import { roomPlanClock } from "./planner/models/room/state.ts";
-import { isThermostat } from "./planner/thermostat.ts";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import {
   compileRoomSchedule,
+  empiricalHeaterWatts,
+  schedulableRoomThermostat,
   storeRoomCommands,
 } from "./room-scheduling-inputs.ts";
 import type {
@@ -63,12 +64,13 @@ function compileNetwork(
   ) return;
   const nodes = network.nodes.filter((node) => !disabled.has(node.key));
   const nodeIndex = new Map(nodes.map((node, index) => [node.key, index]));
-  const zones = (snapshot.thermal_zones ?? []).filter((room) => {
+  const allZones = snapshot.thermal_zones ?? [];
+  const zones = allZones.filter((room) => {
     const node = nodeIndex.get(room.key);
     const supported = node === undefined
       ? zone === null && !!accepted?.[room.key]
       : connectedRoomHeaterSupported(nodes[node].model);
-    return supported && room.model && room.start_temperature_c !== null &&
+    return supported && !roomResponseEvidenceLimited(room.model_warnings) && room.model && room.start_temperature_c !== null &&
       snapshot.device_models.filter((m) =>
           room.device_keys.includes(m.key) &&
           m.control_type === "switch_schedule"
@@ -80,7 +82,7 @@ function compileNetwork(
             unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)
           ) &&
           (m.control_type === "setpoint"
-            ? isThermostat(m.thermostat)
+            ? schedulableRoomThermostat(m, snapshot.operating_scope)
             : m.control_type === "switch_schedule" &&
               m.category === "heating" && typeof m.relay_on === "boolean")
         );
@@ -95,6 +97,24 @@ function compileNetwork(
   const clock = roomPlanClock(snapshot),
     n = snapshot.slots.length,
     included = new Set(zones.map((room) => room.key));
+  // An empirical room's comfort commands are already fixed, including rooms
+  // later in proposal order. Charge their electricity only in the service ledger.
+  const fixedHeaters = allZones.flatMap(room => {
+    const index = nodeIndex.get(room.key);
+    if (included.has(room.key) || index === undefined || !connectedRoomHeaterSupported(nodes[index].model) ||
+        roomResponseEvidenceLimited(room.model_warnings)) return [];
+    const members = snapshot.device_models.filter(member => room.device_keys.includes(member.key) &&
+      (member.control_type === "setpoint" && (member.thermostat?.hvac_action !== "off" ||
+        schedulableRoomThermostat(member, snapshot.operating_scope)) ||
+        member.control_type === "switch_schedule" && member.category === "heating"));
+    if (!members.length) return [];
+    const watts = snapshot.slots.map((slot, i) => members.reduce((sum, member) => {
+      if (unavailableOwner(snapshot, commandOwner(snapshot, member), slot.start)) return sum;
+      const draw = empiricalHeaterWatts(member, i, retained[i]?.device_commands?.[member.key]);
+      return Number.isFinite(draw) ? sum + draw : sum;
+    }, 0));
+    return [{node: index, watts}];
+  });
   const headroom = inputs.headroom?.slice() ?? Array(n).fill(Number.MAX_VALUE),
     surplus = prices?.surplus_w.slice() ?? Array(n).fill(0);
   for (const room of snapshot.thermal_zones ?? []) {
@@ -223,6 +243,7 @@ function compileNetwork(
   }
   const native: NativeRoomNetworkInput = {
     nodes: nativeNodes,
+    fixed_heaters: fixedHeaters,
     rooms: compiled.map((room) => ({
       node: nodeIndex.get(room.zone.key)!,
       input: {

@@ -39,6 +39,9 @@ import type { RoomHeatingPlan, RoomQuarter } from "./room-heating-schedule.ts";
 import type { RoomThermostat } from "./planner/thermostat.ts";
 
 export interface NativeRoomNetworkInput {
+  /** Fixed empirical draw with identified heater response. The electrical
+   * service has already accounted for these watts outside native actuation. */
+  fixed_heaters?: Array<{ node: number; watts: number[] }>;
   nodes: Array<
     {
       key: string;

@@ -7,6 +7,7 @@ import {
 } from "@std/assert";
 import {
   prepareRoomBatch,
+  prepareRoomProposals,
   prepareRoomServices,
   type RoomPrices,
 } from "./rules-room-services.ts";
@@ -285,6 +286,135 @@ Deno.test("connected exchange does not bypass sparse-heater evidence", () => {
   const result = prepareRoomServices(s, [], Array(16).fill(4000), prices(s));
   assertEquals(result.temperature["synthetic-a"], Array(16).fill(null));
   assertEquals(result.room_power["synthetic-a"], Array(16).fill(500));
+});
+
+Deno.test("fixed empirical peer heat follows available devices, retained switches and forecast weather in either room order", () => {
+  const s = fixture(true);
+  const room = s.thermal_zones![1], member = s.device_models[1];
+  delete member.thermostat;
+  const relay = { ...member, key: "synthetic-peer-relay", control_type: "switch_schedule" as const,
+    active_power_w: 600, relay_on: false, forecast_w_by_slot: s.slots.map(() => 80) };
+  room.device_keys.push(relay.key);
+  s.device_models.push(relay);
+  const index = 2;
+  s.execution_availability = [{ owner: member.key, status: "temporarily_absent", cause: "synthetic",
+    blocked_intervals: [{ start: s.slots[index].start, end: s.slots[index + 1].start }] }];
+  const retained = [0, 900].map(on_seconds => ({
+    device_commands: { [relay.key]: { type: "switch_schedule" as const, on_seconds } },
+  }));
+  const heater = s.room_network!.nodes[1].model.thermal.heater!;
+  heater.gain_outdoor_slope_per_c = .1;
+  s.outdoor_temperature_c![1] = heater.gain_reference_outdoor_c + 2;
+  const headroom = s.slots.map(() => 4000);
+  const capture = () => prepareRoomProposals({ snapshot: s, retained, headroom, prices: prices(s) }, undefined, null, Infinity);
+  const original = capture();
+  s.thermal_zones!.reverse();
+  const reversed = capture();
+  for (const { progress, forecast } of [original, reversed]) {
+    const { network } = forecast!.nativeInput;
+    const { services } = progress;
+    const electrical = s.slots.map((_, i) => i === 0 ? 500 : i === 1 ? 1100 : 580);
+    const thermal = electrical.map((w, i) => i === index ? w - 500 : w);
+    assertEquals(network.rooms.map(r => r.node), [0]);
+    assertEquals(network.fixed_heaters, [{ node: 1, watts: thermal }]);
+    assertAlmostEquals(network.nodes[1].gain_c_per_wh[1], heater.gain_c_per_wh * 1.2);
+    assertEquals(services.room_power[room.key], electrical);
+    assertEquals(network.headroom_w, electrical.map(w => 4000 - w));
+    assertEquals(services.temperature[room.key], s.slots.map(() => null));
+    assertEquals(services.commands[relay.key].slice(0, 2), retained.map(r => r.device_commands[relay.key]));
+    assertEquals(services.commands[member.key][index].type, "unavailable");
+  }
+  assertEquals(original.progress.network_plans, reversed.progress.network_plans);
+});
+
+Deno.test("a sparse connected peer retains literal comfort and excludes its heater from the joint heat input", () => {
+  for (const warningOnly of [false, true]) {
+    const s = fixture(true), peer = s.thermal_zones![1];
+    peer.model_source = {kind: "shared", revision: "synthetic-response"};
+    peer.unplanned_power_w = s.slots.map(() => 720);
+    if (warningOnly) peer.model_warnings = ["insufficient_heating"];
+    else s.room_network!.nodes[1].model.evidence.heater_identified = false;
+    const { progress, forecast } = prepareRoomProposals({ snapshot: s, retained: [], prices: prices(s) }, undefined, null, Infinity);
+    assertEquals(forecast!.nativeInput.network.fixed_heaters, []);
+    assertEquals(forecast!.nativeInput.network.rooms.map(r => r.node), [0]);
+    assertEquals(progress.services.temperature[peer.key], s.slots.map(() => null));
+    assertEquals(progress.services.room_power[peer.key], s.slots.map(() => 500));
+    const warning = progress.services.warnings.find(w => w.scope === peer.key && w.consequence.includes("omit additional heat"));
+    assert(warning);
+    assertEquals(warning.message.includes("too few measured"), warningOnly);
+    assertEquals(progress.services.unplanned_power[peer.key], s.slots.map(() => warningOnly ? 500 : 720));
+    assertEquals(!!progress.services.heating_model_use![peer.key].baseline, !warningOnly);
+    for (const [i, command] of progress.services.commands[peer.device_keys[0]].entries()) {
+      assert(command.type === "setpoint");
+      assertEquals(command.room_target_c, peer.target_c[i]);
+    }
+  }
+});
+
+Deno.test("Off thermostat keeps the supported target grid and historical draw in a standalone room", () => {
+  const s = fixture(), member = s.device_models[0], zone = s.thermal_zones![0];
+  delete s.room_network;
+  member.thermostat = {...member.thermostat!, hvac_action: "off", minimum_c: 5, maximum_c: 28, step_c: 1};
+  zone.target_c.fill(20.6);
+  zone.unplanned_power_w.fill(890);
+  const rooms = prepareRoomServices(s);
+  assertEquals(rooms.temperature[zone.key], s.slots.map(() => null));
+  assertEquals(rooms.power[member.key], member.forecast_w_by_slot);
+  assertEquals(rooms.unplanned_power[zone.key], member.forecast_w_by_slot);
+  assertEquals(rooms.commands[member.key][0], {type: "setpoint", target_c: 21, room_target_c: 20.6, minimum_c: 5, maximum_c: 28});
+  assert(rooms.warnings.some(w => w.scope === zone.key && w.message.includes("Off mode")));
+});
+
+Deno.test("synthetic Off thermostat activation requires a heating owner and advertised Heat support", () => {
+  for (const mode of ["controlling", "control_verification", "planning", "monitoring"] as const) {
+    const s = fixture(true), peer = s.thermal_zones![1], unit = s.device_models[1];
+    const active = mode === "controlling" || mode === "control_verification";
+    s.operating_scope = {modes: {"synthetic-owner": mode}, device_owners: {[unit.key]: "synthetic-owner"}, external_demands: {}};
+    unit.thermostat = {...unit.thermostat!, hvac_action: "off", can_activate_heat: true};
+    const capture = () => prepareRoomProposals({snapshot: s, retained: [], prices: prices(s)}, undefined, null, Infinity);
+    const network = capture().forecast!.nativeInput.network;
+    assertEquals(network.rooms.map(room => room.node), active ? [0, 1] : [0]);
+    if (active) assertEquals(network.rooms[1].input.thermostats[0].hvac_action, "off");
+    unit.thermostat.can_activate_heat = false;
+    assertEquals(capture().forecast!.nativeInput.network.rooms.map(room => room.node), [0]);
+    unit.thermostat.can_activate_heat = true;
+    delete s.room_network;
+    const scalar = prepareRoomServices(s);
+    assertEquals(scalar.temperature[peer.key].every(Number.isFinite), active);
+    if (active) {
+      unit.thermostat.hvac_action = "idle";
+      assertEquals(prepareRoomServices(s).room_power[peer.key], scalar.room_power[peer.key]);
+      unit.thermostat.hvac_action = "off";
+      unit.category = "other";
+      assertEquals(prepareRoomServices(s).temperature[peer.key], s.slots.map(() => null));
+    }
+  }
+});
+
+Deno.test("a connected Off thermostat preserves its facts and only the other heater contributes new peer heat", () => {
+  const s = fixture(true), peer = s.thermal_zones![1], unit = s.device_models[1];
+  const thermostat = { ...unit.thermostat!, hvac_action: "off" as const, minimum_c: 7, maximum_c: 28, step_c: 1 };
+  unit.thermostat = thermostat;
+  peer.target_c.fill(22.7);
+  const capture = () => prepareRoomProposals({snapshot: s, retained: [], prices: prices(s)}, undefined, null, Infinity);
+  const alone = capture();
+  assertEquals(alone.forecast!.nativeInput.network.rooms.map(r => r.node), [0]);
+  assertEquals(alone.forecast!.nativeInput.network.fixed_heaters, []);
+  assertEquals(alone.progress.services.temperature[peer.key], s.slots.map(() => null));
+  assertEquals(alone.progress.services.commands[unit.key][0],
+    {type: "setpoint", target_c: 23, room_target_c: 22.7, minimum_c: 7, maximum_c: 28});
+  const other = { ...unit, key: "synthetic-peer-relay", control_type: "switch_schedule" as const,
+    relay_on: false, forecast_w_by_slot: s.slots.map(() => 120), thermostat: null };
+  s.device_models.push(other);
+  peer.device_keys.push(other.key);
+  const mixed = capture();
+  assertEquals(mixed.forecast!.nativeInput.network.fixed_heaters, [{node: 1, watts: other.forecast_w_by_slot}]);
+  assertEquals(mixed.progress.services.room_power[peer.key], s.slots.map(() => 620));
+  assertEquals(unit.thermostat, thermostat);
+  unit.thermostat = { ...thermostat, hvac_action: "idle" };
+  const resumed = capture();
+  assertEquals(resumed.forecast!.nativeInput.network.rooms.map(r => r.node), [0, 1]);
+  assertEquals(resumed.forecast!.nativeInput.network.fixed_heaters, []);
 });
 
 import { applyConnectedRoomCapture } from "./room-model-capture.ts";

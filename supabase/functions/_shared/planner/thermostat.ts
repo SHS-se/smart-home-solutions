@@ -8,7 +8,10 @@ export interface ThermostatInput {
   step_c: number;
   current_temperature_c: number;
   target_temperature_c: number;
-  hvac_action: "heating" | "idle";
+  /** Off records the observed HVAC mode independently of the native heating latch. */
+  hvac_action: "heating" | "idle" | "off";
+  /** Native support for activating Heat and restoring Off, observed while Off. */
+  can_activate_heat?: boolean;
 }
 
 export interface RoomThermostat extends ThermostatInput {
@@ -36,7 +39,7 @@ export function isThermostat(value: unknown): value is ThermostatInput {
       .every(v => typeof v === "number" && Number.isFinite(v)) &&
     t.step_c > 0 && t.maximum_c >= t.minimum_c &&
     t.target_temperature_c >= t.minimum_c && t.target_temperature_c <= t.maximum_c &&
-    (t.hvac_action === "heating" || t.hvac_action === "idle");
+    (t.hvac_action === "heating" || t.hvac_action === "idle" || t.hvac_action === "off");
 }
 
 /** Same nearest native step, halves up, as the existing HA executor. */

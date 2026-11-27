@@ -2,7 +2,7 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { prepareRoomServices } from "./rules-room-services.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
-import { nativeTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
+import { isThermostat, nativeTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { roomTransition, backgroundRateForSlot } from "./planner/models/room/thermal.ts";
 import fixture from "./bathroom-thermostat-replay.fixture.json" with { type: "json" };
 
@@ -36,7 +36,8 @@ Deno.test("bathroom replay: historical rounded 21 C targets do not invent 686 W 
 
 Deno.test("bathroom replay: Comfort recovery uses supported targets and reproduces every published power and temperature", () => {
   const s = bathroom(), z = s.thermal_zones![0], t = s.device_models.find(d => d.key === floor)!;
-  const unit: RoomThermostat = { ...t.thermostat!, power_w: t.active_power_w!, sensor_offset_c: t.thermostat!.current_temperature_c - z.start_temperature_c! };
+  assert(isThermostat(t.thermostat));
+  const unit: RoomThermostat = { ...t.thermostat, power_w: t.active_power_w!, sensor_offset_c: t.thermostat.current_temperature_c - z.start_temperature_c! };
   // Counterfactual recovery request on the recorded bathroom physics/state.
   z.comfort_min_c.fill(21); z.target_c.fill(21);
   const result = prepareRoomServices(s, [], undefined, prices);

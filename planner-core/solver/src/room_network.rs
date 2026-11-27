@@ -12,7 +12,14 @@ pub struct Room {
     pub(crate) input: RoomInput,
 }
 #[derive(Deserialize)]
+struct FixedHeater {
+    node: usize,
+    watts: Vec<f64>,
+}
+#[derive(Deserialize)]
 pub struct Input {
+    #[serde(default)]
+    fixed_heaters: Vec<FixedHeater>,
     pub(crate) nodes: Vec<Node>,
     pub(crate) rooms: Vec<Room>,
     pub(crate) stage: usize,
@@ -22,6 +29,23 @@ pub struct Input {
     pub(crate) export_sek_per_kwh: Vec<f64>,
     pub(crate) surplus_w: Vec<f64>,
     pub(crate) accepted: Option<Vec<Plan>>,
+}
+impl Input {
+    pub(crate) fn validate_fixed_heaters(&self) -> Result<(), String> {
+        for (index, heater) in self.fixed_heaters.iter().enumerate() {
+            if heater.node >= self.nodes.len()
+                || self.rooms.iter().any(|room| room.node == heater.node)
+                || self.fixed_heaters[..index]
+                    .iter()
+                    .any(|prior| prior.node == heater.node)
+                || heater.watts.len() != self.hours.len()
+                || heater.watts.iter().any(|w| !w.is_finite() || *w < 0.)
+            {
+                return Err("Invalid fixed heater input".into());
+            }
+        }
+        Ok(())
+    }
 }
 #[derive(Serialize)]
 pub struct ProposalOutput {
@@ -53,6 +77,7 @@ pub(crate) struct ReplayKernels {
     slot: Option<usize>,
     thermostats: Vec<Vec<Thermostat>>,
     projections: Vec<Projection>,
+    watts: Vec<f64>,
 }
 const IDENTITY: Transition = Transition {
     decay: 1.,
@@ -196,6 +221,10 @@ pub(crate) fn project_minute(
         0.
     };
     if kernels.slot != Some(slot) {
+        kernels.watts.resize(input.nodes.len(), 0.);
+        for heater in &input.fixed_heaters {
+            kernels.watts[heater.node] = heater.watts[slot];
+        }
         kernels.thermostats = input
             .rooms
             .iter()
@@ -216,7 +245,6 @@ pub(crate) fn project_minute(
             .collect();
         kernels.slot = Some(slot);
     }
-    let mut watts = vec![0.; input.nodes.len()];
     let mut reserved = 0.;
     let mut energy = Vec::new();
     for (j, room) in input.rooms.iter().enumerate() {
@@ -246,7 +274,7 @@ pub(crate) fn project_minute(
             projection,
         );
         state.masks[j] = projection.state.mask;
-        watts[room.node] = projection.power.iter().sum();
+        kernels.watts[room.node] = projection.power.iter().sum();
         if j <= input.stage {
             reserved += projection.peak;
         }
@@ -262,7 +290,7 @@ pub(crate) fn project_minute(
         },
         &mut state.temperatures,
         &mut state.heat,
-        &watts,
+        &kernels.watts,
         &mut kernels.thermal,
     );
     for (i, t) in state.temperatures.iter_mut().enumerate() {
@@ -390,6 +418,7 @@ fn conditional(input: &Input, base: &Replay) -> RoomInput {
     room
 }
 pub fn plan(input: &Input) -> Result<ProposalOutput, String> {
+    input.validate_fixed_heaters()?;
     let mut kernels = ReplayKernels::default();
     if input.stage >= input.rooms.len() {
         return Err("Invalid connected room stage".into());

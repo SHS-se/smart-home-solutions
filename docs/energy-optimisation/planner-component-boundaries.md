@@ -111,8 +111,21 @@ persisting inferred temperatures as measurements.
 
 Observed passive rooms, and controlled rooms with no identified heater response,
 can supply a passive receiving equation. An unidentifiable gain is represented
-by `heater: null`, without inventing a gain. Existing controls and empirical demand remain separate; only
-measured heater support permits modeled preheating. Unobserved candidate sources
+by `heater: null`, without inventing a gain. Only measured heater support permits
+modeled preheating. When that support exists but actuator facts are incomplete,
+the room keeps literal comfort commands. Its available heaters' empirical watts
+drive the same weather-dependent gain and delayed heat store in each proposal and
+joint forecast. Retained switch commands fix relay draw. Unavailable actuators
+retain their empirical electrical demand and receive no additional heat credit.
+An observed thermostat in Off mode retains its sensor, target and hardware limits.
+Its latch starts idle. A reviewed heating setpoint with a Controlling or
+Control Verification owner can schedule future heat when the thermostat
+advertises Heat and Off. Verification forecasts the physical Controlling path
+without sending commands. Other Off thermostats keep hardware-rounded literal
+targets and empirical electrical demand. Their forecasts omit new powered heat.
+The electrical service counts each empirical watt once. When heater support is
+insufficient, peers use a conditional passive projection with a diagnostic, and
+the empirical room publishes no temperature forecast. Unobserved candidate sources
 are reported as unresolved evidence rather than fitted zero coefficients.
 Physical observation-only configuration is separate from a fitted passive shape.
 If the independently qualified training prefix predates identifiable heater

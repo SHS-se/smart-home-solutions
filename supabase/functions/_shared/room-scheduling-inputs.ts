@@ -10,6 +10,7 @@ import {
 } from "./planner/models/room/thermal.ts";
 import {
   isThermostat,
+  type ThermostatInput,
   nativeTarget,
   type RoomThermostat,
 } from "./planner/thermostat.ts";
@@ -22,6 +23,28 @@ import type {
   Zone,
 } from "./rules-room-services.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
+import type { DeviceCommand } from "./planner/device-commands.ts";
+
+/** Verification forecasts the same room setpoint it would execute in Controlling. */
+export function schedulableRoomThermostat(member: Member, scope: OptimisationSnapshot["operating_scope"]):
+  member is Member & { thermostat: ThermostatInput } {
+  const native = member.thermostat;
+  if (!isThermostat(native)) return false;
+  if (native.hvac_action !== "off") return true;
+  const mode = scope?.modes[scope.device_owners[member.key]];
+  return member.category === "heating" && native.can_activate_heat === true &&
+    (mode === "controlling" || mode === "control_verification");
+}
+
+/** Empirical room thermostats and comfort relays keep their measured duty profile.
+ * An explicit retained switch instead fixes the relay's electrical state. */
+export function empiricalHeaterWatts(member: Member, slot: number, retained?: DeviceCommand): number {
+  if (member.control_type === "switch_schedule" && retained?.type === "switch_schedule") {
+    return retained.on_seconds > 0 ? member.active_power_w ?? 0 : 0;
+  }
+  return Math.max(0, member.forecast_w_by_slot[slot]);
+}
+
 export function electricalSource(
   member: Member,
   draw: ReturnType<typeof heatingDraw>,
@@ -74,7 +97,7 @@ export function compileRoomSchedule(
   const model = zone.model!, n = snapshot.slots.length;
   const shared = snapshot.schema_version >= 12;
   const thermostats: RoomThermostat[] = members.map((m) => {
-    if (!isThermostat(m.thermostat)) {
+    if (!schedulableRoomThermostat(m, snapshot.operating_scope)) {
       throw new Error("Native thermostat evidence was not prepared");
     }
     return {

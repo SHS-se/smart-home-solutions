@@ -936,6 +936,7 @@ fn run(
     provider: Option<&ReplicaProvider>,
     deadline_reached: Option<&dyn Fn() -> bool>,
 ) -> Result<Advanced, String> {
+    input.network.validate_fixed_heaters()?;
     if input.beliefs.len() != input.network.nodes.len()
         || input.replicate_count == 0
         || input.max_minute_steps == 0

@@ -15,9 +15,16 @@ import type {
 } from "./room-network-contract.ts";
 
 /** Independent synthetic data, including two parameter modes and rare resets. */
-function fixture(scenario: "ordinary" | "resets" | "stiff" = "ordinary") {
+function fixture(scenario: "ordinary" | "resets" | "stiff" | "fixed heater" = "ordinary") {
   const input = syntheticJointRoomForecast(2, .3, .5, .01);
   input.target_trajectories = 16;
+  if (scenario === "fixed heater") {
+    input.network.rooms.pop();
+    input.network.accepted!.pop();
+    input.network.stage = 0;
+    input.network.nodes[1].lag_h = .3;
+    input.network.fixed_heaters = [{ node: 1, watts: [850, 125] }];
+  }
   for (const [node, belief] of input.beliefs.entries()) {
     const h = belief.hypotheses[0];
     h.posterior.log_centers = [Math.log(.2)];
@@ -117,7 +124,7 @@ function replicas(
   }
   return result;
 }
-for (const scenario of ["ordinary", "resets", "stiff"] as const) {
+for (const scenario of ["ordinary", "resets", "stiff", "fixed heater"] as const) {
   const resets = scenario === "resets";
   Deno.test(`indexed replicas complete and preserve full-population paths through shuffled JSON resumes (${scenario})`, () => {
     const input = fixture(scenario), planner = nativePlanner();
