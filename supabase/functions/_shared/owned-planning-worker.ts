@@ -28,7 +28,7 @@ interface QualifiedForecast { output: NativeRoomNetworkOutput; counts: { traject
 interface Stage extends OwnedPlanningResponse {
   slice_fence?: number; customer_id: string; identity: string | null;
   catalog_next: number; node_count: number; input?: CapturedRulesInput;
-  use_admitted_input?: boolean; model_version?: string;
+  use_admitted_input?: boolean; model_version?: string; capture_input_packet?: string | null;
   qualified?: string | null;
   proposal_network?: ConnectedRoomProposalNetwork; forecast?: ConnectedRoomForecastIdentity;
   catalog_source?: { key: string; node: ConnectedRoomPlanningNode | null };
@@ -137,10 +137,13 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
   }
   if (phase === "capture") {
     if (saved.use_admitted_input) return await checkpoint({ phase: "prepare", use_admitted_input: true, payload: null });
-    const input = saved.input!;
+    const input = saved.capture_input_packet ? await unpackOwnedPlanningValue<CapturedRulesInput>(saved.capture_input_packet) : saved.input!;
+    if (input.model_version !== RULES_MODEL_VERSION) throw new PlanningError("Captured rules planner version changed", "planner_upgraded", 409, "recapture");
+    const inputPacket = saved.capture_input_packet ? undefined : await packOwnedPlanningValue(input);
     const captured = await advanceConnectedPlanningCapture(db, { ...owner, customer_id: saved.customer_id }, input.snapshot,
-      { retainParentLease: true });
-    if (captured.pending) return await checkpoint({ phase: "capture" });
+      { ownedSlice: { cursor: saved.dispatch.cursor, fence: saved.slice_fence, inputPacket } });
+    if (captured.pending) return Object.hasOwn(captured, "dispatch")
+      ? { dispatch: captured.dispatch! } : await checkpoint({ phase: "capture" });
     return await checkpoint({ phase: "prepare", input: { ...input, snapshot: captured.snapshot }, completed_node_keys: captured.completed_node_keys, payload: null });
   }
   if (phase === "prepare") {

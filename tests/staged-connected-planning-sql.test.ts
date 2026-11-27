@@ -287,3 +287,45 @@ Deno.test('numeric process transport sends bounded row slices while SQL retains 
       'identified current state does not reload the historical numeric payload for assembly');
   } finally { await db.close(); }
 });
+
+Deno.test('corrupt process repair restarts source after qualification released raw blocks and preserves completed peers', async () => {
+  const {advanceConnectedPlanningCapture,CONNECTED_CAPTURE_IMPLEMENTATION}=await import('../supabase/functions/_shared/connected-room-planning-capture.ts');
+  const {syntheticConnectedResponse}=await import('../supabase/functions/_shared/connected-exchange.fixture.ts');
+  const {encodeRoomResponseFitCapture}=await import('../supabase/functions/_shared/device-model-learning/room-band-fit-capture.ts');
+  const {dispatchedEvSnapshot}=await import('../scripts/generate-ha-plan-fixture.ts');
+  const db=await planningDatabase();
+  try {
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261127120000_minimal_planning_model_capture.sql'));
+    const from='2001-01-01T00:00:00Z',to='2001-01-02T00:00:00Z';
+    const numeric=await encodeRoomResponseFitCapture([{start_ms:Date.parse(from),duration_s:900,room_c:20,outdoor_c:5,
+      heat_w:null,house_c:null,solar_w_per_m2:null,cooling:null,peer_c:{peer:21}}],from);
+    await db.query("INSERT INTO private.energy_planning_jobs VALUES($1,$2,$2,'pending',1,now()+interval '60 seconds',now(),$3,NULL,NULL)",
+      [id,home,JSON.stringify({snapshot:{room_network_capture:{rooms:[{key:'synthetic-completed-peer'},{key:'room'}]}}})]);
+    await db.query("INSERT INTO private.energy_planning_room_source_blocks VALUES($1,1,$2,$3,decode('0102','hex'),repeat('a',64))",[id,from,to]);
+    const state={version:1,implementation:CONNECTED_CAPTURE_IMPLEMENTATION,runtime:Deno.version.v8,room:1,row:1,
+      phase:'process',from_at:from,next_from_at:to,policy:null,warnings:[],process_packet:'damaged'};
+    await db.query('INSERT INTO private.energy_planning_room_capture(job_id,cursor,state,completed_nodes) VALUES($1,0,$2,$3)',
+      [id,JSON.stringify({...state,phase:'qualify',process_packet:undefined}),JSON.stringify([{key:'synthetic-completed-peer'}])]);
+    await db.query('SELECT checkpoint_energy_planning_room_capture($1,$2,1,0,$3,NULL,$4,NULL)',
+      [home,id,JSON.stringify(state),JSON.stringify({...numeric,from_at:from})]);
+    assertEquals((await db.query<{n:number}>('SELECT count(*)::integer n FROM private.energy_planning_room_source_blocks')).rows[0].n,0);
+    await db.query("UPDATE private.energy_planning_jobs SET fence=2,lease_until=now()+interval '60 seconds' WHERE id=$1",[id]);
+    const snapshot=dispatchedEvSnapshot(); snapshot.captured_at=to;snapshot.slots=[];
+    snapshot.room_network_capture={rooms:[{key:'synthetic-completed-peer',name:'Synthetic peer',device_keys:[],model:null,connected_exchange:syntheticConnectedResponse(false),rated_power_w:0,maximum_power_w_by_slot:[]},{key:'room',name:'Synthetic room',device_keys:[],model:null,
+      connected_exchange:syntheticConnectedResponse(false),rated_power_w:0,maximum_power_w_by_slot:[]}],observations:[]};
+    const calls:string[]=[];
+    await advanceConnectedPlanningCapture({async rpc(name,args){
+      calls.push(name);
+      const sql=name==='load_energy_planning_room_capture'
+        ? 'SELECT load_energy_planning_room_capture($1,$2,$3,true) v'
+        : 'SELECT checkpoint_energy_planning_room_capture($1,$2,$3,$4,$5,NULL,NULL,NULL) v';
+      const values=name==='load_energy_planning_room_capture'?[home,id,2]:[home,id,2,args.p_expected_cursor,JSON.stringify(args.p_state)];
+      return {data:(await db.query<{v:unknown}>(sql,values)).rows[0].v,error:null};
+    }},{home_id:home,customer_id:home,job_id:id,fence:2},snapshot);
+    assertEquals(calls,['load_energy_planning_room_capture','checkpoint_energy_planning_room_capture']);
+    const stored=(await db.query<{state:{phase:string;next_from_at:string;process_packet?:string};completed_nodes:unknown;sha:string}>(
+      "SELECT state,completed_nodes,encode(sha256(numeric_capture),'hex') sha FROM private.energy_planning_room_capture WHERE job_id=$1",[id])).rows[0];
+    assertEquals([stored.state.phase,stored.state.next_from_at,stored.state.process_packet],['source',from,undefined]);
+    assertEquals(stored.completed_nodes,[{key:'synthetic-completed-peer'}]);assertEquals(stored.sha,numeric.sha256);
+  } finally {await db.close();}
+});

@@ -1,3 +1,4 @@
+import { packOwnedPlanningValue, unpackOwnedPlanningValue } from "./owned-planning-codec.ts";
 // Independent synthetic native means and planning scratch, never household data.
 import { assert, assertEquals } from "@std/assert";
 import { CONNECTED_CAPTURE_IMPLEMENTATION } from "./connected-room-planning-capture.ts";
@@ -47,7 +48,11 @@ async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: Connect
           completed.snapshot.room_network.nodes = update.completed_node_keys.map(key => completedNodes.find(node => node.key === key)!);
         }
         result={data:{...dispatch,phase:update.phase,cursor:1},error:null};
-      } else result=await db.rpc(name==="checkpoint_energy_owned_room_capture"?"checkpoint_energy_planning_room_capture":name,args);
+      } else if (name === "checkpoint_energy_owned_room_capture_slice") {
+        assertEquals([args.p_runtime_cursor, args.p_slice_fence], [dispatch.cursor, 1]);
+        const captured = await db.rpc("checkpoint_energy_planning_room_capture", args);
+        result = { ...captured, data: captured.data ? { ...dispatch, cursor: 1 } : null };
+      } else result=await db.rpc(name,args);
       if (name === "load_energy_planning_room_capture" && result.data?.state?.phase === "complete") {
         assertEquals(args.p_project_completed, true);
         const {nodes,...state} = result.data.state;
@@ -245,7 +250,7 @@ Deno.test("a malformed process continuation retains the accepted response and ad
   const saved = { version: 1, implementation: CONNECTED_CAPTURE_IMPLEMENTATION,
     runtime: Deno.version.v8, room: 0, phase: "process", from_at: model.basis.history_from,
     next_from_at: snapshot.captured_at, policy: model.basis.source_policy, row: 0, nodes: [], warnings: [],
-    process: { stage: "full", malformed: true } };
+    process_packet: await packOwnedPlanningValue({ stage: "full", malformed: true }) };
   let checkpoint: Record<string, unknown> | null = null;
   const db: ModelDatabase = { rpc(name, args) {
     if (name === "load_energy_planning_room_capture") return Promise.resolve({ error: null,
@@ -309,7 +314,7 @@ Deno.test("only the active frozen receiver supplies qualification and retained-r
         assertEquals((next.warnings as {code:string}[]).map(w => w.code), ["room_evidence_unavailable"]);
       } else if (phase === "qualify") {
         assertEquals(next.phase, "process");
-        assertEquals((next.process as typeof complete).belief.initial_hazard, belief.initial_hazard);
+        assertEquals((await unpackOwnedPlanningValue<typeof complete>(String(next.process_packet))).belief.initial_hazard, belief.initial_hazard);
       } else {
         assertEquals(next.phase, "complete");
         assertEquals((next.completed_nodes as { process_belief: unknown }[])[0].process_belief, belief);
@@ -317,4 +322,52 @@ Deno.test("only the active frozen receiver supplies qualification and retained-r
       assertEquals(snapshot.room_network_capture.rooms[0].connected_exchange?.process_belief, undefined);
     }
   }
+});
+
+Deno.test("corrupt process packets reacquire source observations instead of resetting the outer runtime forever", async () => {
+  const model = syntheticConnectedResponse(false), snapshot = dispatchedEvSnapshot();
+  snapshot.room_network_capture = { rooms: [{ key: "receiver", name: "Synthetic receiver", device_keys: [], model: null,
+    connected_exchange: model, rated_power_w: 0, maximum_power_w_by_slot: [] }], observations: [] };
+  snapshot.captured_at = new Date(12 * 3600_000).toISOString(); snapshot.slots = [];
+  const { encodeRoomEvidenceCapture } = await import("./device-model-learning/room-evidence-capture.ts");
+  const rows: ThermalQuarterRow[] = Array.from({ length: 8 }, (_, i) => ({ room_key: "receiver", room_name: "Synthetic receiver",
+    start_ts: new Date(i * 3600_000).toISOString(), duration_s: 3600, room_temperature_c: 18 + .1 * Math.sin(i),
+    outdoor_temperature_c: 5, active_power_w: null, house_temperature_c: null, solar_w_per_m2: null, heat_w: null, cooling: null,
+    temperature_source_key: "synthetic-receiver", probe_evidence: [
+      { source_key: "synthetic-receiver", area_key: "receiver", mean: 18 + .1 * Math.sin(i), cohort_key: null,
+        unchanged: false, joint_unchanged: false, reported: true, unavailable: false },
+      { source_key: "synthetic-peer", area_key: "peer", mean: 20 + Math.sin(i / 5), cohort_key: null,
+        unchanged: false, joint_unchanged: false, reported: true, unavailable: false }] }));
+  const raw = await encodeRoomEvidenceCapture(rows, model.basis.history_from, snapshot.captured_at);
+  const blocks: unknown[] = [];
+  const originalBlock = [{ from_at: model.basis.history_from, to_at: snapshot.captured_at, capture: raw.base64, sha256: raw.sha256 }];
+  let state: Record<string, unknown> = { version: 1, implementation: CONNECTED_CAPTURE_IMPLEMENTATION,
+    runtime: Deno.version.v8, room: 0, phase: "process", from_at: model.basis.history_from,
+    next_from_at: snapshot.captured_at, policy: model.basis.source_policy, row: 7, warnings: [], process_packet: "damaged" };
+  let cursor = 8;
+  const db: ModelDatabase = { rpc(name, args) {
+    if (name === "load_energy_planning_room_capture") return Promise.resolve({ data: { cursor, state: structuredClone(state), blocks }, error: null });
+    if (name === "freeze_energy_connected_planning_sources") return Promise.resolve({ data: {
+      graph: { owner: model.basis.graph_owner, revision: model.basis.graph_revision, topology_hash: model.basis.topology_hash },
+      binding: "synthetic", policy: model.basis.source_policy, source_revision: 1,
+      next: { from_at: model.basis.history_from, to_at: snapshot.captured_at } }, error: null });
+    if (name === "get_energy_room_operation_facts") return Promise.resolve({ data: [], error: null });
+    if (name === "get_energy_room_thermal_interval_capture") return Promise.resolve({ data: compactCapture(rows), error: null });
+    if (name === "load_energy_connected_inference") return Promise.resolve({ data: [], error: null });
+    assertEquals(name, "checkpoint_energy_planning_room_capture");
+    assertEquals(args.p_expected_cursor, cursor++);
+    state = args.p_state as Record<string, unknown>;
+    if (args.p_raw) blocks.push(...originalBlock);
+    if (args.p_numeric) blocks.length = 0;
+    return Promise.resolve({ data: { pending: true }, error: null });
+  } };
+  const owner = { home_id: "synthetic", customer_id: "synthetic", job_id: "synthetic", fence: 1 };
+  await advanceConnectedPlanningCapture(db, owner, snapshot);
+  assertEquals([state.phase, state.process_packet, state.row], ["source", undefined, 0]);
+  assertEquals(state.next_from_at, model.basis.history_from);
+  await advanceConnectedPlanningCapture(db, owner, snapshot);
+  assertEquals(state.phase, "qualify"); assertEquals(blocks.length, 1);
+  await advanceConnectedPlanningCapture(db, owner, snapshot);
+  assertEquals(state.phase, "process"); assertEquals(blocks.length, 0);
+  assert((await unpackOwnedPlanningValue<{belief:unknown}>(String(state.process_packet))).belief);
 });

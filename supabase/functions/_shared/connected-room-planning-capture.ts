@@ -1,3 +1,4 @@
+import { OwnedPlanningArtifactError, packOwnedPlanningValue, unpackOwnedPlanningValue } from "./owned-planning-codec.ts";
 import { ROOM_LEARNER_VERSION } from "./room-learner-version.ts";
 import type { ModelDatabase, RoomConnectionGraph } from "./device-model-store.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
@@ -14,7 +15,7 @@ import { assembleConnectedRoomNodes, finalizeConnectedRoomNodes } from "./room-n
 import { applyConnectedRoomCapture, completeOwnedRoomCapture, type CompletedRoomHeader } from "./room-model-capture.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 
-import type { OwnedPlanningOwner } from "./owned-planning-contract.ts";
+import type { OwnedPlanningDispatch, OwnedPlanningOwner } from "./owned-planning-contract.ts";
 export interface ConnectedPlanningOwner extends OwnedPlanningOwner { customer_id: string }
 interface CaptureState {
   version: 1;
@@ -36,10 +37,11 @@ interface CaptureState {
   nodes?: ConnectedRoomPlanningNode[];
   warnings: PlanningWarning[];
 }
+type StoredCaptureState = Omit<CaptureState, "process"> & { process_packet?: string };
 interface EncodedBlock { from_at: string; to_at: string; capture: string; sha256: string }
 interface StoredCapture {
   cursor: number;
-  state: CaptureState | null;
+  state: StoredCaptureState | null;
   frozen_model?: unknown;
   completed_headers?: CompletedRoomHeader[];
   blocks?: EncodedBlock[];
@@ -54,14 +56,16 @@ const FILTER_BUDGET_MS = 600;
 const FILTER_ROWS = 128;
 // Explicit protocol covers capture/qualification/assembly orchestration outside
 // the model digest. Bump on any incompatible derived-state semantic change.
-export const CONNECTED_CAPTURE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}:${ROOM_LEARNER_VERSION}:planning_capture_v4`;
+// Numerical cache identity is independent of opaque checkpoint transport.
+const CONNECTED_INFERENCE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}:${ROOM_LEARNER_VERSION}:planning_capture_v4`;
+export const CONNECTED_CAPTURE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}:${ROOM_LEARNER_VERSION}:planning_capture_v5`;
 
 /** One bounded action in the existing planning attempt. Standalone checkpoints
  * release their lease; the owned worker retains it for the parent's bounded wave.
  * Source qualification sees the complete frozen population for one receiver.
  * Filtering carries its posterior across requests without refitting parameters. */
 export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: ConnectedPlanningOwner,
-  snapshot: OptimisationSnapshot, options: { retainParentLease?: boolean } = {}): Promise<{ pending: boolean; snapshot?: OptimisationSnapshot; completed_node_keys?: string[]; receipt?: unknown }> {
+  snapshot: OptimisationSnapshot, options: { ownedSlice?: { cursor: number; fence: number; inputPacket?: string } } = {}): Promise<{ pending: boolean; snapshot?: OptimisationSnapshot; completed_node_keys?: string[]; receipt?: unknown; dispatch?: OwnedPlanningDispatch | null }> {
   const pending = snapshot.room_network_capture;
   if (!pending?.rooms.length) return { pending: false, snapshot };
   const rpc = async <T>(name: string, body: Record<string, unknown>): Promise<T> => {
@@ -70,7 +74,7 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
     return data as T;
   };
   const identity = { p_home_id: owner.home_id, p_job_id: owner.job_id, p_fence: owner.fence };
-  const saved = await rpc<StoredCapture | null>("load_energy_planning_room_capture", { ...identity, p_node_delta: true, ...(options.retainParentLease && {p_project_completed:true}) });
+  const saved = await rpc<StoredCapture | null>("load_energy_planning_room_capture", { ...identity, p_node_delta: true, ...(options.ownedSlice && {p_project_completed:true}) });
   if (!saved) return { pending: true };
   const through = roomPlanClock(snapshot).start_ms, toAt = new Date(through).toISOString();
   const startRoom = (index: number, warnings: PlanningWarning[]): CaptureState => {
@@ -79,18 +83,49 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
     return { version: 1, implementation: CONNECTED_CAPTURE_IMPLEMENTATION, runtime: Deno.version.v8, room: index, phase: index < pending.rooms.length ? "source" : "complete",
       from_at, next_from_at: from_at, policy: null, row: 0, warnings };
   };
-  const checkpoint = async (next: CaptureState & { completed_nodes?: ConnectedRoomPlanningNode[] }, raw: unknown = null, numeric: unknown = null, proof: unknown = null) => ({ pending: true,
-    receipt: await rpc(options.retainParentLease ? "checkpoint_energy_owned_room_capture" : "checkpoint_energy_planning_room_capture", { ...identity, p_expected_cursor: saved.cursor,
-      p_state: next, p_raw: raw, p_numeric: numeric, p_source_proof: proof }) });
-  const state = saved.state ?? startRoom(0, []);
+  const checkpoint = async (next: CaptureState & { completed_nodes?: ConnectedRoomPlanningNode[] }, raw: unknown = null, numeric: unknown = null, proof: unknown = null) => {
+    const packStarted = performance.now();
+    const { process, ...header } = next;
+    const stored = process ? { ...header, process_packet: await packOwnedPlanningValue(process) } : header;
+    const packMs = performance.now() - packStarted, rpcStarted = performance.now();
+    const result = await rpc<OwnedPlanningDispatch | null>(options.ownedSlice ? "checkpoint_energy_owned_room_capture_slice" : "checkpoint_energy_planning_room_capture", {
+      ...identity, p_expected_cursor: saved.cursor,
+      ...(options.ownedSlice ? { p_runtime_cursor: options.ownedSlice.cursor, p_slice_fence: options.ownedSlice.fence, p_input_packet: options.ownedSlice.inputPacket ?? null } : {}),
+      p_state: stored, p_raw: raw, p_numeric: numeric, p_source_proof: proof });
+    console.info(JSON.stringify({ event: "energy_planning_room_capture", job_id: owner.job_id,
+      room: next.room, phase: next.phase, row: next.row, process_row: process?.cursor,
+      process_packet_bytes: "process_packet" in stored ? stored.process_packet.length : 0,
+      pack_ms: Math.round(packMs), checkpoint_ms: Math.round(performance.now() - rpcStarted) }));
+    return { pending: true, ...(options.ownedSlice ? { dispatch: result } : { receipt: result }) };
+  };
+  let state: CaptureState, processPacket: string | undefined;
+  if (saved.state) {
+    const { process_packet, ...header } = saved.state;
+    state = header; processPacket = process_packet;
+  } else state = startRoom(0, []);
   // Optimizer coordinates and covariance are executable state. A deployment
   // restarts this derived preparation inside the same admitted attempt.
   if (state.version !== 1 || state.implementation !== CONNECTED_CAPTURE_IMPLEMENTATION || state.runtime !== Deno.version.v8 ||
     !Number.isSafeInteger(state.room) || state.room < 0 || state.room > pending.rooms.length) {
     return checkpoint({ ...startRoom(0, []), nodes: [] });
   }
+  // SQL reads the scalar room/phase/row header only. Preserve the complete
+  // ordered population and continuation in one lossless opaque packet.
+  const unpackStarted = performance.now();
+  if (processPacket !== undefined && (state.phase === "process" || state.phase === "reuse")) {
+    try { state.process = await unpackOwnedPlanningValue<ConnectedProcessProgress>(processPacket); }
+    catch (error) {
+      if (!(error instanceof OwnedPlanningArtifactError)) throw error;
+      // The capture owner must clear its own corrupt continuation; resetting
+      // only the outer runtime would repeatedly reload this same packet.
+      // Qualification already released its raw blocks, so reacquire source.
+      return checkpoint({ ...startRoom(state.room, state.warnings), from_at: state.from_at,
+        next_from_at: state.from_at, policy: state.policy });
+    }
+  }
+  const unpackMs = performance.now() - unpackStarted;
   if (state.phase === "complete") {
-    if (options.retainParentLease) {
+    if (options.ownedSlice) {
       const network = finalizeConnectedRoomNodes(saved.completed_headers!, node => node.required_peers);
       return { pending: false, ...completeOwnedRoomCapture(snapshot, network.nodes, [...state.warnings, ...network.warnings]) };
     }
@@ -153,7 +188,7 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
       const rows = qualified.quarters.map(thermalQuarter);
       numeric = await encodeRoomResponseFitCapture(rows, state.from_at);
       if (model.incoming.length) {
-        cacheIdentity = await sha256Hex(JSON.stringify({ model, implementation: CONNECTED_CAPTURE_IMPLEMENTATION, runtime: Deno.version.v8 }));
+        cacheIdentity = await sha256Hex(JSON.stringify({ model, implementation: CONNECTED_INFERENCE_IMPLEMENTATION, runtime: Deno.version.v8 }));
         if (proof?.codec_revision === ROOM_RESPONSE_CAPTURE_REVISION && proof.from_at === state.from_at &&
           Number.isSafeInteger(proof.rows) && proof.rows > 0 && proof.rows <= rows.length &&
           model.process_belief?.hypotheses.every(h => h.posterior.through_ms === proof.through_ms) &&
@@ -172,7 +207,7 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
       cache_identity: cacheIdentity, process, row }, null, { ...numeric, from_at: state.from_at });
   }
   if (!saved.numeric) return await skipRoom(new Error("Missing immutable connected planning observations"));
-  const started = performance.now();
+  const started = performance.now() - unpackMs;
   if (state.phase === "reuse") {
     const [candidate, ...rest] = state.cache_candidates ?? [];
     let previous: ConnectedProcessBelief | undefined;

@@ -161,6 +161,16 @@ existing qualifier clips native intervals to the requested population. Binding,
 policy, graph and correction checks still apply. Heated receivers select their
 own source reader before the passive reader scans household evidence.
 
+Planning capture also stores its complete ordered process continuation as an
+opaque lossless packet. Its scalar phase, room and source-row cursor remain
+readable to SQL. The admitted input is compressed once per owned runtime and
+reused while the original admission JSON remains authoritative for publication
+and hashing. Capture and runtime cursors advance in one transaction under both
+writer fences, removing the extra runtime-checkpoint round trip per slice.
+The numerical prefix-cache identity is independent of the wire revision.
+The capture protocol changes to v5; incompatible derived preparation restarts
+inside the admitted attempt without changing accepted instructions.
+
 Room numerical data follows the stage that consumes it:
 
 | Stage | Data crossing into the worker |

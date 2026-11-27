@@ -379,7 +379,9 @@ async function connectedCaptureSample(
     }), "cpu-test-secret", () => ({rpc(name,args) {
       if(name==="load_energy_owned_planning_stage")return Promise.resolve({data:JSON.parse(JSON.stringify({dispatch,slice_fence:1,customer_id:CONNECTED_CPU_OWNER.customer_id,input:{model_version:RULES_MODEL_VERSION,snapshot}})),error:null});
       if(name==="checkpoint_energy_owned_planning_stage")return Promise.resolve({data:dispatch,error:null});
-      return replay.db.rpc(name==="checkpoint_energy_owned_room_capture"?"checkpoint_energy_planning_room_capture":name,args);
+      if(name==="checkpoint_energy_owned_room_capture_slice")return Promise.resolve(replay.db.rpc("checkpoint_energy_planning_room_capture",args))
+        .then(result=>({...result,data:result.data?dispatch:null}));
+      return replay.db.rpc(name,args);
     }}));
     assertEquals(response.status,200,await response.clone().text());
     const result=await response.json();

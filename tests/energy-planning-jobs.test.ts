@@ -2040,3 +2040,54 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     console.info('owned synthetic transport bytes',bytes);
   } finally {await db.close();}
 });
+
+Deno.test('capture and runtime checkpoint commit together under both cursor fences', async () => {
+  // Synthetic checkpoint sink isolates the new transaction boundary. Source
+  // qualification/CAS itself is covered by staged-connected-planning-sql tests.
+  const db = await ownershipDatabase();
+  try {
+    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+    await db.exec(`CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid);
+      CREATE TABLE private.energy_planning_room_capture(job_id uuid PRIMARY KEY,cursor integer DEFAULT 0);
+      CREATE FUNCTION public.checkpoint_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint,
+        p_expected_cursor integer,p_state jsonb,p_raw jsonb,p_numeric jsonb,p_source_proof jsonb)
+      RETURNS json LANGUAGE plpgsql AS $$ BEGIN
+        UPDATE private.energy_planning_room_capture SET cursor=cursor+1 WHERE job_id=p_job_id AND cursor=p_expected_cursor;
+        IF NOT FOUND THEN RETURN NULL; END IF;
+        UPDATE private.energy_planning_jobs SET lease_until=NULL WHERE id=p_job_id;
+        RETURN '{"pending":true}'::json; END; $$;`);
+    await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+    await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
+    await db.exec(await migration('20261127121000_owned_planning_room_projections'));
+    await db.exec(await migration('20261128000500_checkpoint_owned_capture_atomically'));
+    const original = {model_version:'synthetic-version',snapshot:{snapshot_id:snapshot,
+      slots:[{start:'2030-01-01T00:00:00Z'}],slot_minutes:15,room_network_capture:{rooms:[]}}};
+    const accepted=await rpc<Receipt>(db,'accept_energy_planning_job',{
+      ...capturedSubmission(snapshot,{model_version:'synthetic-version',accepted_reference_revision:0}),input:original});
+    const owner=(await attemptClaim(db,accepted.job_id))!;
+    await db.query('INSERT INTO private.energy_planning_room_capture(job_id) VALUES($1)',[owner.id]);
+    const scope=[home,owner.id,owner.fence];
+    const {packOwnedPlanningValue,unpackOwnedPlanningValue}=await import('../supabase/functions/_shared/owned-planning-codec.ts');
+    const packet=await packOwnedPlanningValue(original);
+    const load=(await db.query<{v:{dispatch:{cursor:number};slice_fence:number}}>(
+      "SELECT load_energy_owned_planning_stage($1,$2,$3,'synthetic','runtime') v",scope)).rows[0].v;
+    const save=async(captureCursor:number,runtimeCursor:number,sliceFence:number)=>
+      (await db.query<{v:{phase:string;cursor:number}|null}>(
+        "SELECT checkpoint_energy_owned_room_capture_slice($1,$2,$3,$4,$5,$6,'{}',NULL,NULL,NULL,$7) v",
+        [...scope,captureCursor,runtimeCursor,sliceFence,packet])).rows[0].v;
+    assertEquals(await save(0,load.dispatch.cursor,load.slice_fence+1),null);
+    assertEquals(await save(0,load.dispatch.cursor+1,load.slice_fence),null);
+    assertEquals(await save(1,load.dispatch.cursor,load.slice_fence),null);
+    const result=await save(0,load.dispatch.cursor,load.slice_fence);
+    assertEquals((await db.query<{released:boolean}>('SELECT worker_until IS NULL released FROM private.energy_planning_runtime WHERE job_id=$1',[owner.id])).rows[0].released,true);
+    const compressed=(await db.query<{v:{input:unknown;capture_input_packet:string}}>(
+      "SELECT load_energy_owned_planning_stage($1,$2,$3,'synthetic','runtime',true) v",scope)).rows[0].v;
+    assertEquals(compressed.input,null); assertEquals(compressed.capture_input_packet,packet);
+    assertEquals(await unpackOwnedPlanningValue(packet),original);
+    assertEquals(result?.phase,'capture'); assertEquals(result?.cursor,load.dispatch.cursor+1);
+    assertEquals(await save(0,load.dispatch.cursor,load.slice_fence),null);
+    assertEquals((await db.query<{cursor:number}>('SELECT cursor FROM private.energy_planning_room_capture')).rows,[{cursor:1}]);
+    assert((await db.query<{live:boolean}>('SELECT lease_until>clock_timestamp() live FROM private.energy_planning_jobs WHERE id=$1',[owner.id])).rows[0].live);
+  } finally {await db.close();}
+});
