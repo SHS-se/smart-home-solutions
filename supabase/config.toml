@@ -148,6 +148,13 @@ verify_jwt = false
 [functions.energy-market-archive]
 verify_jwt = false
 
+# Same private archive-token authentication; dedicated memory budget per domain horizon.
+[functions.energy-market-nucs-week]
+verify_jwt = false
+
+[functions.energy-market-nucs-month]
+verify_jwt = false
+
 # TEST-only paired price research authenticates using the private archive token.
 [functions.energy-price-experiment]
 verify_jwt = false

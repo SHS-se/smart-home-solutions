@@ -220,7 +220,7 @@ export function createMarketArchiveHandler(
   };
 }
 
-if (import.meta.main) {
+export async function serveMarketArchive() {
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.2");
   const projectUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const client = createClient(projectUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "", { auth: { persistSession: false } });
@@ -255,3 +255,5 @@ if (import.meta.main) {
 
   }));
 }
+
+if (import.meta.main) await serveMarketArchive();

@@ -241,3 +241,10 @@ worker commits its result before it queues the linked domain. Bounded native
 inflation handles the large nested bundles without spending the JavaScript CPU
 budget on decompression. Incomplete workers remain visible as missing products
 rather than selecting an older success.
+
+The two domain horizons use separate thin edge-function entry points,
+`energy-market-nucs-week` and `energy-market-nucs-month`, sharing the archive
+implementation and token authentication. This isolates simultaneous large
+provider downloads from each other: overlapping requests in a single hosted
+worker exceeded its memory limit. Net-position requests stay on the archive
+worker. Product jobs retain their original batch, linkage and experiment IDs.

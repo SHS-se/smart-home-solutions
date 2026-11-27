@@ -334,6 +334,14 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
         "supabase/migrations/20261127173100_test_nucs_product_identity.sql",
       ),
     );
+    await db.exec(
+      await Deno.readTextFile(
+        "supabase/migrations/20261127180000_test_nucs_domain_workers.sql",
+      ),
+    );
+    await db.exec(
+      "CREATE TABLE net.calls(url text); CREATE OR REPLACE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$ WITH saved AS (INSERT INTO net.calls VALUES($1)) SELECT 1::bigint $$",
+    );
     const plan = collectionPlan(
       "nucs_week_context",
       new Date("2026-11-27T12:00Z"),
@@ -391,6 +399,38 @@ Deno.test("NUCS experiment context freezes exact latest attempts and enforces ar
     const frozen = await read();
     assertEquals(frozen.products[item.dataset].id, id);
     const domainItem = plan[2], domainBytes = await bundle();
+    await db.query("SELECT public.request_test_nucs_product($1,$2)", [
+      batchId,
+      domainItem.key,
+    ]);
+    assertEquals(
+      (await db.query<{ url: string }>(
+        "SELECT url FROM net.calls ORDER BY url",
+      )).rows.map((r) => r.url),
+      [
+        "https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/energy-market-archive",
+        "https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/energy-market-nucs-week",
+      ],
+    );
+    const monthPlan = collectionPlan(
+      "nucs_month_context",
+      new Date("2026-11-27T12:00Z"),
+    );
+    const monthBatch = crypto.randomUUID();
+    await db.query(
+      "INSERT INTO energy_market_collection_batches(id,kind,requested_at,plan) VALUES($1,'nucs_month_context','2026-11-27T12:00Z',$2)",
+      [monthBatch, monthPlan],
+    );
+    await db.query("SELECT public.request_test_nucs_product($1,$2)", [
+      monthBatch,
+      monthPlan[2].key,
+    ]);
+    assertEquals(
+      (await db.query<{ url: string }>(
+        "SELECT url FROM net.calls WHERE url LIKE '%nucs-month'",
+      )).rows.length,
+      1,
+    );
     const linked = (await db.query<
       {
         value: {

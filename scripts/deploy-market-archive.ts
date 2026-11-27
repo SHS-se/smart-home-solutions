@@ -24,6 +24,7 @@ const MIGRATIONS = [
   { version: '20261127170000', name: 'test_nucs_flow_based' },
   { version: '20261127173000', name: 'test_nucs_product_workers' },
   { version: '20261127173100', name: 'test_nucs_product_identity' },
+  { version: '20261127180000', name: 'test_nucs_domain_workers' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
@@ -57,7 +58,8 @@ try {
     console.log(`Applied TEST archive migration ${version}.`);
   }
   await cli(['functions', 'deploy', 'energy-market-archive', '--project-ref', TEST, '--use-api', '--yes']);
-  console.log('Deployed the TEST collector.');
+  for (const horizon of ['week','month']) await cli(['functions','deploy','energy-market-nucs-'+horizon,'--project-ref',TEST,'--use-api','--yes']);
+  console.log('Deployed the TEST collector and isolated NUCS domain workers.');
   await cli(['functions', 'deploy', 'energy-market-quality', '--project-ref', TEST, '--use-api', '--no-verify-jwt', '--yes']);
   console.log('Deployed TEST accuracy evaluation.');
   const functions: { slug: string }[] = JSON.parse(await cli(['functions', 'list', '--project-ref', TEST, '--output', 'json']));

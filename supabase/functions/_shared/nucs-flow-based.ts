@@ -605,8 +605,10 @@ export async function captureNucsFlowEvidence(
           error_code: "http_" + held.http_status,
         };
       }
+      console.info("NUCS domain acquired", query.dataset, held.bytes.length);
       const path = "nucs/" + held.body_sha256 + ".zip";
       await writeNative(path, held.bytes);
+      console.info("NUCS domain stored", query.dataset);
       native_archives.push({
         path,
         sha256: held.body_sha256,
@@ -616,6 +618,7 @@ export async function captureNucsFlowEvidence(
       let header: NucsPublication;
       try {
         domain = await nucsDomainMember(held.bytes);
+        console.info("NUCS domain directory checked", query.dataset);
         header = await archivedDomainHeader(domain.member, query.dataset);
         if (
           !header.related_documents.some((r) =>
