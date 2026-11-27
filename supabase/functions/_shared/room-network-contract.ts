@@ -35,7 +35,7 @@ export interface RoomNetworkWork {
   replicas: Array<NativeRoomNetworkReplicaWork | null>;
 }
 
-import type { RoomHeatingPlan, RoomQuarter } from "./room-heating-schedule.ts";
+import type { RoomHeatingPlan, RoomQuarter, IntervalHeaterPower } from "./room-heating-schedule.ts";
 import type { RoomThermostat } from "./planner/thermostat.ts";
 
 export interface NativeRoomNetworkInput {
@@ -67,6 +67,7 @@ export interface NativeRoomNetworkInput {
         start_c: number;
         start_stored_heat_c: number;
         thermostats: readonly RoomThermostat[];
+        interval_heaters?: IntervalHeaterPower[];
         quarters: RoomQuarter[];
       };
     }
@@ -78,6 +79,8 @@ export interface NativeRoomNetworkInput {
   export_sek_per_kwh: number[];
   surplus_w: number[];
   accepted?: RoomHeatingPlan[];
+  /** Catalog-owned Boolean program; never re-decided on forecast paths. */
+  literal?: RoomHeatingPlan[];
 }
 export interface NativeRoomNetworkProposal {
   plans: RoomHeatingPlan[];

@@ -7,12 +7,12 @@ import { prepareRoomServices } from "./rules-room-services.ts";
 import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 function input(source: OptimisationSnapshot) { const p=rulesFixtureInput(source); return {snapshot:p.snapshot,now:p.now,price_archive:[],resolved_price_outlook:p.price_outlook}; }
-Deno.test("a room with no fitted model still receives comfort commands and an honest warning",()=>{
+Deno.test("a room with no fitted model holds settings and retains demand with an honest warning",()=>{
  const s=commandSnapshot();s.thermal_zones![0].model=null;s.thermal_zones![0].start_temperature_c=10;
  const plan=runRulesPlanner(input(s)).plan;
  assertEquals(plan.status,"ready");assert(plan.planning_warnings!.some(w=>w.code==="room_estimate"));
- for(const slot of plan.plans.priority.slots){assertEquals(slot.device_commands!.thermostat.type,"setpoint");assertEquals(slot.device_commands!.relay.type,"switch_schedule");}
- assertEquals(plan.plans.priority.slots[0].device_loads_w.relay,1000);
+ for(const slot of plan.plans.priority.slots){assertEquals(slot.device_commands!.thermostat.type,"unavailable");assertEquals(slot.device_commands!.relay.type,"unavailable");}
+ assertEquals(plan.plans.priority.slots[0].device_loads_w.relay,750);
 });
 Deno.test("unattainable room comfort and thin evidence never discard the household schedule",()=>{
  const s=commandSnapshot();s.thermal_zones![0].start_temperature_c=1;
@@ -22,7 +22,7 @@ Deno.test("unattainable room comfort and thin evidence never discard the househo
 });
 Deno.test("prepared room relays respect the shared household headroom",()=>{
  const s=commandSnapshot();const z=s.thermal_zones![0];z.start_temperature_c=1;
- s.device_models=s.device_models.map(m=>({...m,active_power_w:6000,control_type:"switch_schedule"}));
+ s.device_models=s.device_models.map(m=>({...m,active_power_w:6000,control_type:"switch_schedule",load_type:"fixed_full_load"}));
  z.rated_power_w=12000;z.maximum_power_w_by_slot.fill(12000);
  const rooms=prepareRoomServices(s,[],s.slots.map(()=>9000));
  assert(rooms.room_power.room.every(w=>w<=9000));
@@ -55,7 +55,7 @@ Deno.test("a short real reference retains covered commands and plans the uncover
 });
 Deno.test("a changed control type cannot leak incompatible retained commands into HA",()=>{
  const p=input(commandSnapshot());const previous=runRulesPlanner(p).plan;
- p.snapshot.device_models[1].control_type="switch_schedule";
+ p.snapshot.device_models[1].control_type="switch_schedule"; p.snapshot.device_models[1].load_type="fixed_full_load";
  const plan=runRulesPlanner(p,{plan_id:previous.plan_id,slots:previous.plans.priority.slots}).plan;
  assert(plan.plans.priority.slots.every(s=>s.device_commands!.thermostat.type==="switch_schedule"));
 });
@@ -83,14 +83,14 @@ Deno.test("malformed diagnostics cannot become another admission gate",()=>{
  assertEquals(mergePlanningWarnings([null,{},"bad"] as never),[]);
 });
 
-Deno.test("a cold room relay without learned watts retains explicit control intent", () => {
+Deno.test("a cold room relay without learned watts holds without inventing a heating instruction", () => {
   const s = commandSnapshot();
   const zone = s.thermal_zones![0];
   zone.model = null;
   zone.start_temperature_c = 10;
   s.device_models = s.device_models.map(m => ({...m, active_power_w: null, forecast_w_by_slot: s.slots.map(() => 0)}));
   const rooms = prepareRoomServices(s);
-  assertEquals(rooms.commands.relay[0], {type: "switch_schedule", on_seconds: 900});
+  assertEquals(rooms.commands.relay[0].type, "unavailable");
   assertEquals(rooms.power.relay[0], 0);
   assert(rooms.warnings.some(w => w.code === "room_estimate"));
 });

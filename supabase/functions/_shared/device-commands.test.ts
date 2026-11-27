@@ -22,7 +22,7 @@ Deno.test("schema 7 plans carry finite per-device commands in every scenario and
       ]);
       assertEquals(slot.device_commands!.relay.type, "switch_schedule");
       const c = slot.device_commands!.thermostat;
-      assert(c.type === "setpoint" && Number.isFinite(c.target_c));
+      assert(c.type === "heating_schedule" && typeof c.heating === "boolean");
       const relay = slot.device_commands!.relay;
       assert(relay.type === "switch_schedule");
       assertEquals(

@@ -110,6 +110,7 @@ export function ownerHasAcceptedWork(owner: string, slot: PublishedCommandSlot, 
       if (!command) return false;
       switch (command.type) {
         case "switch_schedule": return command.on_seconds > 0;
+        case "heating_schedule": return command.heating;
         case "permit_inhibit": return command.permitted;
         case "variable_power": return command.value > 0;
         case "room_relay": case "setpoint": return true;

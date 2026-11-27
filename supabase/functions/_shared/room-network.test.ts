@@ -292,7 +292,7 @@ Deno.test("fixed empirical peer heat follows available devices, retained switche
   const s = fixture(true);
   const room = s.thermal_zones![1], member = s.device_models[1];
   delete member.thermostat;
-  const relay = { ...member, key: "synthetic-peer-relay", control_type: "switch_schedule" as const,
+  const relay = { ...member, key: "synthetic-peer-relay", control_type: "switch_schedule" as const, load_type: "fixed_full_load" as const,
     active_power_w: 600, relay_on: false, forecast_w_by_slot: s.slots.map(() => 80) };
   room.device_keys.push(relay.key);
   s.device_models.push(relay);
@@ -345,8 +345,7 @@ Deno.test("a sparse connected peer retains literal comfort and excludes its heat
     assertEquals(progress.services.unplanned_power[peer.key], s.slots.map(() => warningOnly ? 500 : 720));
     assertEquals(!!progress.services.heating_model_use![peer.key].baseline, !warningOnly);
     for (const [i, command] of progress.services.commands[peer.device_keys[0]].entries()) {
-      assert(command.type === "setpoint");
-      assertEquals(command.room_target_c, peer.target_c[i]);
+      assertEquals(command.type, "unavailable");
     }
   }
 });
@@ -361,7 +360,7 @@ Deno.test("Off thermostat keeps the supported target grid and historical draw in
   assertEquals(rooms.temperature[zone.key], s.slots.map(() => null));
   assertEquals(rooms.power[member.key], member.forecast_w_by_slot);
   assertEquals(rooms.unplanned_power[zone.key], member.forecast_w_by_slot);
-  assertEquals(rooms.commands[member.key][0], {type: "setpoint", target_c: 21, room_target_c: 20.6, minimum_c: 5, maximum_c: 28});
+  assertEquals(rooms.commands[member.key][0].type, "unavailable");
   assert(rooms.warnings.some(w => w.scope === zone.key && w.message.includes("Off mode")));
 });
 
@@ -374,7 +373,11 @@ Deno.test("synthetic Off thermostat activation requires a heating owner and adve
     const capture = () => prepareRoomProposals({snapshot: s, retained: [], prices: prices(s)}, undefined, null, Infinity);
     const network = capture().forecast!.nativeInput.network;
     assertEquals(network.rooms.map(room => room.node), active ? [0, 1] : [0]);
-    if (active) assertEquals(network.rooms[1].input.thermostats[0].hvac_action, "off");
+    if (active) {
+      assertEquals(network.rooms[1].input.thermostats, []);
+      assertEquals(network.rooms[1].input.quarters[0].relay_w, [unit.active_power_w]);
+      assertEquals(unit.thermostat.hvac_action, "off");
+    }
     unit.thermostat.can_activate_heat = false;
     assertEquals(capture().forecast!.nativeInput.network.rooms.map(room => room.node), [0]);
     unit.thermostat.can_activate_heat = true;
@@ -401,9 +404,8 @@ Deno.test("a connected Off thermostat preserves its facts and only the other hea
   assertEquals(alone.forecast!.nativeInput.network.rooms.map(r => r.node), [0]);
   assertEquals(alone.forecast!.nativeInput.network.fixed_heaters, []);
   assertEquals(alone.progress.services.temperature[peer.key], s.slots.map(() => null));
-  assertEquals(alone.progress.services.commands[unit.key][0],
-    {type: "setpoint", target_c: 23, room_target_c: 22.7, minimum_c: 7, maximum_c: 28});
-  const other = { ...unit, key: "synthetic-peer-relay", control_type: "switch_schedule" as const,
+  assertEquals(alone.progress.services.commands[unit.key][0].type, "unavailable");
+  const other = { ...unit, key: "synthetic-peer-relay", control_type: "switch_schedule" as const, load_type: "fixed_full_load" as const,
     relay_on: false, forecast_w_by_slot: s.slots.map(() => 120), thermostat: null };
   s.device_models.push(other);
   peer.device_keys.push(other.key);
@@ -467,6 +469,7 @@ Deno.test("unprepared room relays contribute no optional future heat", () => {
     node = s.room_network!.nodes[1],
     zone = s.thermal_zones![1];
   device.control_type = "switch_schedule";
+  device.load_type = "fixed_full_load";
   device.relay_on = true;
   delete device.thermostat;
   node.start_temperature_c = -5;

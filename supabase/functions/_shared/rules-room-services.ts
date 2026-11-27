@@ -1,8 +1,8 @@
 import type { RoomNetworkWork } from "./room-network-contract.ts";
 import { prepareConnectedRoomStage, advanceConnectedRoomBarrier, compileConnectedRoomForecast, compileConnectedRoomCatalog, proposalDependencies, type ConnectedRoomCatalog, type ConnectedRoomProposalNetwork, type ConnectedRoomForecastRequest } from "./rules-connected-room-services.ts";
 import type { RoomHeatingPlan } from "./room-heating-schedule.ts";
-import { compileRoomSchedule, storeRoomCommands, electricalSource, empiricalHeaterWatts, retainedRoomTarget, schedulableRoomThermostat } from "./room-scheduling-inputs.ts";
-import { heatingDraw } from "./planner/weather-heating.ts";
+import { compileRoomSchedule, storeRoomCommands, electricalSource, schedulableRoomThermostat } from "./room-scheduling-inputs.ts";
+import { roomHeater, roomHeaterState, roomHeaterCommand, roomHeaterDraw } from "./planner/room-heater.ts";
 import { heatingModelRuns, type RoomHeatingModelUse } from "./planner/heating-bands.ts";
 import { connectedRoomHeaterSupported, roomResponseEvidenceLimited } from "./planner/room-response.ts";
 import { PlanningError, PlanningInputError } from "./planning-errors.ts";
@@ -10,7 +10,7 @@ import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { heaterResponse, isEquilibrium, usesHouse } from "./planner/models/room/thermal.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
-import { heatingMask, isThermostat, supportedTarget, projectThermostatQuarter, type ThermostatRoomState } from "./planner/thermostat.ts";
+import { projectThermostatQuarter, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating } from "./room-heating-schedule.ts";
 import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 import type { PlanningTrace } from "./planning-trace.ts";
@@ -181,8 +181,8 @@ function advanceRoomPreparation(inputs: RoomPlanningInputs,
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
     const connectedModel=roomNetwork?.nodes.find(node=>node.key===zone.key)?.model;
     const limitedFit = roomResponseEvidenceLimited(zone.model_warnings) || !!connectedModel && !connectedRoomHeaterSupported(connectedModel);
-    if (!disabled.has(zone.key) && !limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && !isEquilibrium(zone.model) && temperature !== null &&
-      outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => schedulableRoomThermostat(m, snapshot.operating_scope) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
+    if (!disabled.has(zone.key) && !limitedFit && !executionUnknown && relays.length + thermostats.length && members.length <= MAX_ROOM_RELAYS && zone.model && !isEquilibrium(zone.model) && temperature !== null &&
+      outdoorKnown && houseKnown && members.every(m => roomHeater(m) !== null) && thermostats.every(m => schedulableRoomThermostat(m, snapshot.operating_scope) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       const scheduled = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       comfortMisses=scheduled.misses;
       if(roomNetwork)networkPlans={...networkPlans,[zone.key]:scheduled.plan};
@@ -226,23 +226,21 @@ const shortfall = (zone: Zone, quarters: number) => planningWarning("comfort_sho
 function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Member[], relays: Member[],
   retained: Retained, remaining: number[], surplus: number[],
   prices: RoomPrices | undefined, result: RoomServices, trace?: PlanningTrace): {misses:number;plan:RoomHeatingPlan} {
-  const n = snapshot.slots.length, shared = snapshot.schema_version >= 12;
-  const { quarters, thermostats, actuators } = compileRoomSchedule(snapshot, zone, members, relays, retained, remaining, surplus, prices, result);
-  const plan = planRoomHeating(zone.start_temperature_c!, actuators, quarters, zone.start_stored_heat_c ?? 0, trace);
-  storeRoomCommands(result, zone, thermostats, members, relays, retained, plan, quarters, shared);
+  const n = snapshot.slots.length;
+  const { quarters, controlled, interval_heaters } = compileRoomSchedule(snapshot, zone, [...members, ...relays], retained, remaining, surplus, prices, result);
+  const plan = planRoomHeating(zone.start_temperature_c!, [], quarters, zone.start_stored_heat_c ?? 0, trace, interval_heaters);
+  storeRoomCommands(result, controlled, retained, plan, quarters);
   let misses = 0, previousC = zone.start_temperature_c!;
-  let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, stored_heat_c: zone.start_stored_heat_c ?? 0, heating_mask: heatingMask(thermostats) };
-  const debts = relays.map(() => 0);
+  let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, stored_heat_c: zone.start_stored_heat_c ?? 0, heating_mask: 0 };
   for (let i = 0; i < n; i++) {
     const q = quarters[i];
-    const baselineRelayW = relays.reduce((sum, m, r) => {
-      const watts = q.relay_w[r];
-      debts[r] += watts > 0 ? m.forecast_w_by_slot[i] / watts : 0;
-      const on = debts[r] >= 1; debts[r] -= on ? 1 : 0;
-      return sum + (on ? watts : 0);
-    }, 0);
-    const baseline = projectThermostatQuarter(q, thermostats, unplanned,
-      thermostats.map(t => supportedTarget(t, zone.target_c[i] + t.sensor_offset_c)), baselineRelayW);
+    let baselineRelayW = 0;
+    for (let j = 0; j < controlled.length; j++) {
+      const fixed = q.fixed_relays[j];
+      const on = fixed ?? (unplanned.temperature_c < zone.target_c[i] && baselineRelayW + q.relay_w[j] <= q.maximum_w);
+      if (on) baselineRelayW += q.relay_w[j];
+    }
+    const baseline = projectThermostatQuarter(q, [], unplanned, [], baselineRelayW);
     unplanned = baseline.state;
     result.unplanned_temperature[zone.key].push(unplanned.temperature_c);
     result.unplanned_power[zone.key].push(baselineRelayW + baseline.thermostat_w.reduce((a, b) => a + b, 0));
@@ -258,9 +256,9 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
 
 function prepareEmpiricalRoom(snapshot: OptimisationSnapshot, zone: Zone, retained: Retained,
   remaining: number[], surplus: number[], result: RoomServices, unconfirmedPeerHeat = false) {
-  const n=snapshot.slots.length,shared=snapshot.schema_version>=12,temperature=zone.start_temperature_c;
+  const n=snapshot.slots.length;
   const members=snapshot.device_models.filter(member=>zone.device_keys.includes(member.key));
-  const cumulative=new Map<string,number>(),limitedFit=roomResponseEvidenceLimited(zone.model_warnings);
+  const limitedFit=roomResponseEvidenceLimited(zone.model_warnings);
   const offThermostat = members.some(m => m.control_type === "setpoint" && m.thermostat?.hvac_action === "off" &&
     !schedulableRoomThermostat(m, snapshot.operating_scope));
   const empiricalBaseline = limitedFit || offThermostat;
@@ -284,34 +282,15 @@ function prepareEmpiricalRoom(snapshot: OptimisationSnapshot, zone: Zone, retain
         result.power[m.key].push(watts); total += watts;
         continue;
       }
-      if (m.control_type === "setpoint") {
-        const t = isThermostat(m.thermostat) ? m.thermostat : null;
-        const target = shared ? retainedRoomTarget(retained[i], zone) ?? zone.target_c[i] : zone.target_c[i];
-        const command = locked?.type === "setpoint" ? locked : { type: "setpoint" as const,
-          target_c: t ? supportedTarget(t, target) : target,
-          minimum_c: t?.minimum_c ?? Math.min(zone.comfort_min_c[i], target),
-          maximum_c: t?.maximum_c ?? Math.max(zone.comfort_max_c[i], target),
-          ...(shared ? {room_target_c: target} : {}) };
-        result.commands[m.key].push(command);
-        const watts = empiricalHeaterWatts(m, i, locked);
-        result.power[m.key].push(watts); total += watts;
-      } else if (m.control_type === "switch_schedule") {
-        const held = locked?.type === "switch_schedule" || locked?.type === "room_relay" && locked.room_key === zone.key;
-        if (shared && m.category === "heating") {
-          const target = retainedRoomTarget(retained[i], zone) ?? zone.target_c[i];
-          result.commands[m.key].push(held ? locked : { type: "room_relay", room_key: zone.key, target_c: target });
-          const expected = empiricalHeaterWatts(m, i, locked);
-          result.power[m.key].push(expected); total += expected;
-          continue;
-        }
-        const watts = m.active_power_w ?? 0;
-        const debt = (cumulative.get(m.key) ?? 0) + (watts > 0 ? m.forecast_w_by_slot[i] / watts : 0);
-        const requested = i === 0 && temperature !== null ? temperature < zone.target_c[i] : debt >= 1;
-        const on = locked?.type === "switch_schedule" ? locked.on_seconds > 0 : requested && watts <= remaining[i] - total;
-        cumulative.set(m.key, debt - (on ? 1 : 0));
-        result.commands[m.key].push(held ? locked : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
-        result.power[m.key].push(on ? watts : 0); total += on ? watts : 0;
-      }
+      const heater = roomHeater(m);
+      const heating = heater ? roomHeaterState(heater, locked) : undefined;
+      const command: DeviceCommand = heating === undefined
+        ? { type: "unavailable", reason: "Room heating state cannot support a new interval schedule; existing settings are retained" }
+        : roomHeaterCommand(heater!, heating);
+      result.commands[m.key].push(command);
+      const watts = heating === undefined ? Math.max(0, m.forecast_w_by_slot[i])
+        : heating ? roomHeaterDraw(heater!, snapshot.outdoor_temperature_c?.[i] ?? 0)?.watts ?? heater!.power.on_w : 0;
+      result.power[m.key].push(watts); total += watts;
     }
     result.room_power[zone.key].push(total);
     result.temperature[zone.key].push(null);
@@ -327,7 +306,7 @@ function prepareEmpiricalRoom(snapshot: OptimisationSnapshot, zone: Zone, retain
     unconfirmedPeerHeat
       ? "Comfort commands remain active. Electricity is estimated from history. Neighbour forecasts allow for passive exchange and omit additional heat from this room’s heater."
       : offThermostat ? "Electricity is estimated from measured history. The forecast excludes new heat from thermostats in Off mode."
-      : "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
+      : "Compatible accepted heating intervals remain active; other intervals hold existing settings. Household consumption is estimated from measured history."));
   if (zone.model_source) {
     const source = zone.model_source;
     const empirical: RoomHeatingModelUse["thermal"] = [{ from: 0, through: n - 1, source: { kind: "empirical" } }];
@@ -335,7 +314,7 @@ function prepareEmpiricalRoom(snapshot: OptimisationSnapshot, zone: Zone, retain
       thermal: [{ from: 0, through: n - 1, source }],
       electrical: Object.fromEntries(members.map(member => [member.key, heatingModelRuns(
         snapshot.outdoor_temperature_c!.map(c => electricalSource(member,
-          member.weather_heating ? heatingDraw(member.weather_heating, c) : null)))])),
+          roomHeater(member) ? roomHeaterDraw(roomHeater(member)!, c!) : null)))])),
     } : undefined;
     (result.heating_model_use ??= {})[zone.key] = {
       thermal: empirical, electrical: Object.fromEntries(members.map(member => [member.key, empirical])),

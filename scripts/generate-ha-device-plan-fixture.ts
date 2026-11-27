@@ -24,7 +24,7 @@ export function commandSnapshot(): OptimisationSnapshot {
     statistic_id: `sensor.${m.key}`,
     category: "heating",
     suggested_load_type: "duty_cycle",
-    load_type: "duty_cycle",
+    load_type: m.control_type === "switch_schedule" ? "fixed_full_load" : "duty_cycle",
     planning_role: "controllable",
     active_power_w: 1000,
     profile_sample_count: 1000,

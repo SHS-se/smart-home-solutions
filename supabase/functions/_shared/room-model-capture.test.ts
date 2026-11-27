@@ -198,6 +198,7 @@ Deno.test("weather draw is pinned only for the matching device in Verification",
   const device = snapshot.device_models.find(model => model.key === mappings[0].key)!;
   const read = (value: typeof snapshot) => value.device_models.find(model => model.key === device.key)?.weather_heating;
   const binding = "climate.unit|sensor.power|sensor.energy";
+  device.load_type = "inverter";
   device.weather_heating_binding = binding;
   const p = (outdoor_c: number, watts: number) =>
     ({ outdoor_c, min_c: outdoor_c, max_c: outdoor_c, watts, spread_w: 50, hours: 4, days: 2 });
@@ -236,6 +237,7 @@ Deno.test("one shared response plans every forecast temperature and records its 
   const device = snapshot.device_models.find(member => member.key === mapping.key)!;
   device.category = "heating";
   device.forecast_w_by_slot = [600, 600, 600];
+  device.load_type = "inverter";
   device.weather_heating_binding = "meter-binding";
   device.running_power_model = { revision: "synthetic-constant-revision", binding: "synthetic-constant-source" };
   snapshot.device_models = [device];
@@ -537,7 +539,7 @@ Deno.test("algebraic room evidence preserves comfort commands and demand without
   assertEquals(zone.model, null);
   assertEquals(zone.start_stored_heat_c, null);
   const services = prepareRoomServices(result), device = f.room.device_keys[0];
-  assertEquals(services.commands[device].map(command => command.type), ["setpoint", "setpoint"]);
+  assertEquals(services.commands[device].map(command => command.type), ["unavailable", "unavailable"]);
   assertEquals(services.power[device], [200, 200]);
   assertEquals(services.temperature[f.key], [null, null]);
   assertEquals(services.unplanned_temperature[f.key], [null, null]);
@@ -570,7 +572,7 @@ Deno.test("thermostat sensor calibration uses the raw mean instead of elapsed ro
   // offset is zero. The elapsed 3.75 C cooling must not become a sensor offset:
   // the retained 18 C command now needs heat, rather than appearing satisfied.
   const held = result.slots.map(() => ({ device_commands: { [member.key]: {
-    type: "setpoint" as const, target_c: 18, minimum_c: 5, maximum_c: 35,
+    type: "heating_schedule" as const, heating: true,
   } } }));
   const services = prepareRoomServices(result, held);
   for (const watts of services.power[member.key]) assertAlmostEquals(watts, 800, 1e-9);

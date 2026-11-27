@@ -1,3 +1,4 @@
+import { roomHeater, roomHeaterState } from "./planner/room-heater.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { chargerLevels, type ChargerModel } from "./planner/device-models.ts";
@@ -31,6 +32,10 @@ export function hasMissingServiceReading(snapshot: OptimisationSnapshot, device:
 }
 
 function compatible(command: DeviceCommand | undefined, model: Model, snapshot: OptimisationSnapshot): command is DeviceCommand {
+  if (model.category === "heating") {
+    const heater = roomHeater(model);
+    return !!heater && roomHeaterState(heater, command) !== undefined;
+  }
   return !!command && command.type !== "unavailable" && (command.type === model.control_type ||
     command.type === "room_relay" && model.control_type === "switch_schedule" &&
     !!snapshot.thermal_zones?.some(zone => zone.key === command.room_key && zone.device_keys.includes(model.key)));
@@ -114,7 +119,8 @@ export function retainUnavailableServices(snapshot: OptimisationSnapshot, refere
       const command = old.device_commands?.[model.key];
       if (!compatible(command, model, snapshot)) continue;
       const bound = model.active_power_w;
-      if (command.type === "switch_schedule" && command.on_seconds === 0 ||
+      if (command.type === "heating_schedule" && !command.heating ||
+        command.type === "switch_schedule" && command.on_seconds === 0 ||
         command.type === "permit_inhibit" && !command.permitted) copy(model, i, command, 0);
       else if (finite(bound) && bound > 0) copy(model, i, command, bound);
     }

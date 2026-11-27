@@ -286,7 +286,7 @@ async function preparationSample(mode:
     }
     if (mode === "room-targets" || mode === "varying-room-targets") {
       assert(Object.values(input.rooms.commands).some((commands) =>
-          commands.some((command) => command.type === "room_relay")),
+          commands.some((command) => command.type === "switch_schedule" || command.type === "heating_schedule")),
       );
     }
     if (mode === "varying-room-targets") {

@@ -741,6 +741,16 @@ pub unsafe extern "C" fn planner_room_network(pointer: *const u8, length: usize)
 }
 
 /// # Safety
+/// Input must name a live initialized module allocation. Caller owns buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room_literal(pointer: *const u8, length: usize) -> u64 {
+    let output = room_network::literal_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
 /// Input must identify a live initialized module allocation. Caller owns buffers.
 #[no_mangle]
 pub unsafe extern "C" fn planner_room_network_forecast(pointer: *const u8, length: usize) -> u64 {

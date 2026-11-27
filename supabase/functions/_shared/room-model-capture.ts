@@ -87,7 +87,7 @@ export function prepareRoomModels(
     // Only server-owned, versioned calibration can enter the planner.
     const { weather_heating: _supplied, ...device } = model;
     const binding = device.weather_heating_binding;
-    if (device.control_type !== "setpoint" || device.planning_service === "pool" || !isWeatherHeatingBinding(binding)) return device;
+    if (device.control_type !== "setpoint" || device.load_type !== "inverter" || device.planning_service === "pool" || !isWeatherHeatingBinding(binding)) return device;
     const mode = scope?.modes[scope.device_owners[device.key]];
     const row = weatherByDevice.get(device.key);
     const profile = row && readWeatherHeating(row.operating_points, binding);

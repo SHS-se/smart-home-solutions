@@ -64,19 +64,13 @@ Deno.test("cheap night hours carry the recovery and the deadline still holds", (
   assert(cost(power, nightTariff) < cost(flat, nightTariff));
 });
 
-Deno.test("new thermostat commands are supported native targets, with hardware bounds separate from room comfort", () => {
-  const s = bathroom();
-  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
-  const native = s.device_models[0].thermostat!;
-  rooms.commands.floor.forEach(command => {
-    assert(command.type === "setpoint");
-    assertEquals(command.minimum_c, native.minimum_c);
-    assertEquals(command.maximum_c, native.maximum_c);
-    assert(command.target_c >= native.minimum_c && command.target_c <= native.maximum_c);
-    assertAlmostEquals((command.target_c - native.minimum_c) / native.step_c,
-      Math.round((command.target_c - native.minimum_c) / native.step_c), 1e-8);
+Deno.test("Setpoint heating publishes only a Boolean and consumes full measured power", () => {
+  const rooms = prepareRoomServices(bathroom(), [], undefined, prices(nightTariff));
+  rooms.commands.floor.forEach((command, i) => {
+    assert(command.type === "heating_schedule");
+    assertEquals(Object.keys(command).sort(), ["heating", "type"]);
+    assertEquals(rooms.power.floor[i], command.heating ? 2000 : 0);
   });
-  assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
 });
 
 Deno.test("solar surplus is priced as foregone export", () => {
@@ -98,7 +92,7 @@ Deno.test("an unreachable deadline gets the closest recovery and a warning, neve
 
 Deno.test("committed quarters and shared headroom bind the room plan", () => {
   const s = bathroom();
-  const retained = [{ device_commands: { floor: { type: "setpoint" as const, target_c: 19, minimum_c: 18, maximum_c: 22.5 } },
+  const retained = [{ device_commands: { floor: { type: "heating_schedule" as const, heating: true } },
     device_loads_w: { floor: 1234 } }];
   const rooms = prepareRoomServices(s, retained, Array(32).fill(900), prices(nightTariff));
   assertAlmostEquals(rooms.room_power.bathroom[0], 2000); // Retain target 19, not the obsolete 1234 W forecast.
@@ -112,7 +106,7 @@ Deno.test("the household planner moves bathroom recovery into the cheap hours", 
   const heat = slots.map(slot => slot.device_loads_w.floor);
   assert(heat.slice(0, 12).some(w => w > 0));
   const before = slots[COMFORT_FROM - 1].device_commands!.floor;
-  assert(before.type === "setpoint");
+  assert(before.type === "heating_schedule");
   assert((plan.thermal_projection!.zones[0].planned_temperature_c[COMFORT_FROM - 1]) >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
@@ -135,7 +129,7 @@ Deno.test("a relay in a thermostat room no longer drops the room out of deadline
   assert(temperature.slice(COMFORT_FROM).every(t => t >= COMFORT - 1e-6));
   assertEquals(rooms.warnings.filter(w => w.code === "comfort_shortfall"), []);
   const before = rooms.commands.floor[COMFORT_FROM - 1];
-  assert(before.type === "setpoint");
+  assert(before.type === "heating_schedule");
   assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
 });
 
@@ -183,7 +177,7 @@ Deno.test("the household planner plans the towel rack with the floor", () => {
   const slots = plan.plans.priority.slots;
   assert(slots.every(slot => slot.device_commands!.rack.type === "switch_schedule"));
   const before = slots[COMFORT_FROM - 1].device_commands!.floor;
-  assert(before.type === "setpoint");
+  assert(before.type === "heating_schedule");
   assert((plan.thermal_projection!.zones[0].planned_temperature_c[COMFORT_FROM - 1]) >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
@@ -237,17 +231,17 @@ Deno.test("a house-coupled room without the house forecast is not run on a guess
   assertEquals(rooms.commands.floor.length, s.slots.length);
 });
 
-Deno.test("missing native action retains comfort intent and empirical power without invented temperature", () => {
+Deno.test("missing native observations hold settings and empirical power without invented temperature", () => {
   const s = bathroom();
   s.device_models[0].thermostat = null;
   const rooms = prepareRoomServices(s);
-  assert(rooms.commands.floor.every(c => c.type === "setpoint"));
+  assert(rooms.commands.floor.every(c => c.type === "unavailable"));
   assertEquals(rooms.power.floor, s.device_models[0].forecast_w_by_slot);
   assert(rooms.temperature.bathroom.every(t => t === null));
   assert(rooms.warnings.some(w => w.code === "room_estimate"));
 });
 
-Deno.test("multiple native sensors retain separate HVAC latches and power contributions", () => {
+Deno.test("multiple native actuators retain separate interval decisions and power contributions", () => {
   const s = bathroom();
   s.device_models[0].active_power_w = 1000;
   s.device_models.push({ ...s.device_models[0], key: "second", name: "Second heater",
@@ -261,58 +255,41 @@ Deno.test("multiple native sensors retain separate HVAC latches and power contri
   assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
 });
 
-Deno.test("heat unavoidable at a native minimum stays visible instead of rejecting the household", () => {
+Deno.test("a native minimum that cannot express no-heat retains settings and visible demand", () => {
   const s = bathroom();
   s.thermal_zones![0].start_temperature_c = 4;
   s.device_models[0].thermostat = { ...s.device_models[0].thermostat!, current_temperature_c: 4, target_temperature_c: 5 };
   const rooms = prepareRoomServices(s, [], s.slots.map(() => 0), prices(Array(32).fill(1)));
   assert(rooms.power.floor[0] > 0);
-  assert(rooms.commands.floor.every(c => c.type === "setpoint"));
+  assert(rooms.commands.floor.every(c => c.type === "unavailable"));
 });
 
-Deno.test("planned room targets drive relays and native thermostats in a mixed room", () => {
-  const snapshot = bathroomWithRack();
-  snapshot.schema_version = 12;
-  snapshot.device_models[1].relay_on = false;
-  const legacy = { type: "switch_schedule", on_seconds: 900 } as const;
-  const result = prepareRoomServices(snapshot, [{device_commands: {rack: legacy}}], undefined, prices(nightTariff));
-
-  assertEquals(result.commands.rack[0], legacy);
-  assertAlmostEquals(result.power.rack[0], 150, 1e-8);
-  result.commands.rack.slice(1).forEach((relay, index) => {
-    const native = result.commands.floor[index + 1];
-    assert(relay.type === "room_relay" && native.type === "setpoint");
-    assertEquals(relay.room_key, "bathroom");
-    assertEquals(relay.target_c, native.room_target_c);
-  });
-  const held = result.commands.rack[1];
-  const replanned = prepareRoomServices(snapshot, [
-    {device_commands: {rack: legacy}},
-    {device_commands: {rack: held, floor: result.commands.floor[1]}},
-  ]);
-  assertEquals(replanned.commands.rack[1], held);
-  assertEquals(replanned.commands.floor[1], result.commands.floor[1]);
+Deno.test("mixed rooms retain each member's interval commands and full draw", () => {
+  const snapshot = bathroomWithRack(); snapshot.schema_version = 12;
+  const held = { type: "switch_schedule", on_seconds: 900 } as const;
+  const result = prepareRoomServices(snapshot, [{device_commands: {rack: held}}], undefined, prices(nightTariff));
+  assertEquals(result.commands.rack[0], held);
+  for (let i = 0; i < snapshot.slots.length; i++) {
+    const relay = result.commands.rack[i], floor = result.commands.floor[i];
+    assert(relay.type === "switch_schedule" && floor.type === "heating_schedule");
+    assertEquals(result.power.rack[i], relay.on_seconds ? 150 : 0);
+    assertEquals(result.power.floor[i], floor.heating ? 2000 : 0);
+    assertEquals(result.room_power.bathroom[i], result.power.rack[i] + result.power.floor[i]);
+  }
 });
 
-Deno.test("room relay targets forecast partial heating and fit a budget shared by two heaters", () => {
-  const snapshot = bathroomWithRack(undefined, 1000);
-  snapshot.schema_version = 12;
-  const relay = { ...snapshot.device_models[1], relay_on: false };
-  snapshot.device_models = [relay, { ...relay, key: "rack2" }];
-  const zone = snapshot.thermal_zones![0];
-  zone.device_keys = ["rack", "rack2"];
+Deno.test("two fixed heaters never share a quarter through fractional duty", () => {
+  const snapshot = bathroomWithRack(undefined, 1000); snapshot.schema_version = 12;
+  const relay = snapshot.device_models[1]; snapshot.device_models = [relay, {...relay,key: "rack2"}];
+  const zone = snapshot.thermal_zones![0]; zone.device_keys = ["rack", "rack2"];
   zone.maximum_power_w_by_slot.fill(1000);
-
-  const rooms = prepareRoomServices(snapshot);
-  assert(rooms.commands.rack.every(command => command.type === "room_relay"));
-  assert(rooms.room_power.bathroom.every(watts => watts <= 1000 + 1e-6));
-  assert(rooms.room_power.bathroom.some(watts => watts > 0 && watts < 1000 - 1e-6));
-  assert(rooms.power.rack2.every(watts => watts === 0), "equal new calls are admitted in stable owner order");
-
+  const result = prepareRoomServices(snapshot);
+  assert(result.room_power.bathroom.every(w => w === 0 || w === 1000));
+  for (const key of zone.device_keys) assert(result.power[key].every(w => w === 0 || w === 1000));
   zone.model = null;
   const estimated = prepareRoomServices(snapshot);
-  assertEquals(estimated.commands.rack[0], {type: "room_relay", room_key: "bathroom", target_c: SETBACK});
-  assert(estimated.warnings.some(warning => warning.code === "room_estimate"));
+  assert(estimated.commands.rack.every(c => c.type === "unavailable"));
+  assert(estimated.warnings.some(w => w.code === "room_estimate"));
 });
 
 Deno.test("a sparse fit cannot turn a brief comfort target into full-power preheating", () => {
@@ -331,14 +308,14 @@ Deno.test("a sparse fit cannot turn a brief comfort target into full-power prehe
   zone.model = { ...zone.model, gain_c_per_wh: .00003 };
   zone.model_warnings = ["insufficient_heating"];
   zone.model_source = { kind: "shared", revision: "synthetic-weak-heater" };
-  const accepted = { type: "room_relay", room_key: zone.key, target_c: SETBACK + 1 } as const;
+  const accepted = { type: "switch_schedule", on_seconds: 900 } as const;
   const result = prepareRoomServices(snapshot, [{ device_commands: { [relay.key]: accepted } }], undefined, prices(nightTariff));
 
   assertEquals(result.commands[relay.key][0], accepted);
   result.commands[relay.key].slice(1).forEach((command, i) => {
-    assertEquals(command, { type: "room_relay", room_key: zone.key, target_c: zone.target_c[i + 1] });
+    assertEquals(command.type, "unavailable");
   });
-  assertEquals(result.power[relay.key], relay.forecast_w_by_slot);
+  assertEquals(result.power[relay.key], [relay.active_power_w!, ...relay.forecast_w_by_slot.slice(1)]);
   assertEquals(result.unplanned_power[zone.key], relay.forecast_w_by_slot);
   assert(result.temperature[zone.key].every(value => value === null));
   assertEquals(result.heating_model_use?.[zone.key].thermal[0].source.kind, "empirical");
@@ -366,12 +343,12 @@ Deno.test("an unflagged weak response cannot purchase a horizon of speculative h
   const zone = snapshot.thermal_zones![0];
   assert(zone.model && "gain_c_per_wh" in zone.model);
   zone.model = { ...zone.model, gain_c_per_wh: .000001, sample_count: 10000 };
-  const accepted = {type: "room_relay", room_key: zone.key, target_c: 19} as const;
+  const accepted = {type: "switch_schedule", on_seconds: 0} as const;
   const result = prepareRoomServices(snapshot, [{device_commands: {rack: accepted}}], undefined,
     prices(snapshot.slots.map(() => 2)));
   assertEquals(result.commands.rack[0], accepted);
   result.commands.rack.slice(1).forEach((command, i) => {
-    assertEquals(command, {type: "room_relay", room_key: zone.key, target_c: zone.target_c[i + 1]});
+    assert(command.type === "switch_schedule");
   });
   assert(result.room_power.bathroom.reduce((sum, watts) => sum + watts / 4000, 0) < 1);
 });
@@ -402,7 +379,7 @@ Deno.test("schedule comparison pays to preheat for a comfort deadline the litera
   // Flat prices: preheating can only cost more than following the schedule.
   const result = prepareRoomServices(snapshot, [], undefined, prices(snapshot.slots.map(() => 2)));
   assert(result.room_power.bathroom.slice(0, deadline).some(watts => watts > 0), "heat starts before the deadline");
-  assert(result.commands.rack.slice(0, deadline).some(command => command.type === "room_relay" && command.target_c > 18));
+  assert(result.commands.rack.slice(0, deadline).some(command => command.type === "switch_schedule" && command.on_seconds === 900));
   assert(result.temperature.bathroom[deadline - 1]! >= 21 - 1e-3, "the preceding quarter ends warm when comfort starts");
 });
 
@@ -451,7 +428,7 @@ Deno.test("schedule comparison accepts cheaper heating that improves scheduled c
   const result = prepareRoomServices(snapshot, [], undefined,
     prices(snapshot.slots.map((_, i) => i < 4 ? .25 : 4)));
   assert(result.room_power.bathroom.slice(0, 4).some(watts => watts > 0));
-  assert(result.commands.rack.slice(0, 4).some(command => command.type === "room_relay" && command.target_c > 18));
+  assert(result.commands.rack.slice(0, 4).some(command => command.type === "switch_schedule" && command.on_seconds === 900));
   assert(result.temperature.bathroom.slice(4).every(c => c !== null && c >= 20.75));
 });
 

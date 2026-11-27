@@ -342,6 +342,27 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
     result.deadline_resolved = result.unresolved_deadline_prefixes == 0;
     result
 }
+/// Interval equipment requires a catalog-frozen Boolean program. The independent
+/// thermostat projector has no Boolean decisions; its literal native targets
+/// are already fixed by the input, exactly as in the model-only reference tests.
+fn literal_commands(network: &NetworkInput) -> Result<Vec<Plan>, String> {
+    if network
+        .rooms
+        .iter()
+        .any(|room| room.input.quarters.iter().any(|q| !q.relay_w.is_empty()))
+    {
+        network
+            .literal
+            .clone()
+            .ok_or("Missing frozen literal heat program".into())
+    } else {
+        Ok(network
+            .rooms
+            .iter()
+            .map(|room| commands(&room.input, true))
+            .collect())
+    }
+}
 fn dimensions(input: &NetworkInput) -> (usize, usize, usize, usize) {
     let slots = input.hours.len();
     let rooms = input.rooms.len();
@@ -355,7 +376,10 @@ fn dimensions(input: &NetworkInput) -> (usize, usize, usize, usize) {
             + input
                 .rooms
                 .iter()
-                .map(|r| r.input.thermostats.len())
+                .map(|r| {
+                    r.input.thermostats.len()
+                        + r.input.quarters.first().map_or(0, |q| q.relay_w.len())
+                })
                 .sum::<usize>())
             * slots
             + rooms,
@@ -631,7 +655,13 @@ fn path_from_initial(input: &Input, initial: InitialTrajectory) -> Path {
                     .network
                     .rooms
                     .iter()
-                    .map(|r| vec![0.; r.input.thermostats.len()])
+                    .map(|r| {
+                        vec![
+                            0.;
+                            r.input.thermostats.len()
+                                + r.input.quarters.first().map_or(0, |q| q.relay_w.len())
+                        ]
+                    })
                     .collect()
             })
             .collect(),
@@ -997,12 +1027,7 @@ fn run(
         .accepted
         .clone()
         .ok_or("Joint forecast needs completed ordered commands")?;
-    let literal = input
-        .network
-        .rooms
-        .iter()
-        .map(|r| commands(&r.input, true))
-        .collect();
+    let literal = literal_commands(&input.network)?;
     let mandatory: Vec<_> = input
         .network
         .rooms
@@ -1020,10 +1045,10 @@ fn run(
                 .map(|set| {
                     (0..set)
                         .find(|&previous| {
-                            sets[set]
-                                .iter()
-                                .zip(&sets[previous])
-                                .all(|(a, b)| a.targets_c[slot] == b.targets_c[slot])
+                            sets[set].iter().zip(&sets[previous]).all(|(a, b)| {
+                                a.targets_c[slot] == b.targets_c[slot]
+                                    && a.relays_on[slot] == b.relays_on[slot]
+                            })
                         })
                         .unwrap_or(set)
                 })
@@ -1282,11 +1307,7 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
         .accepted
         .clone()
         .ok_or("Missing ordered room commands")?;
-    let literal: Vec<_> = network
-        .rooms
-        .iter()
-        .map(|r| commands_for_literal(&r.input))
-        .collect();
+    let literal = literal_commands(network)?;
     let materialize = |set: usize, mut plans: Vec<Plan>| {
         let mut actuator_offset = 0;
         for (i, plan) in plans.iter_mut().enumerate() {
@@ -1316,7 +1337,12 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
                         .collect()
                 })
                 .collect();
-            actuator_offset += actuator_count;
+            actuator_offset += actuator_count
+                + network.rooms[i]
+                    .input
+                    .quarters
+                    .first()
+                    .map_or(0, |q| q.relay_w.len());
             plan.temperature_c = (0..slots)
                 .map(|q| means[set * stride + (rooms + network.rooms[i].node) * slots + q])
                 .collect();
@@ -1360,9 +1386,6 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
         mean_temperature_c: mean_temperature,
         literal: materialize(1, literal),
     })
-}
-fn commands_for_literal(input: &crate::room_heating::Input) -> Plan {
-    commands(input, true)
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

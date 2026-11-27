@@ -145,7 +145,7 @@ export function cpuPlanningSource(withRooms = false) {
   };
 }
 
-/** A single room's action/latch product must fit too, not just many simple rooms. */
+/** A single room's four-heater Boolean action product must fit too, not just many simple rooms. */
 export function cpuMixedRoomPlanningSource() {
   const source = cpuPlanningSource(true);
   const snapshot = source.snapshot;
@@ -154,6 +154,7 @@ export function cpuMixedRoomPlanningSource() {
   ).slice(0, 4);
   for (const member of members.slice(2)) {
     member.control_type = "switch_schedule";
+    member.load_type = "fixed_full_load";
     delete member.thermostat;
   }
   const zone = snapshot.thermal_zones![0];
@@ -182,6 +183,7 @@ export function cpuVaryingRoomTargetPlanningSource() {
   for (const model of source.snapshot.device_models) {
     if (!model.key.startsWith("cpu_room_")) continue;
     model.control_type = "switch_schedule";
+    model.load_type = "fixed_full_load";
     model.relay_on = false;
     delete model.thermostat;
   }

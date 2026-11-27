@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "dbd2c742b01d8e1545400110887fcd6077e6a245ad71b7a94a50372e0f87a853",
-  "source_sha256": "2f3aff692136e6d4fb62caf1c0127ac748d6096f8bdf7d44c78a3d17a4e51ab2",
+  "wasm_sha256": "396acf8e22d9c30a77ad107fc4539f2ce5e8b03d33dda34be066ae25bedc9893",
+  "source_sha256": "386a7223601037ae61c76362a181c34922577ce55a28d10c27ccf6b070959c61",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -103,6 +103,7 @@
     "supabase/functions/_shared/planner/pool-physics.ts",
     "supabase/functions/_shared/planner/pool-response.ts",
     "supabase/functions/_shared/planner/price-coverage.ts",
+    "supabase/functions/_shared/planner/room-heater.ts",
     "supabase/functions/_shared/planner/room-response.ts",
     "supabase/functions/_shared/planner/store-value.ts",
     "supabase/functions/_shared/planner/thermostat.ts",

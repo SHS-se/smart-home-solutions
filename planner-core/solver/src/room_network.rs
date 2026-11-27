@@ -29,9 +29,13 @@ pub struct Input {
     pub(crate) export_sek_per_kwh: Vec<f64>,
     pub(crate) surplus_w: Vec<f64>,
     pub(crate) accepted: Option<Vec<Plan>>,
+    pub(crate) literal: Option<Vec<Plan>>,
 }
 impl Input {
     pub(crate) fn validate_fixed_heaters(&self) -> Result<(), String> {
+        for room in &self.rooms {
+            room.input.validate_interval_power()?;
+        }
         for (index, heater) in self.fixed_heaters.iter().enumerate() {
             if heater.node >= self.nodes.len()
                 || self.rooms.iter().any(|room| room.node == heater.node)
@@ -125,10 +129,101 @@ pub(crate) fn commands(input: &RoomInput, literal: bool) -> Plan {
                 .collect(),
         );
         plan.room_targets_c.push(target);
-        plan.relays_on.push(vec![]);
+        plan.relays_on.push(
+            q.fixed_relays
+                .iter()
+                .map(|on| on.unwrap_or(false))
+                .collect(),
+        );
     }
     plan
 }
+/// Compile once under nominal coupled physics, then freeze all Boolean commands.
+/// Stochastic replay must never turn the literal schedule into a new controller.
+pub(crate) fn literal_program(input: &Input) -> Vec<Plan> {
+    let mut plans: Vec<_> = input
+        .rooms
+        .iter()
+        .map(|room| commands(&room.input, true))
+        .collect();
+    let mut temperatures: Vec<_> = input.nodes.iter().map(|node| node.start_c).collect();
+    let mut heat: Vec<_> = input
+        .nodes
+        .iter()
+        .map(|node| node.start_stored_heat_c)
+        .collect();
+    let mut masks: Vec<_> = input
+        .rooms
+        .iter()
+        .map(|room| {
+            room.input
+                .thermostats
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.hvac_action == "heating")
+                .map(|(j, _)| 1 << j)
+                .sum()
+        })
+        .collect();
+    let mut kernels = ReplayKernels::default();
+    for slot in 0..input.hours.len() {
+        let mut used = 0.;
+        for (j, room) in input.rooms.iter().enumerate() {
+            let q = &room.input.quarters[slot];
+            let target = q.room_target.as_ref().expect("shared room");
+            let desired = target.fixed_c.unwrap_or(target.preferred_c);
+            let budget = q.maximum_w.min((input.headroom_w[slot] - used).max(0.));
+            let mut watts = 0.;
+            for (r, w) in q.relay_w.iter().enumerate() {
+                let on = q.fixed_relays[r]
+                    .unwrap_or(temperatures[room.node] < desired && watts + w <= budget + 1e-6);
+                plans[j].relays_on[slot][r] = on;
+                if on {
+                    watts += w;
+                }
+            }
+            used += watts;
+        }
+        project_slot(
+            input,
+            &plans,
+            slot,
+            &mut temperatures,
+            &mut heat,
+            &mut masks,
+            &mut kernels,
+        );
+    }
+    plans
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LiteralOutcome {
+    Ready { result: Vec<Plan> },
+    Failed { issue: String },
+}
+pub fn literal_json(bytes: &[u8]) -> Vec<u8> {
+    let result = serde_json::from_slice::<Input>(bytes)
+        .map_err(|e| format!("Invalid room literal input: {e}"))
+        .and_then(|input| {
+            input.validate_fixed_heaters()?;
+            if input
+                .rooms
+                .iter()
+                .any(|room| room.input.quarters.iter().any(|q| q.room_target.is_none()))
+            {
+                return Err("Literal heat program requires shared room intent".into());
+            }
+            Ok(literal_program(&input))
+        });
+    serde_json::to_vec(&match result {
+        Ok(result) => LiteralOutcome::Ready { result },
+        Err(issue) => LiteralOutcome::Failed { issue },
+    })
+    .expect("finite room literal")
+}
+
 fn replay(input: &Input, commands: &[Plan], kernels: &mut ReplayKernels) -> Replay {
     let n = input.nodes.len();
     let slots = input.hours.len();
@@ -189,7 +284,8 @@ fn replay(input: &Input, commands: &[Plan], kernels: &mut ReplayKernels) -> Repl
                 .collect();
             let plan = &mut out.plans[j];
             plan.power_w.push(power.iter().sum());
-            plan.thermostat_w.push(power);
+            plan.thermostat_w
+                .push(power[..room.input.thermostats.len()].to_vec());
             plan.temperature_c.push(temperatures[room.node]);
             plan.shortfall_c
                 .push((room.input.quarters[i].required_c - temperatures[room.node]).max(0.));
@@ -260,6 +356,12 @@ pub(crate) fn project_minute(
                 .relay_budget_w
                 .map(|budget| budget.min((input.headroom_w[slot] - reserved).max(0.))),
         };
+        let relay_w: f64 = q
+            .relay_w
+            .iter()
+            .zip(&commands[j].relays_on[slot])
+            .filter_map(|(watts, on)| on.then_some(*watts))
+            .sum();
         let projection = &mut kernels.projections[j];
         project(
             &interval,
@@ -270,15 +372,21 @@ pub(crate) fn project_minute(
                 mask: state.masks[j],
             },
             &commands[j].targets_c[slot],
-            0.,
+            relay_w,
             projection,
         );
         state.masks[j] = projection.state.mask;
-        kernels.watts[room.node] = projection.power.iter().sum();
+        kernels.watts[room.node] = relay_w + projection.power.iter().sum::<f64>();
         if j <= input.stage {
             reserved += projection.peak;
         }
         energy.extend(projection.power.iter().map(|p| p * dt));
+        energy.extend(
+            q.relay_w
+                .iter()
+                .zip(&commands[j].relays_on[slot])
+                .map(|(w, on)| if *on { w * dt } else { 0. }),
+        );
     }
     let mut mean_integral: Vec<_> = state.temperatures.iter().map(|t| t * 0.5 * dt).collect();
     let mean_correction = advance_cached(
@@ -320,7 +428,13 @@ fn project_slot(
     let mut totals: Vec<Vec<f64>> = input
         .rooms
         .iter()
-        .map(|room| vec![0.; room.input.thermostats.len()])
+        .map(|room| {
+            vec![
+                0.;
+                room.input.thermostats.len()
+                    + room.input.quarters.first().map_or(0, |q| q.relay_w.len())
+            ]
+        })
         .collect();
     let mut mean = vec![0.; input.nodes.len()];
     let mut peak: f64 = 0.;

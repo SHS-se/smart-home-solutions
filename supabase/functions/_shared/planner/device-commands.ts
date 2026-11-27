@@ -1,5 +1,6 @@
 /** Executable device settings. Forecast watts never grant control authority. */
 export type DeviceCommand =
+  | { type: "heating_schedule"; heating: boolean }
   | { type: "setpoint"; target_c: number; minimum_c: number; maximum_c: number; room_target_c?: number }
   | { type: "room_relay"; room_key: string; target_c: number }
   | { type: "switch_schedule"; on_seconds: number }

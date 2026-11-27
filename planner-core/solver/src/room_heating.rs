@@ -50,11 +50,18 @@ pub(crate) fn room_device_target(
     js_round((t.minimum_c + index.clamp(0., last) * t.step_c) * 1e9) / 1e9
 }
 #[derive(Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum IntervalHeaterPower {
+    Fixed { on_w: f64 },
+    Inverter,
+}
+#[derive(Clone, Deserialize)]
 pub struct Input {
     pub(crate) start_c: f64,
     pub(crate) start_stored_heat_c: f64,
     pub(crate) thermostats: Vec<Thermostat>,
     pub(crate) quarters: Vec<Quarter>,
+    pub(crate) interval_heaters: Option<Vec<IntervalHeaterPower>>,
 }
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Plan {
@@ -445,7 +452,7 @@ impl<'a> Search<'a> {
         );
         let mut best_score = f64::INFINITY;
         let mut best_watts = f64::INFINITY;
-        let (first_room, last_room) = if SHARED {
+        let (first_room, last_room) = if SHARED && !self.thermostats.is_empty() {
             let native_margin = self
                 .thermostats
                 .iter()
@@ -636,6 +643,36 @@ fn relay_choices(q: &Quarter) -> Vec<RelayChoice> {
     }
     rows
 }
+impl Input {
+    pub(crate) fn validate_interval_power(&self) -> Result<(), String> {
+        if let Some(heaters) = &self.interval_heaters {
+            if !self.thermostats.is_empty() {
+                return Err("Interval heating cannot contain native thermostat targets".into());
+            }
+            if self.quarters.iter().any(|q| {
+                q.relay_w.len() != heaters.len()
+                    || q.fixed_relays.len() != heaters.len()
+                    || q.relay_w.iter().any(|w| !w.is_finite() || *w < 0.)
+            }) {
+                return Err("Interval heater commands do not match their equipment".into());
+            }
+            for (i, heater) in heaters.iter().enumerate() {
+                if let IntervalHeaterPower::Fixed { on_w } = heater {
+                    if !on_w.is_finite()
+                        || *on_w <= 0.
+                        || self.quarters.iter().any(|q| q.relay_w[i] != *on_w)
+                    {
+                        return Err(
+                            "Fixed interval heater power differs from measured equipment draw"
+                                .into(),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
 pub fn plan(input: &Input) -> Result<Plan, String> {
     plan_with_memo_budget(input, 32 * 1024 * 1024)
 }
@@ -716,7 +753,9 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
         start_stored_heat_c,
         thermostats,
         quarters,
+        interval_heaters: _,
     } = input;
+    input.validate_interval_power()?;
     if quarters.iter().any(|q| {
         q.thermostat_power_w
             .as_ref()
@@ -905,11 +944,7 @@ fn plan_rows(input: &Input, payload_limit: usize, restrict: bool) -> Result<Opti
     if reachable.is_some() && search.unreached {
         return Ok(None);
     }
-    if quarters
-        .iter()
-        .all(|q| q.room_target.is_some() && q.relay_w.is_empty())
-        && !quarters.is_empty()
-    {
+    if quarters.iter().all(|q| q.room_target.is_some()) && !quarters.is_empty() {
         if let Some(reference) = literal_schedule(input, &quarter_thermostats) {
             if !dominates_reference(input, &result, &reference) {
                 result = reference;
@@ -961,12 +996,26 @@ fn literal_schedule(
             &mut committed_targets,
             &mut committed,
         );
+        let mut relay_w = 0.;
+        let relays: Vec<bool> = q
+            .relay_w
+            .iter()
+            .enumerate()
+            .map(|(j, watts)| {
+                let on = q.fixed_relays[j]
+                    .unwrap_or(state.temperature < target && relay_w + watts <= q.maximum_w + 1e-6);
+                if on {
+                    relay_w += watts;
+                }
+                on
+            })
+            .collect();
         project(
             &q.physics,
             thermostats,
             state,
             &targets,
-            0.,
+            relay_w,
             &mut projection,
         );
         let bounds = RoomBounds {
@@ -979,14 +1028,16 @@ fn literal_schedule(
             bounds,
             projection.state.temperature,
             projection.peak,
-            projection.power.iter().sum(),
+            relay_w + projection.power.iter().sum::<f64>(),
             0.,
         )?;
         state = projection.state;
-        result.power_w.push(projection.power.iter().sum());
+        result
+            .power_w
+            .push(relay_w + projection.power.iter().sum::<f64>());
         result.thermostat_w.push(projection.power.clone());
         result.targets_c.push(targets);
-        result.relays_on.push(vec![]);
+        result.relays_on.push(relays);
         result.temperature_c.push(state.temperature);
         result
             .shortfall_c

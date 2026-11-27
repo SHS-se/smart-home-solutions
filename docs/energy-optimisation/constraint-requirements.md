@@ -272,3 +272,21 @@ electrical demand must be distinct. Refactoring does not authorize restoring
 cable gating, EV departure concepts, or changing existing service priorities.
 Behavioral checks must exercise the published commands and projections against
 independent expectations. See [component boundaries and regression contracts](planner-component-boundaries.md).
+
+User requirement, 27 November 2026: room heating is a whole-quarter heat/no-heat
+program. The planner must not choose native device setpoints from predicted
+room temperatures. The app resolves a scheduled heating state against live
+ambient temperature and the thermostat's supported setting grid. Its target
+crosses the heating-call deadband to sustain heat, or stays below ambient to
+request no heat. Missing ambient holds the last setting. Native limits and live
+import safety remain authoritative.
+
+Fixed-full-load relays and Setpoint heaters with either fixed-full-load or
+duty-cycle characteristics consume their measured operating watts throughout
+an ON interval, and zero in an OFF interval. They cannot receive fractional
+power, minute-level thermostat cycling, or weather-dependent fixed watts.
+Inverter Setpoint heaters also receive Boolean interval instructions; only
+their measured electrical model may vary their expected ON draw. Comfort
+objectives and temperature forecasts remain planner inputs/outputs, separately
+from native actuator settings. This supersedes earlier shared-room relay
+controllers and numerical room-device setpoint scheduling.

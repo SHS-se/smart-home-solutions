@@ -11,8 +11,6 @@ import {
 import {
   isThermostat,
   type ThermostatInput,
-  nativeTarget,
-  type RoomThermostat,
 } from "./planner/thermostat.ts";
 import type { RoomHeatingPlan, RoomQuarter } from "./room-heating-schedule.ts";
 import type {
@@ -24,12 +22,18 @@ import type {
 } from "./rules-room-services.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
+import { roomHeater, roomHeaterDraw, roomHeaterState, roomHeaterCommand } from "./planner/room-heater.ts";
 
-/** Verification forecasts the same room setpoint it would execute in Controlling. */
+/** Verification forecasts the same interval heating it would execute in Controlling. */
 export function schedulableRoomThermostat(member: Member, scope: OptimisationSnapshot["operating_scope"]):
   member is Member & { thermostat: ThermostatInput } {
   const native = member.thermostat;
   if (!isThermostat(native)) return false;
+  // An interval command must be expressible in both directions on this native
+  // surface. Otherwise retain settings and measured demand rather than promise
+  // an OFF state that a thermostat at its frost minimum cannot carry out.
+  if (native.current_temperature_c - 1 <= native.minimum_c ||
+    native.current_temperature_c + 1 >= native.maximum_c) return false;
   if (native.hvac_action !== "off") return true;
   const mode = scope?.modes[scope.device_owners[member.key]];
   return member.category === "heating" && native.can_activate_heat === true &&
@@ -38,10 +42,10 @@ export function schedulableRoomThermostat(member: Member, scope: OptimisationSna
 
 /** Empirical room thermostats and comfort relays keep their measured duty profile.
  * An explicit retained switch instead fixes the relay's electrical state. */
-export function empiricalHeaterWatts(member: Member, slot: number, retained?: DeviceCommand): number {
-  if (member.control_type === "switch_schedule" && retained?.type === "switch_schedule") {
-    return retained.on_seconds > 0 ? member.active_power_w ?? 0 : 0;
-  }
+export function empiricalHeaterWatts(member: Member, slot: number, retained?: DeviceCommand, outdoorC: number | null = null): number {
+  const heater = roomHeater(member);
+  const state = heater ? roomHeaterState(heater, retained) : undefined;
+  if (state !== undefined) return state ? roomHeaterDraw(heater!, outdoorC)?.watts ?? heater!.power.on_w : 0;
   return Math.max(0, member.forecast_w_by_slot[slot]);
 }
 
@@ -67,27 +71,10 @@ export function electricalSource(
     : { kind: "empirical" };
 }
 
-export function retainedRoomTarget(
-  slot: Retained[number] | undefined,
-  zone: Zone,
-): number | null {
-  for (const key of zone.device_keys) {
-    const command = slot?.device_commands?.[key];
-    if (command?.type === "room_relay" && command.room_key === zone.key) {
-      return command.target_c;
-    }
-    if (command?.type === "setpoint" && command.room_target_c != null) {
-      return command.room_target_c;
-    }
-  }
-  return null;
-}
-
 export function compileRoomSchedule(
   snapshot: OptimisationSnapshot,
   zone: Zone,
-  members: Member[],
-  relays: Member[],
+  controlled: Member[],
   retained: Retained,
   remaining: number[],
   surplus: number[],
@@ -96,39 +83,13 @@ export function compileRoomSchedule(
 ) {
   const model = zone.model!, n = snapshot.slots.length;
   const shared = snapshot.schema_version >= 12;
-  const thermostats: RoomThermostat[] = members.map((m) => {
-    if (!schedulableRoomThermostat(m, snapshot.operating_scope)) {
-      throw new Error("Native thermostat evidence was not prepared");
-    }
-    return {
-      ...m.thermostat,
-      power_w: m.active_power_w!,
-      ...(m.weather_heating?.banded
-        ? { reservation_w: m.active_power_w! }
-        : {}),
-      sensor_offset_c: m.thermostat.current_temperature_c -
-        (zone.temperature_observation?.mean_c ?? zone.start_temperature_c!),
-    };
+  const heaters = controlled.map(member => {
+    const contract = roomHeater(member);
+    if (!contract) throw new Error(`${member.name}: no supported room heating contract`);
+    return contract;
   });
-  const actuators = shared
-    ? [
-      ...thermostats,
-      ...relays.map((m) => ({
-        relay: true,
-        power_w: m.active_power_w!,
-        sensor_offset_c: 0,
-        current_temperature_c: zone.start_temperature_c!,
-        minimum_c: 0,
-        maximum_c: 100,
-        step_c: 0.1,
-        target_temperature_c: zone.start_temperature_c!,
-        entity_id: m.key,
-        hvac_action: m.relay_on ? "heating" as const : "idle" as const,
-      })),
-    ]
-    : thermostats;
-  const weather = members.some((member) => member.weather_heating);
-  const controlled = [...members, ...relays];
+  // Native temperature settings are controller-owned. All planning inputs are
+  // interval-constant heat, including Setpoint equipment.
   const electricalUse = controlled.map(() => [] as HeatingModelSource[]);
   const clock = roomPlanClock(snapshot);
   const quarters: RoomQuarter[] = snapshot.slots.map((_slot, i) => {
@@ -151,28 +112,15 @@ export function compileRoomSchedule(
       0,
       Math.min(zone.maximum_power_w_by_slot[i], remaining[i]),
     );
-    const runningPower = weather || zone.model_source
-      ? controlled.map((member) => {
-        const profile = member.weather_heating;
-        return profile ? heatingDraw(profile, conditions.outdoor_c) : null;
-      })
-      : undefined;
-    if (zone.model_source && runningPower) {
-      for (const [j, member] of controlled.entries()) {
-        electricalUse[j].push(electricalSource(member, runningPower[j]));
-      }
+    const runningPower = heaters.map(heater => roomHeaterDraw(heater, conditions.outdoor_c));
+    if (zone.model_source) {
+      controlled.forEach((member, j) => electricalUse[j].push(electricalSource(member, runningPower[j])));
     }
-    const thermostatPower = weather
-      ? actuators.map((actuator, j) =>
-        runningPower?.[j]?.watts ?? actuator.power_w
-      )
-      : undefined;
     const transition = roomTransition(physics, conditions);
     return {
       hours,
       steps,
       transition,
-      ...(thermostatPower ? { thermostat_power_w: thermostatPower } : {}),
       step: roomTransition(physics, {
         ...conditions,
         hours: steps ? hours / steps : 0,
@@ -183,43 +131,10 @@ export function compileRoomSchedule(
       ),
       maximum_c: zone.comfort_max_c[i],
       maximum_w,
-      ...(shared && relays.length ? { relay_budget_w: maximum_w } : {}),
-      relay_w: shared ? [] : relays.map((m) => m.active_power_w ?? 0),
-      fixed_relays: shared ? [] : relays.map((m) => {
-        const c = retained[i]?.device_commands?.[m.key];
-        return c?.type === "switch_schedule" ? c.on_seconds > 0 : null;
-      }),
-      fixed_targets_c: [
-        ...members.map((m, j) => {
-          const c = retained[i]?.device_commands?.[m.key];
-          return c?.type === "setpoint"
-            ? nativeTarget(thermostats[j], c.target_c)
-            : null;
-        }),
-        ...(shared
-          ? relays.map((m) => {
-            const c = retained[i]?.device_commands?.[m.key];
-            return c?.type === "room_relay" && c.room_key === zone.key
-              ? c.target_c
-              : null;
-          })
-          : []),
-      ],
-      ...(shared
-        ? {
-          room_target: {
-            preferred_c: zone.target_c[i],
-            fixed_c: retainedRoomTarget(retained[i], zone),
-            fixed_switches: [
-              ...members.map(() => null),
-              ...relays.map((m) => {
-                const c = retained[i]?.device_commands?.[m.key];
-                return c?.type === "switch_schedule" ? c.on_seconds > 0 : null;
-              }),
-            ],
-          },
-        }
-        : {}),
+      relay_w: heaters.map((heater, j) => runningPower[j]?.watts ?? heater.power.on_w),
+      fixed_relays: controlled.map((member, j) => roomHeaterState(heaters[j], retained[i]?.device_commands?.[member.key]) ?? null),
+      fixed_targets_c: [],
+      ...(shared ? { room_target: { preferred_c: zone.target_c[i], fixed_c: null, fixed_switches: [] } } : {}),
       import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1,
       surplus_w: surplus[i],
@@ -236,60 +151,27 @@ export function compileRoomSchedule(
       ),
     };
   }
-  return { quarters, thermostats, actuators };
+  return { quarters, controlled, heaters, interval_heaters: heaters.map(heater =>
+    heater.power.kind === "fixed" ? {kind: "fixed" as const, on_w: heater.power.on_w} : {kind: "inverter" as const}) };
 }
 
 export function storeRoomCommands(
   result: RoomServices,
-  zone: Zone,
-  thermostats: RoomThermostat[],
-  members: Member[],
-  relays: Member[],
+  controlled: Member[],
   retained: Retained,
   plan: RoomHeatingPlan,
   quarters: RoomQuarter[],
-  shared: boolean,
 ) {
-  for (const member of [...members, ...relays]) {
+  for (const [index, member] of controlled.entries()) {
+    const heater = roomHeater(member);
+    if (!heater) throw new Error(`${member.name}: room heater contract changed`);
     result.commands[member.key] = [];
     result.power[member.key] = [];
-  }
-  for (let i = 0; i < quarters.length; i++) {
-    const q = quarters[i];
-    relays.forEach((m, r) => {
-      const on = plan.relays_on[i][r],
-        command = retained[i]?.device_commands?.[m.key];
-      const held = command?.type === "switch_schedule" ||
-        command?.type === "room_relay" && command.room_key === zone.key;
-      result.commands[m.key].push(
-        held ? command : shared
-          ? {
-            type: "room_relay",
-            room_key: zone.key,
-            target_c: plan.room_targets_c![i],
-          }
-          : { type: "switch_schedule", on_seconds: on ? 900 : 0 },
-      );
-      result.power[m.key].push(
-        shared
-          ? plan.thermostat_w[i][members.length + r]
-          : on
-          ? q.relay_w[r]
-          : 0,
-      );
-    });
-    members.forEach((m, j) => {
-      const command = retained[i]?.device_commands?.[m.key];
-      result.commands[m.key].push(
-        command?.type === "setpoint" ? command : {
-          type: "setpoint",
-          target_c: plan.targets_c[i][j],
-          minimum_c: thermostats[j].minimum_c,
-          maximum_c: thermostats[j].maximum_c,
-          ...(shared ? { room_target_c: plan.room_targets_c![i] } : {}),
-        },
-      );
-      result.power[m.key].push(plan.thermostat_w[i][j]);
-    });
+    for (let i = 0; i < quarters.length; i++) {
+      const heating = plan.relays_on[i][index];
+      const held = retained[i]?.device_commands?.[member.key];
+      result.commands[member.key].push(roomHeaterState(heater, held) !== undefined ? held! : roomHeaterCommand(heater, heating));
+      result.power[member.key].push(heating ? quarters[i].relay_w[index] : 0);
+    }
   }
 }

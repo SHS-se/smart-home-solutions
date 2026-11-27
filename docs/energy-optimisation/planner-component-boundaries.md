@@ -913,3 +913,38 @@ finishes the job. Deployment also requeues completed partial fits for active
 heat pumps. Heat or cool mode is unknown for most old hourly
 history, so summer cooling still appears in the warm bands.
 
+
+## Whole-interval room heating (27 November 2026)
+
+`planner/room-heater.ts` derives actuator command families and electrical laws
+from reviewed control/load types and measured running power. It creates no
+second editable capability record. Fixed and duty-cycle equipment has immutable
+ON watts; inverter equipment may select its measured weather draw. Native
+interval-heater contracts reject changed fixed watts. Search chooses Boolean
+states through the existing constant-input relay branch, including for native
+Setpoint equipment. It does not optimize device temperatures or relay duty.
+
+Connected replay carries the same constant input through heat, energy and
+reservation accounting. The final catalog stage compiles a deterministic literal
+Boolean program once using quarter-boundary temperatures. That frozen program
+is stored with the numerical input; stochastic paths evaluate its instructions
+without re-deciding them. A selected literal program therefore remains an
+executable Boolean schedule. The independent generic thermostat projector
+remains available for model-only reference tests.
+
+Switch actuators publish `switch_schedule` with 0 or 900 seconds. Native Setpoint
+actuators publish `heating_schedule` with a Boolean `heating` field and no numeric
+target. The app's native command resolver alone chooses a setting from current
+ambient temperature, strictly beyond a 1 C call margin on the supported grid.
+It refuses an unexpressible setting rather than silently clipping it. Per-device
+missing-data/continuity behavior, verification without writes, native Heat
+activation, explicit handover and shared live import priority remain in force.
+
+Without a usable room state/response, compatible accepted interval commands
+retain their original intervals. Other intervals hold existing settings with a
+visible room diagnostic; empirical demand remains forecast-only. Obsolete
+numeric targets and room-relay temperature controllers are never guessed into
+new Boolean instructions. Protected fixed-relay behavioral contracts retain
+their independent electricity and temperature assertions. Ordinary tests that
+required shared room-relay cycling or numeric room-device targets are superseded
+by the explicit 27 November requirement above.

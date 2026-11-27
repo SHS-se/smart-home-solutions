@@ -16,7 +16,7 @@ import type { OptimisationSnapshot, ThermalZonePlanningInput } from "./planner/p
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { isEquilibrium, storedHeat, usesHouse } from "./planner/models/room/thermal.ts";
 import { roomResponseEvidenceLimited } from "./planner/room-response.ts";
-import { heatingWatts } from "./planner/weather-heating.ts";
+import { roomHeater, roomHeaterDraw } from "./planner/room-heater.ts";
 
 /** Current preferences and measurements, by room key. */
 export interface RoomEvidence {
@@ -81,7 +81,7 @@ export function roomPlanningZones(
     let usable = model;
     const weatherPower = room.model_source && members.some(member => member.weather_heating) && outdoor
       ? outdoor.map(c => members.reduce((sum, member) => sum + (
-        (member.weather_heating ? heatingWatts(member.weather_heating, c) : null) ?? member.active_power_w ?? 0), 0))
+        (roomHeater(member) ? roomHeaterDraw(roomHeater(member)!, c)?.watts : null) ?? member.active_power_w ?? 0), 0))
       : undefined;
     if (model && room.connected_exchange && start !== null && outdoor && room.rated_power_w > 0) {
       // Current named exchange is projected jointly by the native room owner.

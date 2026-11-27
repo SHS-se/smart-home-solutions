@@ -2,7 +2,7 @@ import type { NativeRoomNetworkInput, NativeRoomNetworkOutput, NativeRoomNetwork
 import { z } from "zod";
 import type { NativeCommand, ReadyProblem } from "./ready-problem.ts";
 import { planningStage, type PlanningTrace } from "../planning-trace.ts";
-import type { RoomQuarter, RoomHeatingPlan } from "../room-heating-schedule.ts";
+import type { RoomQuarter, RoomHeatingPlan, IntervalHeaterPower } from "../room-heating-schedule.ts";
 import type { RoomThermostat } from "../planner/thermostat.ts";
 
 const age = z.discriminatedUnion("kind", [
@@ -268,7 +268,7 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean, mo
   let projectionFailure: Error | undefined;
   function invoke<T>(
     inputValue: unknown,
-    exportName: "planner_solve" | "planner_project" | "planner_complete" | "planner_room" | "planner_room_network" | "planner_room_network_forecast" | "planner_room_network_finalize" | "planner_room_network_header" | "planner_room_network_select" | "planner_room_network_replica" | "planner_room_network_merge",
+    exportName: "planner_solve" | "planner_project" | "planner_complete" | "planner_room" | "planner_room_network" | "planner_room_literal" | "planner_room_network_forecast" | "planner_room_network_finalize" | "planner_room_network_header" | "planner_room_network_select" | "planner_room_network_replica" | "planner_room_network_merge",
     parse: (value: unknown) => T,
     trace?: PlanningTrace,
   ) {
@@ -332,6 +332,12 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean, mo
     }
   }
   return {
+    roomNetworkLiteral(input: NativeRoomNetworkInput, trace?: PlanningTrace): RoomHeatingPlan[] {
+      const {outcome} = invoke(input, "planner_room_literal", value => nativeReady(roomPlan.array()).parse(value), trace);
+      if (outcome.kind === "failed") throw new Error(outcome.issue);
+      if (outcome.result.length !== input.rooms.length) throw new Error("Invalid frozen literal coverage");
+      return outcome.result as RoomHeatingPlan[];
+    },
     roomNetwork(input: NativeRoomNetworkInput, trace?: PlanningTrace): NativeRoomNetworkProposal {
       const { outcome } = invoke(input, "planner_room_network", value => roomNetworkProposalOutcome.parse(value), trace);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
@@ -369,7 +375,7 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean, mo
       validateNetworkCoverage(input.network,outcome.plan);
       return outcome.plan;
     },
-    room(input: { start_c: number; start_stored_heat_c: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[] }, trace?: PlanningTrace): RoomHeatingPlan {
+    room(input: { start_c: number; start_stored_heat_c: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[]; interval_heaters?: IntervalHeaterPower[] }, trace?: PlanningTrace): RoomHeatingPlan {
       const { outcome } = invoke(input, "planner_room", value => roomOutcome.parse(value), trace);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
       const plan = outcome.plan as RoomHeatingPlan;

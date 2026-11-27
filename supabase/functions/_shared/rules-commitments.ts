@@ -1,3 +1,4 @@
+import { roomHeater, roomHeaterState } from "./planner/room-heater.ts";
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 import type { NativeOwnerMask, NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.ts";
@@ -264,7 +265,10 @@ export function assertHeldCommands(snapshot: OptimisationSnapshot, original: Ret
     }
     for (const model of snapshot.device_models) {
       const command = old.device_commands?.[model.key];
-      if (!owners.has(commandOwner(snapshot, model)) && command?.type === model.control_type &&
+      const heater = roomHeater(model);
+      const compatible = heater ? roomHeaterState(heater, command) !== undefined :
+        model.category !== "heating" && command?.type === model.control_type;
+      if (!owners.has(commandOwner(snapshot, model)) && compatible &&
         !equal(command, actual[i]?.device_commands?.[model.key])) throw new Error(`Held ${model.key} command changed at ${old.start}`);
     }
   }

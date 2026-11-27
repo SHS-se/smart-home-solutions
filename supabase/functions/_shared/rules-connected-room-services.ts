@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { roomHeater } from "./planner/room-heater.ts";
 import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 import { connectedRoomHeaterSupported, roomResponseEvidenceLimited } from "./planner/room-response.ts";
 import {
@@ -71,20 +72,17 @@ function compileNetwork(
       ? zone === null && !!accepted?.[room.key]
       : connectedRoomHeaterSupported(nodes[node].model);
     return supported && !roomResponseEvidenceLimited(room.model_warnings) && room.model && room.start_temperature_c !== null &&
-      snapshot.device_models.filter((m) =>
-          room.device_keys.includes(m.key) &&
-          m.control_type === "switch_schedule"
-        ).length <= MAX_ROOM_RELAYS &&
+      snapshot.device_models.filter((m) => room.device_keys.includes(m.key)).length <= MAX_ROOM_RELAYS &&
       snapshot.device_models.filter((m) => room.device_keys.includes(m.key))
         .every((m) =>
-          (m.active_power_w ?? 0) > 0 &&
+          roomHeater(m) !== null &&
           !snapshot.slots.some((slot) =>
             unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)
           ) &&
           (m.control_type === "setpoint"
             ? schedulableRoomThermostat(m, snapshot.operating_scope)
             : m.control_type === "switch_schedule" &&
-              m.category === "heating" && typeof m.relay_on === "boolean")
+              m.category === "heating")
         );
   });
   const stage = zone
@@ -110,7 +108,7 @@ function compileNetwork(
     if (!members.length) return [];
     const watts = snapshot.slots.map((slot, i) => members.reduce((sum, member) => {
       if (unavailableOwner(snapshot, commandOwner(snapshot, member), slot.start)) return sum;
-      const draw = empiricalHeaterWatts(member, i, retained[i]?.device_commands?.[member.key]);
+      const draw = empiricalHeaterWatts(member, i, retained[i]?.device_commands?.[member.key], snapshot.outdoor_temperature_c?.[i] ?? null);
       return Number.isFinite(draw) ? sum + draw : sum;
     }, 0));
     return [{node: index, watts}];
@@ -145,8 +143,7 @@ function compileNetwork(
       ...compileRoomSchedule(
         snapshot,
         room,
-        thermostats,
-        relays,
+        [...thermostats, ...relays],
         retained,
         headroom,
         surplus,
@@ -249,7 +246,8 @@ function compileNetwork(
       input: {
         start_c: room.zone.start_temperature_c!,
         start_stored_heat_c: room.zone.start_stored_heat_c ?? 0,
-        thermostats: room.actuators,
+        thermostats: [],
+        interval_heaters: room.interval_heaters,
         quarters: room.quarters,
       },
     })),
@@ -313,14 +311,10 @@ function storePlans(
     const room = prepared.compiled[j], plan = output.plans[j];
     storeRoomCommands(
       result,
-      room.zone,
-      room.thermostats,
-      room.members,
-      room.relays,
+      room.controlled,
       retained,
       plan,
       room.quarters,
-      true,
     );
     result.room_power[room.zone.key] = plan.power_w;
     (result.expected_shortfall_c ??= {})[room.zone.key] = plan.shortfall_c;
@@ -382,6 +376,7 @@ export function compileConnectedRoomCatalog(
   ) return;
   const prepared = compileNetwork(inputs, null, result, accepted, disabled);
   if (!prepared) return;
+  prepared.native.literal = nativePlanner().roomNetworkLiteral(prepared.native);
   const forecast = network.forecast;
   if (!forecast || forecast.revision !== ROOM_NETWORK_WORK_REVISION) {
     throw new Error("Missing frozen joint forecast identity");

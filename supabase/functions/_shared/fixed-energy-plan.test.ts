@@ -17,7 +17,7 @@ Deno.test("native bookings retain manually reviewed EV current beyond the next h
 Deno.test("native bookings retain exact room relay and thermostat commands", () => {
   const p=input(commandSnapshot()); const source=runRulesPlanner(p).plan;
   const slots=structuredClone(source.plans.priority.slots); slots[6].device_commands!.relay={type:"switch_schedule",on_seconds:900};
-  slots[6].device_commands!.thermostat={type:"setpoint",target_c:22,minimum_c:20,maximum_c:24};
+  slots[6].device_commands!.thermostat={type:"heating_schedule",heating:true};
   slots[6].device_loads_w.relay=1000; slots[6].device_loads_w.thermostat=500;
   const plan=runRulesPlanner({...p,fixed_plan:booking([slots[6]])}).plan;
   assertEquals(plan.plans.priority.slots[6].device_commands,slots[6].device_commands);

@@ -19,6 +19,8 @@ export interface RoomQuarter extends ThermostatQuarter {
   export_sek_per_kwh: number;
   surplus_w: number;
 }
+export type IntervalHeaterPower = { kind: "fixed"; on_w: number } | { kind: "inverter" };
+
 export interface RoomHeatingPlan {
   power_w: number[];
   thermostat_w: number[][];
@@ -31,6 +33,6 @@ export interface RoomHeatingPlan {
 
 export const MAX_ROOM_RELAYS = 4;
 /** The search runs in the existing native kernel, including during admission. */
-export function planRoomHeating(startC: number, thermostats: readonly RoomThermostat[], quarters: RoomQuarter[], startStoredHeatC = 0, trace?: PlanningTrace): RoomHeatingPlan {
-  return nativePlanner(trace).room({ start_c: startC, start_stored_heat_c: startStoredHeatC, thermostats, quarters }, trace);
+export function planRoomHeating(startC: number, thermostats: readonly RoomThermostat[], quarters: RoomQuarter[], startStoredHeatC = 0, trace?: PlanningTrace, intervalHeaters?: IntervalHeaterPower[]): RoomHeatingPlan {
+  return nativePlanner(trace).room({ start_c: startC, start_stored_heat_c: startStoredHeatC, thermostats, quarters, interval_heaters: intervalHeaters }, trace);
 }
