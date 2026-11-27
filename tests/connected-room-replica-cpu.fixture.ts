@@ -40,6 +40,7 @@ export interface ConnectedReplicaCpuFixture {
   phase: ConnectedReplicaCpuPhase | "prepare";
   saved: Record<string, unknown>;
   subsequent?: Record<string, unknown>;
+  siblingCheckpoints?: Array<{ cursor: number; work: string }>;
   hypotheses: NativeRoomNetworkHypothesis[][];
 }
 /** All ordered prepare stages, encoded before the measured cold workers. */
@@ -103,7 +104,7 @@ function encodeReplicaFixture(fixture: ConnectedReplicaCpuFixture) {
   return new TextEncoder().encode(JSON.stringify(fixture));
 }
 
-async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"], partialWork: number) {
+async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"], partialWork: number, includeSiblings = false) {
   const planner = nativePlanner();
   const node_headers = input.beliefs.map((belief) =>
     planner.roomNetworkHeader({ belief })
@@ -114,33 +115,22 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
     seed: input.seed,
     identity: input.identity,
   };
-  const selections = planner.roomNetworkSelect({
-    ...header,
-    replica: 0,
-    local_draws: [0, 1],
-  });
-  const records = [
-    ...new Map(
-      selections.flatMap((draw) =>
-        draw.hypothesis_indexes.flatMap((index, node) =>
-          index === null ? [] : [
-            [`${node}:${index}`, {
-              node,
-              index,
-              json: JSON.stringify(input.beliefs[node].hypotheses[index]),
-            }] as const,
-          ]
-        )
-      ),
-    ).values(),
-  ];
-  const partial = planner.roomNetworkReplicaAdvance({
-    ...header,
-    replica: 0,
-    target_local_draws: 16,
-    max_work: partialWork,
-    selected_hypotheses: records,
-  }).work;
+  const checkpoint = async (replica: NativeRoomReplica) => {
+    const selections = planner.roomNetworkSelect({ ...header, replica, local_draws: [0, 1] });
+    const records = new Map<string, { node: number; index: number; json: string }>();
+    for (const draw of selections) {
+      draw.hypothesis_indexes.forEach((index, node) => {
+        if (index !== null) records.set(`${node}:${index}`, {
+          node, index, json: JSON.stringify(input.beliefs[node].hypotheses[index]),
+        });
+      });
+    }
+    const work = planner.roomNetworkReplicaAdvance({
+      ...header, replica, target_local_draws: 16, max_work: partialWork,
+      selected_hypotheses: [...records.values()],
+    }).work;
+    return { cursor: work.cursor, work: await packOwnedPlanningValue(work) };
+  };
   const saved = {
     dispatch: {
       phase: "integrate",
@@ -158,8 +148,10 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
     work: null,
   };
   return {
-    initial: {phase: "initial", saved, hypotheses: input.beliefs.map(b => b.hypotheses)} satisfies ConnectedReplicaCpuFixture,
-    resumed: {...saved, cursor: partial.cursor, work: await packOwnedPlanningValue(partial)},
+    initial: {phase: "initial", saved, hypotheses: input.beliefs.map(b => b.hypotheses),
+      siblingCheckpoints: includeSiblings ? await Promise.all(([1, 2, 3] as const).map(checkpoint)) : undefined,
+    } satisfies ConnectedReplicaCpuFixture,
+    resumed: {...saved, ...await checkpoint(0)},
   };
 }
 
@@ -187,7 +179,7 @@ export async function connectedDenseReplicaCpuInput() {
     assert(next.room_progress);
     next = prepareCapturedRoomProposals(capture, next.room_progress);
   }
-  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(12288 * (9 / 13) ** 2));
+  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(8192 * (9 / 13) ** 2), true);
   return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */
@@ -369,7 +361,7 @@ export async function connectedReplicaCpuInputs(): Promise<
     ),
   ) as Record<ConnectedReplicaCpuPhase, Uint8Array<ArrayBuffer>>;
 }
-export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture) {
+export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, replica = 0) {
   let checkpoint: Record<string, unknown> | undefined,
     requestBytes = 0,
     responseBytes = 0;
@@ -409,6 +401,8 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture) {
         const work = await unpackOwnedPlanningValue<
           NativeRoomNetworkReplicaWork
         >(checkpoint.p_work as string);
+        assertEquals(checkpoint.p_replica, replica);
+        assertEquals(work.replica, replica);
         assert(work.cursor > Number(fixture.saved.cursor));
         if (fixture.phase === "initial" && fixture.subsequent) {
           assertEquals(work.cursor, fixture.subsequent.cursor);

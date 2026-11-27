@@ -318,20 +318,29 @@ async function connectedAdmissionSample():Promise<Sample> {
   return {...sample,...checkConnectedAdmissionCpu(result),max_rss_kib:resourceUsage().maxRSS};
 }
 
-async function connectedReplicaSample():Promise<Sample> {
+async function connectedReplicaSample(siblingWave = false):Promise<Sample> {
   const fixture:ConnectedReplicaCpuFixture=await new Response(Deno.stdin.readable).json();
-  const requests = fixture.subsequent
-    ? [fixture, {...fixture, phase: "resumed" as const, saved: fixture.subsequent}]
-    : [fixture];
-  const actions = requests.map(request => ({request, replay: connectedReplicaCpuReplay(request)}));
+  let requests = [fixture];
+  if (siblingWave) {
+    assert(fixture.subsequent && fixture.siblingCheckpoints?.length === 3);
+    requests = [fixture.subsequent, ...fixture.siblingCheckpoints].map(subsequent => ({...fixture, subsequent}));
+  } else if (fixture.subsequent) {
+    requests.push({...fixture, phase: "resumed", saved: fixture.subsequent});
+  }
+  const actions = requests.map((request, index) => {
+    const replica = siblingWave ? index : 0;
+    return {request, replica, replay: connectedReplicaCpuReplay(request, replica)};
+  });
+  const send = async ({request, replica, replay}: typeof actions[number]) => {
+    const action = request.phase === "initial" || request.phase === "resumed" ? {kind:"replica",replica} : {kind:"advance"};
+    const response=await handleEnergyPlanningStep(new Request("https://cpu.test/plan",{method:"POST",
+      headers:{"x-shs-planning-secret":"cpu-test"},body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner:CONNECTED_REPLICA_CPU_OWNER,action})}),"cpu-test",()=>replay.db);
+    assertEquals(response.status,200,await response.clone().text());
+    assert((await response.json()).dispatch);
+  };
   const sample=await measure(async()=>{
-    for (const { request, replay } of actions) {
-      const action = request.phase === "initial" || request.phase === "resumed" ? {kind:"replica",replica:0} : {kind:"advance"};
-      const response=await handleEnergyPlanningStep(new Request("https://cpu.test/plan",{method:"POST",
-        headers:{"x-shs-planning-secret":"cpu-test"},body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage:"owned",owner:CONNECTED_REPLICA_CPU_OWNER,action})}),"cpu-test",()=>replay.db);
-      assertEquals(response.status,200,await response.clone().text());
-      assert((await response.json()).dispatch);
-    }
+    if (siblingWave) await Promise.all(actions.map(send));
+    else for (const action of actions) await send(action);
   });
   for (const {replay} of actions) await replay.check();
   return sample;
@@ -404,7 +413,7 @@ async function coldSample(kind:
     | "connected"
     | "connected-wide"
     | "connected-stiff"
-    | "connected-dense-pair"
+    | "connected-dense-pair" | "connected-dense-wave"
     | "connected-admission"
     | `connected-capture-${ConnectedCapturePhase}`
     | `connected-replica-${ConnectedReplicaCpuPhase | "prepare"}`,
@@ -456,6 +465,8 @@ if(Deno.args.includes("--connected-admission-fixture")) {
   await new Blob([await connectedDenseReplicaCpuInput()]).stream().pipeTo(Deno.stdout.writable);
 } else if(Deno.args.includes("--connected-dense-pair")) {
   console.log(JSON.stringify(await connectedReplicaSample()));
+} else if(Deno.args.includes("--connected-dense-wave")) {
+  console.log(JSON.stringify(await connectedReplicaSample(true)));
 } else if(Deno.args.includes("--connected-replica-fixture")) {
   const inputs=await connectedReplicaCpuInputs(),phase=(Deno.args[1]??"initial") as ConnectedReplicaCpuPhase;
   await new Blob([inputs[phase]]).stream().pipeTo(Deno.stdout.writable);
@@ -608,6 +619,12 @@ if(Deno.args.includes("--connected-admission-fixture")) {
   const denseCpu=median(denseSamples)*speed;
   console.log(JSON.stringify({stage:"connected-dense-cold-and-warm",baseline_cpu_ms:denseCpu}));
   assert(denseCpu<PREPARATION_BUDGET_MS,`Dense connected cold and warm actions used ${denseCpu.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);
+  // Four sibling requests can share one Edge isolate and its cumulative CPU allowance.
+  const waveSamples:number[]=[];
+  for(let run=0;run<RUNS;run++)waveSamples.push((await coldSample("connected-dense-wave",denseInput)).cpu_ms);
+  const waveCpu=median(waveSamples)*speed;
+  console.log(JSON.stringify({stage:"connected-dense-four-siblings",baseline_cpu_ms:waveCpu}));
+  assert(waveCpu<PREPARATION_BUDGET_MS,`Four connected sibling actions used ${waveCpu.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);
   const replicaInputs=await connectedReplicaCpuInputs();
   const replicaSamples=Object.fromEntries(CONNECTED_REPLICA_CPU_PHASES.map(phase=>[phase,[] as number[]])) as Record<ConnectedReplicaCpuPhase,number[]>;
   for(let run=0;run<RUNS;run++)for(const phase of CONNECTED_REPLICA_CPU_PHASES) {
