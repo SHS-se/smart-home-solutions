@@ -78,18 +78,23 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     state.guard = { cursor: saved.dispatch!.cursor, identity: saved.identity, phase: saved.dispatch!.phase };
     const header = await unpackOwnedPlanningValue<Header>(saved.header);
     const work = saved.work ? await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(saved.work) : undefined;
-    const planner = nativePlanner(trace), first = work?.statistics.trajectories ?? 0;
-    const draws = Array.from({ length: Math.min(4, saved.target_local_draws - first) }, (_, i) => first + i);
-    const selected = planner.roomNetworkSelect({ node_headers: header.node_headers, seed: header.seed,
-      replica: action.replica, local_draws: draws }, trace);
-    const records = new Map<string, { node: number; index: number }>();
-    for (const draw of selected) draw.hypothesis_indexes.forEach((index, node) => {
-      if (index !== null) records.set(`${node}:${index}`, { node, index });
-    });
-    const hypotheses = await rpc<NativeRoomNetworkSelectedHypothesis[] | null>("read_energy_forecast_records", {
-      p_replica: action.replica, p_slice_fence: saved.slice_fence, p_identity: saved.identity, p_records: [...records.values()],
-    });
-    if (!hypotheses) return { dispatch: null };
+    const planner = nativePlanner(trace);
+    let hypotheses: NativeRoomNetworkSelectedHypothesis[] | null = [];
+    // An in-flight path owns its sampled processes. Native yields at the next draw if it needs records.
+    if (work?.path == null) {
+      const first = work?.statistics.trajectories ?? 0;
+      const draws = Array.from({ length: Math.min(4, saved.target_local_draws - first) }, (_, i) => first + i);
+      const selected = planner.roomNetworkSelect({ node_headers: header.node_headers, seed: header.seed,
+        replica: action.replica, local_draws: draws }, trace);
+      const records = new Map<string, { node: number; index: number }>();
+      for (const draw of selected) draw.hypothesis_indexes.forEach((index, node) => {
+        if (index !== null) records.set(`${node}:${index}`, { node, index });
+      });
+      hypotheses = await rpc<NativeRoomNetworkSelectedHypothesis[] | null>("read_energy_forecast_records", {
+        p_replica: action.replica, p_slice_fence: saved.slice_fence, p_identity: saved.identity, p_records: [...records.values()],
+      });
+      if (!hypotheses) return { dispatch: null };
+    }
     const advanced = planner.roomNetworkReplicaAdvance({ ...header, identity: saved.identity, replica: action.replica,
       target_local_draws: saved.target_local_draws,
       // A warm Edge execution may serve another replica before retiring. Leave

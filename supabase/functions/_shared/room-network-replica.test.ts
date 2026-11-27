@@ -2,6 +2,9 @@ import { nativeForecastTotals } from "./planner-wasm/core.ts";
 import { z } from "zod";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
+import { advanceOwnedPlanningWorker } from "./owned-planning-worker.ts";
+import { packOwnedPlanningValue, unpackOwnedPlanningValue } from "./owned-planning-codec.ts";
+import { PlanningTrace } from "./planning-trace.ts";
 import { syntheticJointRoomForecast } from "./room-network-forecast.fixture.ts";
 import type {
   NativeRoomNetworkAdvanceInput,
@@ -10,7 +13,7 @@ import type {
 } from "./room-network-contract.ts";
 
 /** Independent synthetic data, including two parameter modes and rare resets. */
-function fixture(reset = false) {
+function fixture(scenario: "ordinary" | "resets" | "stiff" = "ordinary") {
   const input = syntheticJointRoomForecast(2, .3, .5, .01);
   input.target_trajectories = 16;
   for (const [node, belief] of input.beliefs.entries()) {
@@ -26,7 +29,16 @@ function fixture(reset = false) {
     other.log_weight = -.7;
     other.posterior.temperature_c += .4;
     belief.hypotheses.push(other);
-    if (reset) {
+    if (scenario === "stiff") {
+      for (const h of belief.hypotheses) {
+        h.posterior.log_rates = [Math.log(1100)];
+        h.posterior.log_centers = [Math.log(1000)];
+        for (const edge of h.incoming) {
+          if (edge.kind === "log_ou") edge.mean_log_per_h = Math.log(1000);
+        }
+      }
+    }
+    if (scenario === "resets") {
       belief.reset_priors = [{
         from: 1 - node,
         center_mean: Math.log(.3),
@@ -106,18 +118,7 @@ function replicas(
 for (const scenario of ["ordinary", "resets", "stiff"] as const) {
   const resets = scenario === "resets";
   Deno.test(`indexed replicas complete and preserve full-population paths through shuffled JSON resumes (${scenario})`, () => {
-    const input = fixture(resets), planner = nativePlanner();
-    if (scenario === "stiff") {
-      for (const belief of input.beliefs) {
-        for (const h of belief.hypotheses) {
-          h.posterior.log_rates = [Math.log(1100)];
-          h.posterior.log_centers = [Math.log(1000)];
-          for (const edge of h.incoming) {
-            if (edge.kind === "log_ou") edge.mean_log_per_h = Math.log(1000);
-          }
-        }
-      }
-    }
+    const input = fixture(scenario), planner = nativePlanner();
     const full = planner.roomNetworkAdvance({
       ...input,
       max_minute_steps: 100000,
@@ -171,6 +172,65 @@ for (const scenario of ["ordinary", "resets", "stiff"] as const) {
         replicas: [workers[0], ...workers.slice(0, 3)],
       })
     );
+  });
+
+  Deno.test(`owned replica reads its catalog only at a draw boundary (${scenario})`, async () => {
+    const planner = nativePlanner(), { network, seed, identity, beliefs } = fixture(scenario);
+    const node_headers = beliefs.map((belief) => planner.roomNetworkHeader({ belief }));
+    const header = await packOwnedPlanningValue({ network, seed, node_headers });
+    const records = beliefs.flatMap((belief, node) => belief.hypotheses.map((h, index) => ({ node, index, json: JSON.stringify(h) })));
+    const target = 5, replica = 0 as const;
+    const input = { network, seed, identity, node_headers, replica, target_local_draws: target, selected_hypotheses: records };
+    const expected = planner.roomNetworkReplicaAdvance({ ...input, max_work: 131072 });
+    assert(expected.reached_target);
+    let stored = planner.roomNetworkReplicaAdvance({ ...input, max_work: 1 }).work;
+    assert(stored.path != null);
+    const partialCursor = stored.cursor;
+    const owner = { job_id: "synthetic-job", home_id: "synthetic-home", fence: 1 };
+    const dispatch = { phase: "integrate" as const, cursor: 1, round: 1, target: target * 4, replicas: [replica] };
+    let sliceFence = 0;
+
+    async function step(acceptCheckpoint: boolean) {
+      const rpcCalls: string[] = [], nativeCalls: string[] = [];
+      const trace = new PlanningTrace("synthetic", message => {
+        const event = JSON.parse(message);
+        if (event.stage === "wasm_execute" && event.phase === "start") nativeCalls.push(event.export);
+      });
+      const response = await advanceOwnedPlanningWorker({ async rpc(name, args) {
+        rpcCalls.push(name);
+        assertEquals(args.p_fence, owner.fence);
+        if (name === "claim_energy_forecast_replica") return { error: null, data: { dispatch,
+          cursor: stored.cursor, work: await packOwnedPlanningValue(stored), header, identity,
+          round: 1, slice_fence: ++sliceFence, target_local_draws: target } };
+        assertEquals(args.p_slice_fence, sliceFence);
+        if (name === "read_energy_forecast_records") {
+          const requested = args.p_records as Array<{node: number; index: number}>;
+          return { error: null, data: requested.map(({node, index}) => records.find(r => r.node === node && r.index === index)) };
+        }
+        assertEquals(name, "checkpoint_energy_forecast_replica");
+        assertEquals(args.p_cursor, stored.cursor);
+        if (!acceptCheckpoint) return { error: null, data: null };
+        stored = await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(args.p_work as string);
+        assertEquals(args.p_next_cursor, stored.cursor);
+        assertEquals(args.p_completed, stored.statistics.trajectories);
+        return { error: null, data: dispatch };
+      } }, owner, { kind: "replica", replica }, trace);
+      assertEquals(response.dispatch, acceptCheckpoint ? dispatch : null);
+      return { rpcCalls, nativeCalls };
+    }
+    const resume = { rpcCalls: ["claim_energy_forecast_replica", "checkpoint_energy_forecast_replica"],
+      nativeCalls: ["planner_room_network_replica"] };
+    assertEquals(await step(false), resume);
+    assertEquals(stored.cursor, partialCursor);
+    owner.fence++;
+    assertEquals(await step(true), resume);
+    assertEquals(stored.statistics.trajectories, 1);
+    assertEquals(stored.path, null);
+    assertEquals(await step(true), {
+      rpcCalls: ["claim_energy_forecast_replica", "read_energy_forecast_records", "checkpoint_energy_forecast_replica"],
+      nativeCalls: ["planner_room_network_select", "planner_room_network_replica"],
+    });
+    assertEquals(stored, expected.work);
   });
 }
 Deno.test("deterministic catalog uses one exact replica and rejects duplicate execution", () => {
