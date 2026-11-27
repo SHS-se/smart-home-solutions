@@ -240,8 +240,9 @@ only their pages, without pruning hypotheses or rebuilding probability weights
 in SQL. Immutable network/context and opaque numerical checkpoints travel as gzip
 payloads between the database and worker.
 
-Only integration fans out: at most four forecast replicas run in parallel, and
-the caller awaits each wave. These are distinct from the inference replicas.
+Integration schedules up to four forecast replicas in groups of at most two
+concurrent worker requests. The caller awaits each group and checks the shared
+deadline before launching the next. These are distinct from the inference replicas.
 An exchange shares a 24-call allowance across every worker stage and replica,
 reserving six calls for upstream hops within Supabase's
 [30-call per-trace limit](https://supabase.com/docs/guides/functions/recursive-functions).

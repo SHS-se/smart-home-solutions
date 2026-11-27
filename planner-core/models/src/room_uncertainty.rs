@@ -167,9 +167,32 @@ pub fn thermal_noise_root(
         for i in 0..n {
             e[i * n + i] = 1.;
         }
+        // All Taylor terms have the same right factor. Omit its structural
+        // zeros while accumulating each output in the original inner-index order.
+        let generator_rows: Vec<Vec<(usize, f64)>> = a
+            .chunks_exact(n)
+            .map(|row| {
+                row.iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|&(_, coefficient)| coefficient != 0.)
+                    .collect()
+            })
+            .collect();
         let mut term = e.clone();
+        let mut product = vec![0.; n * n];
         for order in 1..=24 {
-            term = multiply(&term, &a, n);
+            product.fill(0.);
+            for (source, target) in term.chunks_exact(n).zip(product.chunks_exact_mut(n)) {
+                for (&value, coefficients) in source.iter().zip(&generator_rows) {
+                    if value != 0. {
+                        for &(column, coefficient) in coefficients {
+                            target[column] += value * coefficient;
+                        }
+                    }
+                }
+            }
+            std::mem::swap(&mut term, &mut product);
             for v in &mut term {
                 *v /= order as f64;
             }
@@ -177,12 +200,14 @@ pub fn thermal_noise_root(
                 *v += t;
             }
         }
-        for _ in 0..squares {
+        for step in 0..squares {
             let increment = multiply(&multiply(&e, &covariance, n), &transpose(&e, n), n);
             for (v, d) in covariance.iter_mut().zip(increment) {
                 *v += d;
             }
-            e = multiply(&e, &e, n);
+            if step + 1 < squares {
+                e = multiply(&e, &e, n);
+            }
         }
     }
     covariance_root(&covariance.chunks(n).map(|r| r.to_vec()).collect::<Vec<_>>())
@@ -215,6 +240,28 @@ mod tests {
             };
             assert!((root[0][0] * root[0][0] - expected).abs() < 1e-12, "{loss}");
         }
+    }
+    #[test]
+    fn sparse_scaled_diffusion_preserves_dense_accumulation_bits() {
+        // Synthetic one-way three-room chain with five covariance doublings.
+        // The full dense Taylor product supplies the exact reference values.
+        let generator = [-13., 12., 0., 0., -3., 2., 0., 0., -1.];
+        let root = thermal_noise_root(&generator, &[0.4, 0.2, 0.7], 0.25).unwrap();
+        let actual: Vec<_> = root.iter().flatten().map(|value| value.to_bits()).collect();
+        assert_eq!(
+            actual,
+            [
+                0x3fc6861bd8e1ee37,
+                0,
+                0,
+                0x3fbdebf9fae36e2d,
+                0x3fc1cd208c17592a,
+                0,
+                0x3fb55673d6278594,
+                0x3fbff06d18fd1004,
+                0x3fd5b8f235aad185,
+            ]
+        );
     }
     #[test]
     fn coupled_noise_preserves_common_and_difference_modes() {

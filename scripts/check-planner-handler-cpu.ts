@@ -30,7 +30,7 @@ import type { PreparedRulesInput, SolvedRulesInput } from "../supabase/functions
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { RULES_MODEL_VERSION } from "../supabase/functions/_shared/rules-planner-identity.ts";
-import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
+import { OWNED_WORKER_REPLICA_CONCURRENCY, RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
 import { createDeviceLearningReplay } from "../supabase/functions/_shared/device-learning-replay.ts";
@@ -49,7 +49,7 @@ const PREPARATION_BUDGET_MS = 1000;
 const BASELINE_REFERENCE_MS = 340;
 const REFERENCE_ROUNDS = 400;
 
-type Sample = { cpu_ms: number; elapsed_ms: number; wasm_memory_bytes?: number; max_rss_kib?: number; total_cpu_ms?: number; total_elapsed_ms?:number; requests?: number; trajectories?: number; replayed_paths?:number };
+type Sample = { cpu_ms: number; elapsed_ms: number; wasm_memory_bytes?: number; max_rss_kib?: number; total_cpu_ms?: number; total_elapsed_ms?:number; requests?: number; trajectories?: number; replayed_paths?:number; group_cpu_ms?: number[] };
 
 const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> => {
   const before = cpuUsage();
@@ -318,17 +318,19 @@ async function connectedAdmissionSample():Promise<Sample> {
   return {...sample,...checkConnectedAdmissionCpu(result),max_rss_kib:resourceUsage().maxRSS};
 }
 
-async function connectedReplicaSample(siblingWave = false):Promise<Sample> {
+async function connectedReplicaSample(mode: "sequential" | "wave" | "resumed" = "sequential"):Promise<Sample> {
   const fixture:ConnectedReplicaCpuFixture=await new Response(Deno.stdin.readable).json();
   let requests = [fixture];
-  if (siblingWave) {
+  if (mode !== "sequential") {
     assert(fixture.subsequent && fixture.siblingCheckpoints?.length === 3);
-    requests = [fixture.subsequent, ...fixture.siblingCheckpoints].map(subsequent => ({...fixture, subsequent}));
+    requests = [fixture.subsequent, ...fixture.siblingCheckpoints].map(subsequent => mode === "wave"
+      ? {...fixture, subsequent}
+      : {...fixture, phase: "resumed", saved: {...fixture.saved, ...subsequent}, subsequent: undefined});
   } else if (fixture.subsequent) {
     requests.push({...fixture, phase: "resumed", saved: fixture.subsequent});
   }
   const actions = requests.map((request, index) => {
-    const replica = siblingWave ? index : 0;
+    const replica = mode === "sequential" ? 0 : index;
     return {request, replica, replay: connectedReplicaCpuReplay(request, replica)};
   });
   const send = async ({request, replica, replay}: typeof actions[number]) => {
@@ -338,12 +340,18 @@ async function connectedReplicaSample(siblingWave = false):Promise<Sample> {
     assertEquals(response.status,200,await response.clone().text());
     assert((await response.json()).dispatch);
   };
+  const groups:number[]=[];
   const sample=await measure(async()=>{
-    if (siblingWave) await Promise.all(actions.map(send));
-    else for (const action of actions) await send(action);
+    if (mode === "wave") await Promise.all(actions.map(send));
+    else if (mode === "resumed") {
+      for (let first = 0; first < actions.length; first += OWNED_WORKER_REPLICA_CONCURRENCY) {
+        const group = actions.slice(first, first + OWNED_WORKER_REPLICA_CONCURRENCY);
+        groups.push((await measure(async () => { await Promise.all(group.map(send)); })).cpu_ms);
+      }
+    } else for (const action of actions) await send(action);
   });
-  for (const {replay} of actions) await replay.check();
-  return sample;
+  for (const {replay} of actions) await replay.check(mode === "resumed");
+  return groups.length ? {...sample, group_cpu_ms: groups} : sample;
 }
 
 /** Actual durable stage, including RPC JSON, gzip/numeric decode, qualification,
@@ -413,7 +421,7 @@ async function coldSample(kind:
     | "connected"
     | "connected-wide"
     | "connected-stiff"
-    | "connected-dense-pair" | "connected-dense-wave"
+    | "connected-dense-pair" | "connected-dense-wave" | "connected-scaled-resumes"
     | "connected-admission"
     | `connected-capture-${ConnectedCapturePhase}`
     | `connected-replica-${ConnectedReplicaCpuPhase | "prepare"}`,
@@ -462,11 +470,13 @@ if(Deno.args.includes("--connected-admission-fixture")) {
 } else if(Deno.args.includes("--connected-admission")) {
   console.log(JSON.stringify(await connectedAdmissionSample()));
 } else if(Deno.args.includes("--connected-dense-fixture")) {
-  await new Blob([await connectedDenseReplicaCpuInput()]).stream().pipeTo(Deno.stdout.writable);
+  await new Blob([await connectedDenseReplicaCpuInput(Deno.args.includes("--scaled-covariance"))]).stream().pipeTo(Deno.stdout.writable);
 } else if(Deno.args.includes("--connected-dense-pair")) {
   console.log(JSON.stringify(await connectedReplicaSample()));
 } else if(Deno.args.includes("--connected-dense-wave")) {
-  console.log(JSON.stringify(await connectedReplicaSample(true)));
+  console.log(JSON.stringify(await connectedReplicaSample("wave")));
+} else if(Deno.args.includes("--connected-scaled-resumes")) {
+  console.log(JSON.stringify(await connectedReplicaSample("resumed")));
 } else if(Deno.args.includes("--connected-replica-fixture")) {
   const inputs=await connectedReplicaCpuInputs(),phase=(Deno.args[1]??"initial") as ConnectedReplicaCpuPhase;
   await new Blob([inputs[phase]]).stream().pipeTo(Deno.stdout.writable);
@@ -625,6 +635,16 @@ if(Deno.args.includes("--connected-admission-fixture")) {
   const waveCpu=median(waveSamples)*speed;
   console.log(JSON.stringify({stage:"connected-dense-four-siblings",baseline_cpu_ms:waveCpu}));
   assert(waveCpu<PREPARATION_BUDGET_MS,`Four connected sibling actions used ${waveCpu.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);
+  const scaledInput = await connectedDenseReplicaCpuInput(true), peakGroups:number[]=[];
+  for (let run=0;run<RUNS;run++) {
+    const sample = await coldSample("connected-scaled-resumes", scaledInput);
+    assert(sample.group_cpu_ms && sample.group_cpu_ms.length === Math.ceil(4 / OWNED_WORKER_REPLICA_CONCURRENCY));
+    peakGroups.push(Math.max(...sample.group_cpu_ms));
+    console.log(JSON.stringify({run,stage:"connected-scaled-resumes",group_cpu_ms:sample.group_cpu_ms}));
+  }
+  const peakGroupCpu = median(peakGroups) * speed;
+  console.log(JSON.stringify({stage:"connected-scaled-resumes",baseline_peak_group_cpu_ms:peakGroupCpu}));
+  assert(peakGroupCpu<PREPARATION_BUDGET_MS,`Resumed connected group used ${peakGroupCpu.toFixed(1)} baseline ms; budget is ${PREPARATION_BUDGET_MS} ms`);
   const replicaInputs=await connectedReplicaCpuInputs();
   const replicaSamples=Object.fromEntries(CONNECTED_REPLICA_CPU_PHASES.map(phase=>[phase,[] as number[]])) as Record<ConnectedReplicaCpuPhase,number[]>;
   for(let run=0;run<RUNS;run++)for(const phase of CONNECTED_REPLICA_CPU_PHASES) {

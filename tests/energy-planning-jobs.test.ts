@@ -1999,7 +1999,7 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
         } finally {active--;}
       });
     }
-    assert(receipt?.state==='published',JSON.stringify(receipt)); assert(maxActive<=4);
+    assert(receipt?.state==='published',JSON.stringify(receipt)); assert(maxActive<=2);
     const compileBoundary=stageCheckpoints.findIndex(stage=>stage.pending);
     assert(compileBoundary>=0,'final proposal is durably checkpointed before forecast compilation');
     assertEquals(stageCheckpoints[compileBoundary].next_room,connected.thermal_zones!.length);

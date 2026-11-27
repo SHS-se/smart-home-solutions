@@ -194,6 +194,8 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
 // Reserve6 for upstream portal/ingest hops and shared request-chain overhead.
 // This is a transport allowance, never a numerical/model completion limit.
 export const OWNED_WORKER_CALLS_PER_EXCHANGE = 24;
+// Concurrent HTTP requests may share the same Edge isolate's CPU allowance.
+export const OWNED_WORKER_REPLICA_CONCURRENCY = 2;
 /** Drain bounded compact waves within the existing exchange deadline. Failed
  * siblings do not discard successful SQL checkpoints; the next owner resumes. */
 export async function advanceOwnedPlanning(owner: OwnedPlanningOwner, connection: WorkerConnection,
@@ -216,18 +218,21 @@ export async function advanceOwnedPlanning(owner: OwnedPlanningOwner, connection
   while (current.dispatch && current.dispatch.phase !== "ready" && !current.busy &&
     bounded.deadline - performance.now() > 1500 && callsRemaining > 0) {
     if (current.dispatch.phase === "integrate" && current.dispatch.replicas.length) {
-      if (callsRemaining < current.dispatch.replicas.length + 1) break;
-      const wave = await Promise.allSettled(current.dispatch.replicas.map(replica => call({ kind: "replica", replica })));
-      let failure: unknown;
-      let latest: OwnedPlanningDispatch | null = current.dispatch;
-      let busy = false;
-      for (const result of wave) {
-        if (result.status === "rejected") { failure ??= result.reason; continue; }
-        busy ||= result.value.busy === true;
-        if (!result.value.dispatch) latest = null;
+      const replicas = current.dispatch.replicas;
+      if (callsRemaining < replicas.length + 1) break;
+      for (let first = 0; first < replicas.length; first += OWNED_WORKER_REPLICA_CONCURRENCY) {
+        if (bounded.deadline - performance.now() <= 1500) return current;
+        const group = replicas.slice(first, first + OWNED_WORKER_REPLICA_CONCURRENCY);
+        const results = await Promise.allSettled(group.map(replica => call({ kind: "replica", replica })));
+        let latest: OwnedPlanningDispatch | null = current.dispatch;
+        let busy = false;
+        for (const result of results) {
+          if (result.status === "rejected") throw result.reason;
+          busy ||= result.value.busy === true;
+          if (!result.value.dispatch) latest = null;
+        }
+        if (!latest || busy) return { dispatch: latest, busy };
       }
-      if (failure) throw failure;
-      if (!latest || busy) return { dispatch: latest, busy };
       // Read compact canonical counts once after all writers returned. No large
       // statistics are fetched until the balanced barrier is complete.
     }

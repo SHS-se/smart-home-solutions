@@ -12,6 +12,7 @@ import {
 import type { ModelDatabase } from "../supabase/functions/_shared/device-model-store.ts";
 import type {
   NativeRoomNetworkHypothesis,
+  NativeRoomNetworkReplicaAdvanceInput,
   NativeRoomNetworkReplicaWork,
   NativeRoomReplica,
 } from "../supabase/functions/_shared/room-network-contract.ts";
@@ -155,15 +156,34 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
   };
 }
 
-/** A cold request and a resumed request on the same warm worker. The source
- * is the independently generated 13-room, 13,312-particle admission fixture. */
-export async function connectedDenseReplicaCpuInput() {
+const DENSE_REPLICA_WORK = Math.floor(8192 * (9 / 13) ** 2);
+
+/** Independent 13-room, 13,312-particle admission fixture for cold and resumed workers. */
+export async function connectedDenseReplicaCpuInput(scaledCovariance = false) {
   const frozen = new Map<string, ConnectedRoomResponse>();
   const fixture = JSON.parse(new TextDecoder().decode(connectedAdmissionCpuInput((key, model) => frozen.set(key, model))));
   const {serialized} = await runConnectedAdmissionCpu(fixture);
   const capture = JSON.parse(serialized).input as CapturedRulesInput;
   const nodes = capture.snapshot.room_network_capture!.rooms.map(room => {
     const response = frozen.get(room.key)!, belief = response.process_belief!;
+    if (scaledCovariance && belief.initial_incoming.length === 7) {
+      // Seven stochastic 3/h exchanges trigger covariance scaling at a one-minute
+      // step while the ordinary thermal generator still charges one minute of work.
+      const center = Math.log(3);
+      for (const edge of [...response.incoming, ...belief.initial_incoming]) {
+        assert(edge.kind === "log_ou");
+        edge.mean_log_per_h = center;
+      }
+      for (const prior of belief.reset_priors) prior.center_mean = center;
+      for (const h of belief.hypotheses) {
+        h.posterior.log_rates.fill(center);
+        h.posterior.log_centers!.fill(center);
+        for (const edge of h.incoming) {
+          assert(edge.kind === "log_ou");
+          edge.mean_log_per_h = center;
+        }
+      }
+    }
     const posterior = belief.hypotheses[0].posterior;
     return {
       key: room.key, model: {...response, reference_state: posterior, process_belief: undefined},
@@ -179,7 +199,7 @@ export async function connectedDenseReplicaCpuInput() {
     assert(next.room_progress);
     next = prepareCapturedRoomProposals(capture, next.room_progress);
   }
-  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(8192 * (9 / 13) ** 2), true);
+  const pair = await replicaCpuPair(next.forecast.nativeInput, DENSE_REPLICA_WORK, true);
   return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */
@@ -395,7 +415,7 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, r
   };
   return {
     db,
-    async check() {
+    async check(scaledResume = false) {
       assert(checkpoint, "actual worker checkpoints its bounded stage");
       if (fixture.phase === "initial" || fixture.phase === "resumed") {
         const work = await unpackOwnedPlanningValue<
@@ -407,6 +427,25 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, r
         if (fixture.phase === "initial" && fixture.subsequent) {
           assertEquals(work.cursor, fixture.subsequent.cursor);
           assertEquals(work, await unpackOwnedPlanningValue(fixture.subsequent.work as string));
+        }
+        if (scaledResume) {
+          type Header = Pick<NativeRoomNetworkReplicaAdvanceInput, "network" | "node_headers" | "seed" | "identity">;
+          const header = await unpackOwnedPlanningValue<Header>(fixture.saved.header as string);
+          const previous = await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(fixture.saved.work as string);
+          const path = previous.path as { quarter_rates: number[][][] };
+          assert(previous.pending && path, "resume both conditional reset strata");
+          assert(header.node_headers.every(node => node.thermal_noise_c2_per_h > 0));
+          const rates = path.quarter_rates.at(-1)!;
+          const hours = header.network.hours[previous.slot], dt = hours / Math.ceil(hours * 60);
+          const outgoing = rates.map(edges => edges.reduce((a, b) => a + b, 0));
+          assert(header.network.nodes.some((node, i) => (node.outdoor_per_h + 2 * outgoing[i]) * dt > .25));
+          assert(header.network.nodes.every((node, i) =>
+            Math.max(node.outdoor_per_h + outgoing[i], node.lag_h > 0 ? 1 / node.lag_h : 0) * dt < 1));
+          const reference = nativePlanner().roomNetworkReplicaAdvance({
+            ...header, replica: work.replica, work: previous, target_local_draws: Number(fixture.saved.target_local_draws),
+            max_work: DENSE_REPLICA_WORK, selected_hypotheses: [],
+          });
+          assertEquals(work, reference.work);
         }
         const path = work.path as
           | { states: Array<{ temperatures: number[] }> }

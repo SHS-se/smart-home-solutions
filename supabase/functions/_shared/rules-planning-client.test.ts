@@ -246,7 +246,7 @@ Deno.test("worker failures preserve retry, recapture and terminal disposition ac
 });
 
 
-Deno.test("owned dispatch awaits at most four replica writers and preserves successful siblings when one fails", async () => {
+Deno.test("owned dispatch awaits a failed writer's sibling before leaving unstarted replicas for the next exchange", async () => {
   const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
   const owner = { home_id:'synthetic-home',job_id:'synthetic-job',fence:1 };
   const done: number[] = []; let active=0,maxActive=0,requests=0;
@@ -262,7 +262,7 @@ Deno.test("owned dispatch awaits at most four replica writers and preserves succ
     return Response.json({protocol:RULES_PLANNING_PROTOCOL,request_id:connection.requestId,stage:'owned',
       dispatch:{phase:'integrate',cursor:8,target:64,round:1,replicas:[]}});
   }),EnergyPlanningError,'synthetic_retry');
-  assertEquals(maxActive,4);assertEquals(active,0);assertEquals(done.sort(),[0,1,2,3]);assertEquals(requests,5);
+  assertEquals(maxActive,2);assertEquals(active,0);assertEquals(done.sort(),[0,1]);assertEquals(requests,3);
 });
 
 Deno.test("owned dispatch stops launching waves near the shared deadline and rejects malformed replica lists", async () => {
@@ -290,6 +290,58 @@ Deno.test("owned exchange shares its hosted call allowance across fan-out and ba
   assertEquals(result.dispatch?.phase,'integrate');
   assertEquals(replicaCalls%4,0);assertEquals(calls,21);assertEquals(calls<=OWNED_WORKER_CALLS_PER_EXCHANGE,true);
   assertEquals(OWNED_WORKER_CALLS_PER_EXCHANGE<30,true);
+});
+Deno.test("owned dispatch gives each listed replica one turn and reads the barrier after the last pair", async () => {
+  const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
+  const replicas = [3, 0, 2, 1];
+  const started: number[] = [], finished: number[] = [];
+  let advances = 0, active = 0, peak = 0;
+  const reply = (phase: string) => Response.json({ protocol: RULES_PLANNING_PROTOCOL, request_id: connection.requestId, stage: 'owned',
+    dispatch: { phase, cursor: 8, target: 64, round: 1, replicas: phase === 'ready' ? [] : replicas } });
+  const result = await advanceOwnedPlanning({home_id:'synthetic',job_id:'synthetic',fence:1},connection,async(_url,init)=>{
+    const { action } = JSON.parse(String(init?.body));
+    if (action.kind === 'advance') {
+      assertEquals(active, 0);
+      if (++advances === 1) return reply('integrate');
+      assertEquals(finished, replicas);
+      return reply('ready');
+    }
+    if (started.length === 2) assertEquals(finished, replicas.slice(0, 2));
+    started.push(action.replica);
+    peak = Math.max(peak, ++active);
+    await Promise.resolve();
+    active--;
+    finished.push(action.replica);
+    return reply('integrate');
+  });
+  assertEquals(result.dispatch?.phase, 'ready');
+  assertEquals(started, replicas);
+  assertEquals(peak, 2);
+  assertEquals(advances, 2);
+});
+
+Deno.test("owned dispatch leaves the next pair unclaimed when the current pair uses the exchange deadline", async () => {
+  const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
+  const started: number[] = [];
+  let now = 0, advances = 0;
+  const original = performance.now;
+  try {
+    performance.now = () => now;
+    const result = await advanceOwnedPlanning({home_id:'synthetic',job_id:'synthetic',fence:1},{...connection,deadline:25_000},async(_url,init)=>{
+      const { action } = JSON.parse(String(init?.body));
+      if (action.kind === 'advance') advances++;
+      else {
+        started.push(action.replica);
+        await Promise.resolve();
+        now = 24_000;
+      }
+      return Response.json({ protocol: RULES_PLANNING_PROTOCOL, request_id: connection.requestId, stage: 'owned',
+        dispatch:{phase:'integrate',cursor:8,target:64,round:1,replicas:[0,1,2,3]} });
+    });
+    assertEquals(result.dispatch?.phase, 'integrate');
+    assertEquals(started, [0,1]);
+    assertEquals(advances, 1);
+  } finally { performance.now = original; }
 });
 Deno.test("hosted fetch RateLimitError retains retryAfterMs without an HTTP response", async () => {
   const { advanceOwnedPlanning } = await import('./rules-planning-client.ts');
