@@ -15,6 +15,7 @@ async function planningDatabase() {
         SELECT json_build_object('job_id',$1.id,'state',$1.state,'pending',true,'retry_after_ms',100) $$;`);
     await db.exec(await Deno.readTextFile("supabase/migrations/20261126152000_staged_connected_planning_capture.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261126153200_connected_inference_prefix_cache.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261127093000_reuse_leading_room_evidence_block.sql"));
   return db;
 }
 
@@ -71,11 +72,12 @@ Deno.test("planning capture checkpoints isolate home, fence, cursor and immutabl
 Deno.test('source freeze reuses clean fitted blocks, replays corrected extents and scopes reusable inference to exact identity', async () => {
   const db = await planningDatabase();
   try {
+    const historyFrom = "2001-01-01T01:31:00Z";
     const context = (await db.query<{ value: { graph: { owner: string; revision: number; topology_hash: string }; binding: string; policy: string } }>(
-      "SELECT get_energy_connected_planning_source_context($1,$1,'room','2001-01-01','2001-01-21') AS value", [home])).rows[0].value;
+      "SELECT get_energy_connected_planning_source_context($1,$1,'room',$2,'2001-01-21') AS value", [home, historyFrom])).rows[0].value;
     const revision = (await db.query<{ value: number }>('SELECT private.lock_room_evidence($1) AS value', [home])).rows[0].value;
     const model = { basis: { graph_owner: context.graph.owner, graph_revision: context.graph.revision, topology_hash: context.graph.topology_hash,
-      history_from: '2001-01-01T00:00:00Z', history_to: '2001-01-21T00:00:00Z', source_policy: context.policy, source_revision: revision } };
+      history_from: historyFrom, history_to: '2001-01-21T00:00:00Z', source_policy: context.policy, source_revision: revision } };
     const input = { snapshot: { room_network_capture: { rooms: [{ key: 'room', connected_exchange: model }] } } };
     const install = () => db.query("INSERT INTO private.energy_planning_jobs VALUES($1,$2,$2,'pending',1,now()+interval '60 seconds',now(),$3,NULL,NULL)", [id, home, JSON.stringify(input)]);
     await install();
@@ -85,7 +87,7 @@ Deno.test('source freeze reuses clean fitted blocks, replays corrected extents a
         [home, context.binding, from, to, revision, bytes]);
     }
     const freeze = async (fence = 1) => (await db.query<{ value: { next: { from_at: string; to_at: string } | null; source_revision: number } | null }>(
-      "SELECT freeze_energy_connected_planning_sources($1,$2,$3,0,'2001-01-01','2001-01-21','synthetic-source',NULL) AS value", [home, id, fence])).rows[0].value;
+      "SELECT freeze_energy_connected_planning_sources($1,$2,$3,0,$4,'2001-01-21','synthetic-source',NULL) AS value", [home, id, fence, historyFrom])).rows[0].value;
     for (const [room, from, to, binding, implementation] of [
       ['room', '2000-12-01', '2000-12-02', context.binding, 'synthetic-source'],
       ['room', '2001-01-02', '2001-01-03', 'superseded-binding', 'synthetic-source'],
@@ -99,12 +101,17 @@ Deno.test('source freeze reuses clean fitted blocks, replays corrected extents a
     assertEquals(await freeze(2), null);
     assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_connected_source_cache')).rows, [{ n: 6 }],
       'a stale lease cannot clean another attempt’s derived source cache');
-    assertEquals((await freeze())!.next, null, 'twenty days freeze without any live history payload');
+    assertEquals((await freeze())!.next, null, 'the fitted archive spans the model start and covers the entire population');
     assertEquals((await db.query(`SELECT room_key,to_char(from_at,'YYYY-MM-DD') AS from_at FROM private.energy_connected_source_cache
       ORDER BY room_key,from_at`)).rows, [
       { room_key: 'observed', from_at: '2000-12-01' }, { room_key: 'room', from_at: '2000-12-31' }, { room_key: 'room', from_at: '2001-01-04' },
     ], 'only obsolete dependencies or wholly out-of-basis extents are removed; overlapping/current/other-room bytes remain');
     assertEquals((await db.query('SELECT count(*)::integer AS n FROM private.energy_planning_room_source_blocks')).rows, [{ n: 2 }]);
+    const leading = await db.query(`SELECT b.from_at=f.from_at AND b.to_at=f.to_at AND b.sha256=f.sha256
+      AND b.capture=f.capture AS identical FROM private.energy_planning_room_source_blocks f
+      JOIN private.energy_room_evidence_blocks b ON b.home_id=$1 AND b.from_at=f.from_at
+      WHERE f.job_id=$2 AND f.from_at<$3::timestamptz AND f.to_at>$3::timestamptz`, [home, id, historyFrom]);
+    assertEquals(leading.rows, [{ identical: true }], 'the leading envelope keeps its original boundaries, bytes and digest');
     // Real canonical insertion fills an older missing peer observation. The
     // production statement trigger, not a fabricated dirty/hash response,
     // journals it for every receiving room before the next capture.
@@ -120,7 +127,7 @@ Deno.test('source freeze reuses clean fitted blocks, replays corrected extents a
     const bytes = new TextEncoder().encode('corrected synthetic raw');
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
     const raw = { room: 0, from_at: '2001-01-11', to_at: '2001-01-21', base64: btoa('corrected synthetic raw'), sha256: sha };
-    const proof = { room_key: 'room', binding: context.binding, policy: context.policy, from_at: '2001-01-01', to_at: '2001-01-21',
+    const proof = { room_key: 'room', binding: context.binding, policy: context.policy, from_at: historyFrom, to_at: '2001-01-21',
       source_revision: dirty.source_revision, implementation: 'synthetic-source' };
     const state = { version: 1, implementation: 'synthetic-v2', runtime: 'synthetic-runtime', room: 0, phase: 'qualify', policy: context.policy };
     await db.query('SELECT checkpoint_energy_planning_room_capture($1,$2,1,0,$3,$4,NULL,$5)',
@@ -147,6 +154,47 @@ Deno.test('source freeze reuses clean fitted blocks, replays corrected extents a
     await db.exec('SET ROLE authenticated');
     await assertRejects(() => load('identity'), Error, 'permission denied');
     await db.exec('RESET ROLE');
+  } finally { await db.close(); }
+});
+
+Deno.test("room interval readers preserve late quarters, holes and unknown meter energy for the owning source", async () => {
+  const db = await planningDatabase();
+  try {
+    const record = (quarter: number, kwh: number | null) => db.query(`INSERT INTO energy_heating_observations
+      (home_id,customer_id,room_key,source_key,device_statistics,start_ts,duration_s,source,room_temperature_c,
+       outdoor_temperature_c,device_energy_kwh,heater_energy_limits_w,cooling)
+      VALUES($1,$1,'room',repeat('a',64),'{"heater":"synthetic.energy"}',
+        timestamptz '2001-02-01'+$2::int*interval '15 minutes',900,'recorder_5minute_mean',19,7,
+        jsonb_build_object('heater',$3::double precision),'{"heater":800}',false)
+      ON CONFLICT(home_id,room_key,start_ts,duration_s) DO UPDATE SET device_energy_kwh=excluded.device_energy_kwh`,
+      [home, quarter, kwh]);
+    const read = async (room: string) => (await db.query<{ quarter: number; heat_w: number | null; room_c: number; outdoor_c: number }>(`SELECT
+      (extract(epoch FROM start_ts-timestamptz '2001-02-01')/900)::int AS quarter,
+      heat_w,room_temperature_c AS room_c,outdoor_temperature_c AS outdoor_c
+      FROM get_energy_room_thermal_intervals($1,$1,$2,'2001-02-01','2001-02-01 01:00Z') ORDER BY start_ts`,
+      [home, room])).rows;
+    await record(0, 0.1);
+    await record(2, null);
+    await db.query(`INSERT INTO energy_heating_probe_observations(home_id,customer_id,start_ts,duration_s,probes)
+      VALUES($1,$1,'2001-02-01',900,jsonb_build_array(jsonb_build_object('source_key',repeat('b',64),
+        'area_key','observed','mean',17,'unavailable',false,'cohort_key',NULL),
+        jsonb_build_object('source_key',repeat('a',64),'area_key','room','mean',19,'unavailable',false,'cohort_key',NULL)))`, [home]);
+    assertEquals(await read("room"), [
+      { quarter: 0, heat_w: 400, room_c: 19, outdoor_c: 7 }, { quarter: 2, heat_w: null, room_c: 19, outdoor_c: 7 },
+    ]);
+    assertEquals(await read("observed"), [{ quarter: 0, heat_w: null, room_c: 17, outdoor_c: 7 }]);
+    assertEquals(await read("unlinked"), []);
+    await record(1, 0.15);
+    await record(2, 0.05);
+    // The newest quarter arrives through the legacy slot source alone.
+    await db.query(`INSERT INTO energy_optimisation_thermal_slots(home_id,customer_id,room_key,start_ts,room_temperature_c,cooling_duty)
+      VALUES($1,$1,'room','2001-02-01 00:45Z',20,0)`, [home]);
+    await db.query(`INSERT INTO energy_optimisation_device_slots(home_id,customer_id,device_id,start_ts,energy_kwh)
+      SELECT home_id,customer_id,id,'2001-02-01 00:45Z',0.2 FROM energy_optimisation_devices WHERE home_id=$1`, [home]);
+    assertEquals((await read("room")).map(r => [r.quarter, r.heat_w]), [[0, 400], [1, 600], [2, 200], [3, 800]]);
+    await db.query("UPDATE energy_optimisation_devices SET retired_at=now() WHERE home_id=$1", [home]);
+    assertEquals(await read("room"), [{ quarter: 0, heat_w: null, room_c: 19, outdoor_c: 7 }],
+      "retiring the meter keeps the linked receiver's observed probe and removes attribution to the retired source");
   } finally { await db.close(); }
 });
 

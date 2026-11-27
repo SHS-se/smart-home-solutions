@@ -5,7 +5,8 @@ import { handleDeviceLearning } from "../device-learning-worker.ts";
 import { syntheticRoomPlant, syntheticRoomResponseEvidence } from "../device-learning/room/native-mean.fixture.ts";
 import { learnMeasuredRoomResponse as learnRoomResponse, ROOM_MEASURED_CELL_COUNT as ROOM_RESPONSE_CELL_COUNT } from "../device-learning/room/measured-response.ts";
 import { parseRoomSharedMetadata } from "./room.ts";
-import { runRoomLearning } from "./room-response-run.ts";
+import { packOwnedPlanningValue } from "../owned-planning-codec.ts";
+import { runRoomLearning, type RoomLearningClaim } from "./room-response-run.ts";
 import type { StoredDeviceModel } from "../device-model-store.ts";
 import type { RoomHeatingBands } from "../planner/heating-bands.ts";
 
@@ -62,13 +63,11 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
           data = { id: "job", home_id: "home", customer_id: "customer", owner_kind: "room",
             owner_key: "room", generation: 1, fence: ++fence, work_class: !progress ? "source" : progress.cursor === ROOM_RESPONSE_CELL_COUNT ||
               (progress.metadata as { heat_state?: {stage?: string} }).heat_state?.stage === "complete" ? "finalization" : "numerical",
-            input: { learner_version: ROOM_LEARNER_VERSION }, room_fit_progress: jsonb(progress),
+            input: { learner_version: ROOM_LEARNER_VERSION }, room_fit_progress: progress ? { ...jsonb(progress), capture_base64: capture } : null,
             room_history_to: historyTo };
           break;
         }
-        case "capture_energy_device_models": data = { rooms: model ? [jsonb(model)] : [], devices: [], pool: null,
-          room_heating: observedOnly ? {} : { room: context }, room_observed: observedOnly ? { room: context } : {} }; break;
-        case "get_energy_room_heating_context": data = context; break;
+        case "capture_energy_room_learning_context": data = { model: model ? jsonb(model) : null, context }; break;
         case "save_energy_room_evidence_block":
           assertEquals(args.p_fence, fence);
           assertEquals(args.p_revision, model?.model_revision ?? 0);
@@ -112,7 +111,6 @@ function fixture(operationBasis?: "customer_assertion" | "source_capability", ob
           if (loseReply === name) { loseReply = null; return { data: null, error: { message: "Synthetic lost reply" } }; }
           data = true; break;
         }
-        case "load_energy_room_fit_capture": data = capture; break;
         case "reset_energy_room_fit": resets++; progress = null; capture = null; data = true; break;
         case "complete_energy_room_fit": {
           assertEquals(progress?.cursor, ROOM_RESPONSE_CELL_COUNT);
@@ -247,7 +245,7 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   const envelope = f.progress!.metadata as { version: number; capture: unknown; policy_fingerprint: string };
   assertEquals(envelope.version, 6);
   assertEquals(envelope.policy_fingerprint, f.archive.policyFingerprint);
-  f.fail("capture_energy_device_models", "get_energy_room_heating_context");
+  f.fail("capture_energy_room_learning_context");
   const numericStart = f.reads.length;
   assertEquals(parseRoomSharedMetadata(envelope.capture)?.evidence.sourceRevision, 1);
   while (f.progress && f.progress.cursor < ROOM_RESPONSE_CELL_COUNT) {
@@ -267,7 +265,7 @@ Deno.test("the worker checkpoints one chronological capture and publishes the sa
   assertEquals(library.reference?.model, offline.result.model);
   assertEquals(library.reference?.learning_evidence, { ...offline.result.learning_evidence,
     source_evidence: parseRoomSharedMetadata(envelope.capture)!.evidence });
-  assert(!f.reads.slice(numericStart).some(name => name === "capture_energy_device_models" || name === "get_energy_room_heating_context"));
+  assert(!f.reads.slice(numericStart).some(name => name === "capture_energy_room_learning_context"));
 });
 
 Deno.test("a pinned chronological generation finishes despite later uploads and advancing wall time", async () => {
@@ -459,7 +457,7 @@ Deno.test("a superseding live model or binding is discovered on the same cold cl
     const accepted = structuredClone(f.model), first = f.reads.length;
     assertEquals(await (await f.tick()).json(), { checkpointed: true });
     assertEquals(f.model, accepted);
-    assert(f.reads.slice(first).includes("capture_energy_device_models"));
+    assert(f.reads.slice(first).includes("capture_energy_room_learning_context"));
     const fresh = parseRoomSharedMetadata((f.progress!.metadata as { capture: unknown }).capture)!;
     assertEquals(fresh.binding, f.context.binding);
     assertEquals(fresh.baseRevision, accepted?.model_revision ?? 0);
@@ -495,7 +493,7 @@ Deno.test("malformed private policy, revision or training qualification resets s
     if (mode === "policy") envelope.policy_fingerprint = "invalid";
     else if (mode === "base") envelope.capture.baseRevision++;
     else envelope.capture.trainingView.temperatures = [[envelope.capture.trainingView.length, 21, 20]];
-    f.fail("capture_energy_device_models", "get_energy_room_heating_context");
+    f.fail("capture_energy_room_learning_context");
     assertEquals(await (await f.tick()).json(), { superseded: true });
     assertEquals(f.progress, null);
     assertEquals(f.model, accepted);
@@ -510,4 +508,25 @@ Deno.test("lost admission release does not turn an accepted publication into a s
   assertEquals(await (await f.tick()).json(), { published: true });
   assertEquals(f.writes.length, 1);
   assertEquals(f.reads.includes("fail_energy_device_learning"), false);
+});
+
+Deno.test("unreadable derived replica scratch resets at the claimed cursor during inference and finalization", async () => {
+  for (const kind of ["replica", "finish"] as const) {
+    const f = fixture(undefined, true);
+    await f.tick(); await f.tick();
+    const claim = (await f.db.rpc("claim_energy_learning_work", {})).data as RoomLearningClaim;
+    const progress = claim.room_fit_progress as { cursor: number; capture_base64: string; metadata: { row_count: number; sha256: string; capture: { fromAt: string } } };
+    const { row_count: count, sha256, capture } = progress.metadata;
+    const blob = kind === "finish" ? await packOwnedPlanningValue({}) : "invalid gzip";
+    const replicas = Array.from({ length: 4 }, (_, index) => ({ index, row: count, done: true, blob }));
+    const process = kind === "finish" ? { kind, shared: {}, replicas } : { kind,
+      replica: { ...replicas[0], row: 0, done: false }, window: { row_from: 0, total_rows: count, from_at: capture.fromAt,
+        sha256, base64: progress.capture_base64 } };
+    const work_class = kind === "finish" ? "finalization" : "numerical";
+    const step = await runRoomLearning(f.db, { ...claim, work_class, room_fit_progress: { ...progress, process } }, f.now);
+    assertEquals(step, { kind: "handled", result: { superseded: true } });
+    assertEquals(f.resets, 1);
+    assertEquals(f.writes, []);
+    assertEquals(f.failures, []);
+  }
 });

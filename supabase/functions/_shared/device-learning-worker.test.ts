@@ -29,11 +29,11 @@ Deno.test("read failures remain retriable failures, never statistical rejections
       id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
       owner_kind: "room", room_history_to: "2026-01-01T00:00:00Z", owner_key: "synthetic-room", generation: 2, fence: 7, work_class: "source" as const, input: { learner_version: ROOM_LEARNER_VERSION },
     } });
-    if (name === "capture_energy_device_models") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
+    if (name === "capture_energy_room_learning_context") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
     return Promise.resolve({ data: null, error: null });
   } });
   assertEquals(response.status, 500);
-  assertEquals(calls.map(c => c.name), ["verify_energy_learning_token", "claim_energy_learning_work", "capture_energy_device_models", "fail_energy_device_learning", "release_energy_learning_work"]);
+  assertEquals(calls.map(c => c.name), ["verify_energy_learning_token", "claim_energy_learning_work", "capture_energy_room_learning_context", "fail_energy_device_learning", "release_energy_learning_work"]);
   assertEquals(calls.at(-2)!.args, { p_job_id: "synthetic-job", p_generation: 2, p_fence: 7,
     p_error: "Model capture failed: synthetic read outage" });
   assertEquals(calls.at(-1)!.args, { p_job_id: "synthetic-job", p_generation: 2, p_fence: 7 });
@@ -48,7 +48,7 @@ Deno.test("room admission is released even when failure persistence itself loses
       id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
       owner_kind: "room", room_history_to: "2026-01-01T00:00:00Z", owner_key: "synthetic-room", generation: 2, fence: 7, work_class: "source" as const, input: { learner_version: ROOM_LEARNER_VERSION },
     }, error: null });
-    if (name === "capture_energy_device_models") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
+    if (name === "capture_energy_room_learning_context") return Promise.resolve({ data: null, error: { message: "synthetic read outage" } });
     if (name === "fail_energy_device_learning") throw new Error("synthetic lost failure reply");
     return Promise.resolve({ data: true, error: null });
   } }), Error, "synthetic lost failure reply");
@@ -89,9 +89,7 @@ Deno.test("a room without a heating context uses its generation horizon and curr
         owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 7,
         room_history_to: new Date(cutoff).toISOString(), work_class: "source" as const, input: { learner_version: ROOM_LEARNER_VERSION },
       }, error: null });
-      if (name === "capture_energy_device_models") return Promise.resolve({ data: {
-        rooms: [], devices: [], pool: null, room_heating: {},
-      }, error: null });
+      if (name === "capture_energy_room_learning_context") return Promise.resolve({ data: { model: null, context: null }, error: null });
       if (name === "publish_energy_device_learning") {
         published.push(args.p_model as Record<string, unknown>);
         return Promise.resolve({ data: true, error: null });
@@ -121,7 +119,7 @@ Deno.test("capability reads use the learning token and never claim work", async 
   } };
   const read = await handleDeviceLearning(probe({ action: "capabilities" }, "synthetic-learning"), db);
   const result = await read.json();
-  assertEquals([read.status, result.protocol, result.learner_version, result.runtime], [200, 2, ROOM_LEARNER_VERSION, Deno.version.v8]);
+  assertEquals([read.status, result.protocol, result.learner_version, result.runtime], [200, 3, ROOM_LEARNER_VERSION, Deno.version.v8]);
   assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }, "invalid"), db)).status, 401);
   assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }), db)).status, 401);
   assertEquals((await handleDeviceLearning(probe({ job_id: "job" }), db)).status, 401);

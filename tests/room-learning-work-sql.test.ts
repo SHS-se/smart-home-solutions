@@ -2,6 +2,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { connectedDatabase } from "./helpers/connected-room-sql.ts";
 import { home, other } from "./helpers/room-fit-sql.ts";
+import { encodeRoomResponseFitCapture, decodeRoomResponseFitCapture } from "../supabase/functions/_shared/device-model-learning/room-band-fit-capture.ts";
 
 const manifest = {
   protocol: 2, progress_version: 6, learner_version: "room-learner:0382f7765b9e279c",
@@ -219,5 +220,141 @@ Deno.test("only deployment service role can read the configured learning worker 
     assert(verified.ok);
     await db.exec("RESET ROLE; SET ROLE room_migration; UPDATE private.energy_learning_credentials SET function_url=NULL");
     await assertRejects(() => db.query("SELECT public.get_energy_learning_worker_token()"), Error, "query returned no rows");
+  } finally { await db.close(); }
+});
+
+Deno.test("a live pre-upgrade fit resumes with one fenced replica and its native window and loads the accepted reference only for an unidentified result", async () => {
+  const db = await setup();
+  const value = async <T>(sql: string, ...args: unknown[]) => (await db.query<{ v: T }>(`SELECT ${sql} AS v`, args)).rows[0].v;
+  const upgraded = { ...worker, protocol: 3 };
+  type Lane = { index: number; row: number; blob: string; done: boolean };
+  type Receipt = { fence: number; generation: number; work_class: string; room_fit_progress: {
+    cursor: number; base_revision: number; capture_base64?: string;
+    metadata?: { capture: { library: { reference?: unknown }; acceptedReference?: unknown }; heat_state: { stage: string } };
+    process?: { kind: string; replica: Lane; replicas: Lane[]; priors: unknown; model: unknown;
+      window: { base64: string; sha256: string; from_at: string; row_from: number; total_rows: number } };
+  } };
+  try {
+    // This historical fixture projects only a subset of the production model columns.
+    await db.exec("ALTER TABLE public.energy_optimisation_zone_models ADD COLUMN room_name text");
+    await db.exec(await Deno.readTextFile("supabase/migrations/20261127100000_minimal_room_fit_work.sql"));
+    await db.query("DELETE FROM private.energy_learning_jobs WHERE home_id=$1", [other]);
+    const id = await value<string>("(SELECT id FROM private.energy_learning_jobs WHERE home_id=$1)", home);
+    const binding = await value<string>("get_energy_room_heating_context($1,'room')->>'binding'", home);
+    const prior = { model: { gain_c_per_wh: .002 }, synthetic_original_spelling: "preserve" };
+    await db.query("UPDATE public.energy_optimisation_zone_models SET heating_bands=$2 WHERE home_id=$1",
+      [home, { binding, reference: prior }]);
+    const owner = await value<{ model: { model_revision: number; heating_bands: { reference: unknown } }; context: { binding: string } }>(
+      "capture_energy_room_learning_context($1,'room')", home);
+    const revision = owner.model.model_revision;
+    assertEquals(owner.model.heating_bands.reference, prior);
+    assertEquals(owner.context.binding, binding);
+    assertEquals(await value("capture_energy_room_learning_context($1,'missing')", home), { model: null, context: null });
+    const rows = Array.from({ length: 168 }, (_, i) => ({
+      start_ms: i * 900_000, duration_s: 900 as const, heat_w: i === 20 ? null : 100,
+      room_c: i === 167 ? null : 19 + i / 100, outdoor_c: 5, house_c: null, cooling: false, solar_w_per_m2: null,
+      peer_c: { synthetic: i === 37 ? null : 21 + i / 70 },
+    }));
+    const from = new Date(0).toISOString();
+    const bytes = await encodeRoomResponseFitCapture(rows, from);
+    // Existing protocol 2 has no persisted row geometry. It also kept the
+    // prior twice. The compatible handover must retain its forty earned turns.
+    const envelope = { version: 6, runtime: worker.runtime, learner_version: worker.learner_version,
+      row_count: rows.length, sha256: bytes.sha256, heat_state: { version: 1, stage: "adaptive" },
+      capture: { implementation, binding, fromAt: from, acceptedReference: prior,
+        library: { binding, reference: prior }, connected: { observedOnly: false, peerKeys: ["synthetic"] } } };
+    await db.query(`INSERT INTO private.energy_room_fit_progress(job_id,generation,base_revision,adaptive_cursor,metadata,capture)
+      SELECT id,generation,$2,40,$3,decode($4,'base64') FROM private.energy_learning_jobs WHERE id=$1`, [id, revision, envelope, bytes.base64]);
+    const claim = (w = upgraded) => value<Receipt | null>("claim_energy_learning_work($1,$2)", id, w);
+    const release = (r: Receipt) => value("release_energy_learning_work($1,$2,$3)", id, r.generation, r.fence);
+    assertEquals(await value("prepare_energy_learning_release(1,$1)", manifest), true);
+    assertEquals(await value("activate_energy_learning_release(1,$1)", worker), true);
+    const legacy = (await claim(worker))!;
+    assertEquals(legacy.room_fit_progress.metadata!.capture.acceptedReference, prior);
+    assertEquals(await value("prepare_energy_learning_release(2,$1)", { ...manifest, protocol: 3 }), true);
+    assertEquals(await value("activate_energy_learning_release(2,$1)", upgraded), true);
+    assertEquals(await claim(), null);
+    const state = { version: 1, stage: "posterior" };
+    assertEquals(await value("checkpoint_energy_room_adaptive_fit($1,$2,$3,$4,40,$5,$6)",
+      id, legacy.generation, legacy.fence, revision, envelope.heat_state, state), true);
+    assertEquals(await release(legacy), true);
+    assertEquals(await claim(worker), null);
+    let receipt = (await claim())!;
+    assertEquals(receipt.generation, legacy.generation);
+    assertEquals(receipt.room_fit_progress.cursor, 41);
+    assertEquals(receipt.room_fit_progress.capture_base64, bytes.base64);
+    assertEquals(receipt.room_fit_progress.metadata!.capture.library.reference, undefined);
+    assertEquals(receipt.room_fit_progress.metadata!.capture.acceptedReference, undefined);
+    const write = (r: Receipt, turn: unknown, cursor = r.room_fit_progress.cursor) =>
+      value("checkpoint_energy_room_fit_turn($1,$2,$3,$4,$5,$6)", id, r.generation, r.fence, revision, cursor, turn);
+    const advance = async (turn: unknown) => {
+      assertEquals(await write(receipt, turn), true);
+      // Lost replies and superseded leases cannot append a duplicate.
+      assertEquals(await write(receipt, turn), false);
+      assertEquals(await release(receipt), true);
+      const next = (await claim())!;
+      assertEquals(next.room_fit_progress.cursor, receipt.room_fit_progress.cursor + 1);
+      receipt = next;
+    };
+    await advance({ kind: "optimizer", state: { version: 1, stage: "full" } });
+    const lanes = [0, 1, 2, 3].map(index => ({ index, row: index === 3 ? 34 : rows.length,
+      done: index !== 3, blob: btoa(`synthetic lane ${index}`) }));
+    const shared = { result: { response: { family: "synthetic" } }, priors: { revision: "synthetic" }, numerical_failures: 1 };
+    const invalidLanes = lanes.map(lane => lane.index === 3 ? { ...lane, row: rows.length, done: false } : lane);
+    await assertRejects(() => write(receipt, { kind: "start_process", replicas: invalidLanes, shared }), Error, "Invalid initial room fit replica");
+    assertEquals(await value("(SELECT count(*)::int FROM private.energy_room_fit_replicas WHERE job_id=$1)", id), 0);
+    await advance({ kind: "start_process", replicas: lanes, shared });
+    const siblings = () => value("(SELECT jsonb_agg(ctid::text ORDER BY replica) FROM private.energy_room_fit_replicas WHERE job_id=$1 AND replica<3)", id);
+    const unchangedSiblings = await siblings();
+    const shard = receipt.room_fit_progress.process!;
+    assertEquals(Object.keys(receipt.room_fit_progress).sort(), ["base_revision", "cursor", "process"]);
+    assertEquals(Object.keys(shard).sort(), ["kind", "model", "priors", "replica", "window"]);
+    assertEquals(shard.replica, lanes[3]);
+    assertEquals(shard.priors, shared.priors);
+    assertEquals(shard.model, shared.result.response);
+    assertEquals(shard.window.row_from, 34);
+    assertEquals(shard.window.total_rows, rows.length);
+    const decodeWindow = (w: typeof shard.window) => decodeRoomResponseFitCapture(w.base64, w.from_at, w.sha256);
+    assertEquals(await decodeWindow(shard.window), rows.slice(34, 162));
+    assertEquals(await write(receipt, { kind: "replica", replica: { ...lanes[3], index: 0 } }), false);
+    assertEquals(await write(receipt, { kind: "replica", replica: { ...lanes[3], row: 33 } }), false);
+    assertEquals(await write(receipt, { kind: "replica", replica: { ...lanes[3], row: 162 } }, 41), false);
+    assertEquals(await write(receipt, { kind: "replica", replica: { ...lanes[3], row: 163 } }), false);
+    const partial = { ...lanes[3], blob: btoa("synthetic mid-row carry") };
+    await advance({ kind: "replica", replica: partial });
+    assertEquals(receipt.room_fit_progress.process!.replica, partial);
+    await advance({ kind: "replica", replica: { ...partial, row: 162 } });
+    assertEquals(await decodeWindow(receipt.room_fit_progress.process!.window), rows.slice(162));
+    await assertRejects(() => write(receipt, { kind: "replica", replica: { ...partial, row: rows.length, done: false } }),
+      Error, "Invalid room fit replica progress");
+    const completed = { ...partial, row: rows.length, done: true };
+    await advance({ kind: "replica", replica: completed });
+    assertEquals(await siblings(), unchangedSiblings);
+    assertEquals(receipt.work_class, "finalization");
+    assertEquals(receipt.room_fit_progress.process!.kind, "finish");
+    assertEquals(receipt.room_fit_progress.process!.replicas, [...lanes.slice(0, 3), completed]);
+    assertEquals(receipt.room_fit_progress.metadata!.capture.library.reference, undefined);
+    assertEquals(receipt.room_fit_progress.metadata!.capture.acceptedReference, undefined);
+    assertEquals(receipt.room_fit_progress.capture_base64, bytes.base64);
+    assertEquals(await value("has_function_privilege('authenticated','public.checkpoint_energy_room_fit_turn(uuid,bigint,bigint,bigint,integer,jsonb)','execute')"), false);
+    assertEquals(await value("has_function_privilege('anon','public.capture_energy_room_learning_context(uuid,text)','execute')"), false);
+    assertEquals(await value("has_table_privilege('service_role','private.energy_room_fit_replicas','select')"), false);
+    await db.query("UPDATE private.energy_learning_jobs SET pending=false WHERE id=$1", [id]);
+    assertEquals(await value("(SELECT count(*)::int FROM private.energy_room_fit_replicas WHERE job_id=$1)", id), 0);
+
+    // A fresh unidentified fit keeps the exact accepted JSON, including fields
+    // a normalized model reader need not retain. This final turn alone needs it.
+    await release(receipt);
+    await db.query("UPDATE private.energy_learning_jobs SET pending=true,lease_until=NULL,wake_after=now() WHERE id=$1", [id]);
+    const initial = { ...envelope, heat_state: state, has_accepted_reference: true,
+      capture: { implementation, binding, fromAt: from, library: { binding }, connected: envelope.capture.connected } };
+    await db.query(`INSERT INTO private.energy_room_fit_progress(job_id,generation,base_revision,adaptive_cursor,metadata,capture)
+      SELECT id,generation,$2,0,$3,decode($4,'base64') FROM private.energy_learning_jobs WHERE id=$1`, [id, revision, initial, bytes.base64]);
+    await db.query("SELECT private.refill_energy_learning_work()");
+    receipt = (await claim())!;
+    await advance({ kind: "result", result: { response: null, model: null, issues: ["synthetic"], learning: {} } });
+    assertEquals(receipt.room_fit_progress.process!.kind, "result");
+    assertEquals(receipt.room_fit_progress.metadata!.capture.library.reference, prior);
+    assertEquals(receipt.room_fit_progress.metadata!.capture.acceptedReference, undefined);
   } finally { await db.close(); }
 });

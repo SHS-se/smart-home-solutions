@@ -1,6 +1,8 @@
-import { roomFitContext, usesConnectedRoomFit } from "../device-learning/room/fit-policy.ts";
+import { usesConnectedRoomFit } from "../device-learning/room/fit-policy.ts";
 import { ROOM_MEASURED_CELL_COUNT, prepareMeasuredRoomResponse, fitMeasuredRoomCell, parseMeasuredRoomCells, finalizeMeasuredRoomResponse } from "../device-learning/room/measured-response.ts";
-import { captureDeviceModels, type ModelDatabase, type RoomHeatingContext } from "../device-model-store.ts";
+import type { ModelDatabase, RoomHeatingContext, StoredDeviceModel } from "../device-model-store.ts";
+import { OwnedPlanningArtifactError } from "../owned-planning-codec.ts";
+import { advanceRoomFitReplica, checkpointConnectedFit, finishConnectedFit, type ConnectedFitTurn, type ProcessClaim } from "./room-fit-replicas.ts";
 import { connectedFitContext, connectedFitEvidence } from "./room-fit-input.ts";
 import { decodeRoomResponseFitCapture, encodeRoomResponseFitCapture } from "./room-band-fit-capture.ts";
 import { advanceConnectedRoomFit, beginConnectedRoomFit, parseConnectedFitProgress } from "../device-learning/room/connected-response.ts";
@@ -30,6 +32,7 @@ export interface RoomSliceTrace {
   next_cursor?: number;
   sweep?: number;
   process_row?: number;
+  process_replica?: number;
   rows?: number;
   decode_ms?: number;
   prepare_ms?: number;
@@ -75,20 +78,20 @@ export async function runRoomLearning(db: ModelDatabase, claim: RoomLearningClai
   }
   trace.stage = "source";
   const sourceStarted = performance.now();
-  const models = await captureDeviceModels(db, claim.home_id);
-  const previous = models.rooms.find(model => model.room_key === claim.owner_key);
+  const { data, error } = await db.rpc("capture_energy_room_learning_context", { p_home_id: claim.home_id, p_room_key: claim.owner_key });
+  if (error) throw new Error(`Model capture failed: ${error.message}`);
+  if (!object(data) || data.model !== null && (!object(data.model) || !Number.isSafeInteger(data.model.model_revision) || Number(data.model.model_revision) < 1) ||
+    data.context !== null && (!object(data.context) || typeof data.context.binding !== "string")) throw new Error("Malformed room learning context");
+  const previous = data.model as StoredDeviceModel | null;
+  const context = data.context as RoomHeatingContext | null;
   const revision = previous?.model_revision ?? 0;
-  const captured = roomFitContext(models, claim.owner_key);
   const location = claim.input.location ?? null;
-  if (!captured) {
+  if (!context) {
     const model = await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, location, clock);
     trace.source_ms = Math.round(performance.now() - sourceStarted);
     return { kind: "model", model, revision };
   }
-  const history = await db.rpc("get_energy_room_heating_context", { p_home_id: claim.home_id, p_room_key: claim.owner_key });
-  if (history.error) throw new Error(history.error.message);
-  const context: RoomHeatingContext = history.data ?? captured;
-  const prepared = await prepareStoredRoomHeating(db, claim, context, previous, location, clock);
+  const prepared = await prepareStoredRoomHeating(db, claim, context, previous ?? undefined, location, clock);
   trace.source_ms = Math.round(performance.now() - sourceStarted);
   if (prepared.kind === "model") return { ...prepared, revision };
   if (prepared.kind === "refreshed") return { kind: "handled", result: { checkpointed: true } };
@@ -99,10 +102,18 @@ export async function runRoomLearning(db: ModelDatabase, claim: RoomLearningClai
   trace.encode_ms = Math.round(performance.now() - encodeStarted);
   trace.rows = rows.length;
   const rpc = roomFitRpc(db, claim, revision, trace);
+  const stored = { ...metadata };
+  const adaptive = usesConnectedRoomFit(metadata.connected);
+  if (adaptive) {
+    delete stored.acceptedReference;
+    stored.library = { ...metadata.library };
+    delete stored.library.reference;
+  }
   const saved = await rpc("checkpoint_energy_room_fit", {
     p_expected_cursor: -1,
-    p_metadata: { version: ROOM_FIT_CAPTURE_VERSION, runtime: Deno.version.v8, learner_version: ROOM_LEARNER_VERSION, capture: metadata,
-      sha256: capture.sha256, row_count: capture.row_count, policy_fingerprint: policyFingerprint },
+    p_metadata: { version: ROOM_FIT_CAPTURE_VERSION, runtime: Deno.version.v8, learner_version: ROOM_LEARNER_VERSION, capture: stored,
+      ...(adaptive ? { has_accepted_reference: metadata.acceptedReference !== undefined } : {}),
+      header_bytes: capture.header_bytes, row_bytes: capture.row_bytes, sha256: capture.sha256, row_count: capture.row_count, policy_fingerprint: policyFingerprint },
     p_capture_base64: capture.base64, p_cell: null,
   });
   return { kind: "handled", result: { checkpointed: saved === true, ...(saved === true ? {} : { superseded: true }) } };
@@ -122,7 +133,36 @@ async function resumeRoomFit(db: ModelDatabase, claim: RoomLearningClaim, clock:
   };
   const cursor = Number(progress.cursor), envelope = progress.metadata;
   trace.cursor = cursor;
-  const metadata = object(envelope) ? parseRoomSharedMetadata(envelope.capture) : null;
+  const checkpoint = async (turn: ConnectedFitTurn): Promise<RoomLearningStep> => {
+    const saved = await rpc("checkpoint_energy_room_fit_turn", { p_expected_cursor: cursor, p_turn: turn });
+    return { kind: "handled", result: saved === true ? { checkpointed: true } : { superseded: true } };
+  };
+  const process = progress.process as ProcessClaim | undefined;
+  if (process?.kind === "replica") {
+    trace.stage = "process_posterior";
+    const window = process.window, decodeStarted = performance.now();
+    let rows;
+    try { rows = await decodeRoomResponseFitCapture(window.base64, window.from_at, window.sha256); }
+    catch { return await reset(cursor); }
+    trace.decode_ms = Math.round(performance.now() - decodeStarted);
+    trace.rows = rows.length;
+    const numericStarted = performance.now();
+    let next;
+    try { next = await advanceRoomFitReplica(process, rows, Math.max(1, ROOM_FIT_NUMERIC_BUDGET_MS - (numericStarted - started))); }
+    catch (error) { if (error instanceof OwnedPlanningArtifactError) return await reset(cursor); throw error; }
+    trace.process_replica = next.replica.index;
+    trace.numerical_ms = Math.round(performance.now() - numericStarted);
+    trace.process_row = next.replica.row;
+    return await checkpoint(next);
+  }
+  let capture = object(envelope) ? envelope.capture : null;
+  // The database returns the original accepted reference once, under the
+  // current binding and base revision, when publication needs it.
+  if (claim.work_class === "finalization" && object(envelope) && object(envelope.heat_state) && object(capture) &&
+    !Object.hasOwn(capture, "acceptedReference") && object(capture.library) && capture.library.reference != null) {
+    capture = { ...capture, acceptedReference: capture.library.reference };
+  }
+  const metadata = parseRoomSharedMetadata(capture);
   if (!object(envelope) || envelope.version !== ROOM_FIT_CAPTURE_VERSION || envelope.runtime !== Deno.version.v8 || envelope.learner_version !== ROOM_LEARNER_VERSION || !metadata ||
     metadata.implementation !== ROOM_RESPONSE_IMPLEMENTATION || !isRoomPolicyFingerprint(envelope.policy_fingerprint) ||
     metadata.homeId !== claim.home_id || metadata.customerId !== claim.customer_id || metadata.roomKey !== claim.owner_key ||
@@ -139,7 +179,7 @@ async function resumeRoomFit(db: ModelDatabase, claim: RoomLearningClaim, clock:
   }
   catch { return await reset(cursor); }
   if (!adaptive && cells.length !== cursor) return await reset(cursor);
-  const encoded = await rpc("load_energy_room_fit_capture", {});
+  const encoded = progress.capture_base64;
   if (encoded === null) return await reset(cursor);
   if (typeof encoded !== "string") throw new Error("Invalid room fit capture response");
   let rows;
@@ -151,31 +191,34 @@ async function resumeRoomFit(db: ModelDatabase, claim: RoomLearningClaim, clock:
   const preparationStarted = performance.now();
   if (rows.length !== envelope.row_count) return await reset(cursor);
   if (adaptive) {
+    if (claim.work_class === "finalization") {
+      trace.stage = "complete";
+      const finalizeStarted = performance.now();
+      // A protocol-2 completion can already be waiting at the publication fence.
+      let fit;
+      try { fit = process ? await finishConnectedFit(process, rows.length) : parseConnectedFitProgress(envelope.heat_state)?.result; }
+      catch (error) { if (error instanceof OwnedPlanningArtifactError) return await reset(cursor); throw error; }
+      if (!fit) return await reset(cursor);
+      if (fit.response) fit.response.evidence = connectedFitEvidence(fit.response.evidence, metadata, rows, envelope.sha256);
+      const final = finalizeStoredConnectedRoomResponse(metadata, rows, fit);
+      trace.finalize_ms = Math.round(performance.now() - finalizeStarted);
+      const published = await rpc("complete_energy_room_fit", { p_expected_cursor: cursor, p_model: final.model, p_run_ledger: null });
+      return { kind: "handled", result: { published: published === true, ...(published === true ? {} : { superseded: true }) } };
+    }
     const evidence = roomResponseEvidence(rows, metadata.trainingView);
     const current = envelope.heat_state == null ? beginConnectedRoomFit(evidence, connectedFitContext(metadata)) : parseConnectedFitProgress(envelope.heat_state);
     if (!current) return await reset(cursor);
     trace.prepare_ms = Math.round(performance.now() - preparationStarted);
     trace.stage = current.stage;
-    if (current.stage === "complete" && envelope.heat_state != null) {
-      if (claim.work_class === "numerical") return { kind: "handled", result: { superseded: true } };
-      if (!current.result) return await reset(cursor);
-      if (current.result.response) current.result.response.evidence = connectedFitEvidence(
-        current.result.response.evidence, metadata, rows, envelope.sha256);
-      const finalizeStarted = performance.now();
-      const final = finalizeStoredConnectedRoomResponse(metadata, rows, current.result);
-      trace.finalize_ms = Math.round(performance.now() - finalizeStarted);
-      const published = await rpc("complete_energy_room_fit", { p_expected_cursor: cursor, p_model: final.model, p_run_ledger: null });
-      return { kind: "handled", result: { published: published === true, ...(published === true ? {} : { superseded: true }) } };
-    }
     const numericStarted = performance.now();
-    const next = advanceConnectedRoomFit(evidence, current, Math.max(1, ROOM_FIT_NUMERIC_BUDGET_MS - (performance.now() - started)));
+    const next = current.stage === "process_posterior" ? current :
+      advanceConnectedRoomFit(evidence, current, Math.max(1, ROOM_FIT_NUMERIC_BUDGET_MS - (performance.now() - started)));
+    const turn = await checkpointConnectedFit(next, rows);
     trace.numerical_ms = Math.round(performance.now() - numericStarted);
     trace.next_stage = next.stage;
     trace.sweep = next.optimizer.sweep;
     trace.process_row = next.processPosterior?.cursor;
-    const saved = await rpc("checkpoint_energy_room_adaptive_fit", { p_expected_cursor: cursor,
-      p_expected_state: envelope.heat_state ?? null, p_state: next });
-    return { kind: "handled", result: { checkpointed: saved === true, ...(saved === true ? {} : { superseded: true }) } };
+    return await checkpoint(turn);
   }
   let prepared;
   try { prepared = prepareMeasuredRoomResponse(roomResponseEvidence(rows, metadata.trainingView), metadata.ratedPowerW); }

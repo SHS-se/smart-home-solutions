@@ -107,6 +107,39 @@ exchange has a 25-second deadline.
 Partial preparation results stay inside the planning attempt. A failed attempt
 can retry from the captured input while the accepted plan stays active.
 
+## Minimal room-fit transport (27 November 2026)
+
+A learning request owns one room and advances either its body optimizer, one
+exchange-inference replica, or publication. The mathematical learner, four
+replicas and 30-day fitting window are unchanged. Worker protocol 3 changes the
+transport independently of the accepted learner identity.
+
+Source acquisition reads only the receiving room's model and context. Immutable
+qualified observations and publication context are stored once. Numerical claims
+omit the previous accepted reference; publication reads that exact reference only
+when an unidentified attempt must retain it, under the original model revision
+and binding. A successful fit does not download the old posterior.
+
+Each inference replica has its own scratch row. Numerical claims load only the
+active replica and a bounded page of native observations. Checkpoints send only
+its replacement, with generation, fence, model revision and the scalar cursor;
+they do not echo the previous state or rewrite completed sibling replicas.
+Lossless packets share repeated regime parameters and clock fields while keeping
+all covariance entries, random state, hazards, weights and particle multiplicity.
+Publication joins the replicas in their original order once. Reset, supersession
+and publication delete the scratch through its existing owner.
+
+Deployment activates this wire protocol only after checking the hosted worker's
+capabilities. A compatible rollout preserves the captured observations, progress
+and physical lease. In-flight older workers may finish their owned request; they
+cannot acquire new work after activation. This does not schedule another fit.
+
+Planning source capture also reuses a certified fitted block that overlaps the
+start of the model's history. It retains the original envelope and digest; the
+existing qualifier clips native intervals to the requested population. Binding,
+policy, graph and correction checks still apply. Heated receivers select their
+own source reader before the passive reader scans household evidence.
+
 ## Connected-room state capture (26 November 2026)
 
 Hosted room capture freezes the accepted receiving-room models, the app-owned
