@@ -1,4 +1,5 @@
 import { isWeatherHeatingBinding } from "./planner/weather-heating.ts";
+import type { PreparedRoom } from "./planner/models/room/planning.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { poolHeaters, type PoolDevice } from "./planner/pool-devices.ts";
 /** Database capture owns calibration identity; forecasts and solvers cannot select it. */
@@ -7,6 +8,7 @@ export type ModelDatabase = { rpc(name: string, args: Record<string, unknown>): 
 export interface StoredDeviceModel extends Record<string, unknown> {
   model_revision: number;
   room_key?: string;
+  connected_reference?: PreparedRoom["connected_reference"];
   trained?: boolean;
   last_fit_attempt?: { issues?: string[]; learning?: { method?: string } };
 }
@@ -76,7 +78,7 @@ export function readConnectedRoomCapture(value: unknown): ConnectedRoomCapture |
   return capture;
 }
 export async function captureDeviceModels(db: ModelDatabase, homeId: string): Promise<DeviceModelBundle> {
-  const { data, error } = await db.rpc("capture_energy_device_models", { p_home_id: homeId });
+  const { data, error } = await db.rpc("capture_energy_device_models", { p_home_id: homeId, p_connected_headers: true });
   if (error) throw new Error(`Model capture failed: ${error.message}`);
   if (!data || !Array.isArray(data.rooms) || !(data.pool === null || typeof data.pool === "object")) {
     throw new Error("Malformed device model bundle");

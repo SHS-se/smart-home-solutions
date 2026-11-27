@@ -1,3 +1,4 @@
+import type { ConnectedRoomPlanningNode } from "./planner/models/room/network.ts";
 import {connectedRoomForecastIdentity} from "./room-network-contract.ts";
 import { estimateRoomState, roomPlanClock, type RoomStateReading } from "./planner/models/room/state.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "./room-doorway-probes.ts";
@@ -251,7 +252,8 @@ export function prepareRoomModels(
       model && !isEquilibrium(model) ? model.house_coupling_per_h ?? 0 : 0);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model, rated_power_w: ratedPowerW,
-      ...(connected && connectedCompatible ? {connected_exchange: connected} : {}),
+      ...(connected && connectedCompatible ? { connected_exchange: connected,
+        ...(fitted?.connected_reference ? { connected_reference: fitted.connected_reference } : {}) } : {}),
       ...(model && modelWarnings?.length ? { model_warnings: modelWarnings } : {}),
       ...(model && response ? { model_source: response.source } : {}),
       ...(doorway ? { doorway } : {}),
@@ -265,6 +267,7 @@ export function prepareRoomModels(
     if (!connected || connected.thermal.heater !== null || bundle?.roomGraphIssue || bundle?.roomGraph &&
       (connected.basis.graph_owner !== bundle.roomGraph.owner || connected.basis.graph_revision !== bundle.roomGraph.revision || connected.basis.topology_hash !== bundle.roomGraph.topology_hash)) continue;
     prepared.push({key,name:context.room_name ?? key,device_keys:[],model:null,connected_exchange:connected,
+      ...(stored?.connected_reference ? { connected_reference: stored.connected_reference } : {}),
       observed_only:true,rated_power_w:0,maximum_power_w_by_slot:starts.map(()=>0)});
   }
   return { snapshot, rooms: prepared };
@@ -475,12 +478,23 @@ export async function captureRoomPlanningState(
 
 /** Complete the durable observation stage before native room preparation. */
 export function applyConnectedRoomCapture(snapshot: OptimisationSnapshot,
-  nodes: import("./planner/models/room/network.ts").ConnectedRoomPlanningNode[], warnings: import("./planner/planning-warnings.ts").PlanningWarning[]): OptimisationSnapshot {
+  nodes: ConnectedRoomPlanningNode[], warnings: import("./planner/planning-warnings.ts").PlanningWarning[]): OptimisationSnapshot {
+  return applyRoomCaptureFields(snapshot, nodes, warnings, nodes);
+}
+
+export type CompletedRoomHeader = Pick<ConnectedRoomPlanningNode, "key" | "start_temperature_c" | "start_stored_heat_c"> & { required_peers: string[] };
+
+export function completeOwnedRoomCapture(snapshot: OptimisationSnapshot, nodes: CompletedRoomHeader[], warnings: import("./planner/planning-warnings.ts").PlanningWarning[]) {
+  return { snapshot: applyRoomCaptureFields(snapshot, nodes, warnings, []), completed_node_keys: nodes.map(node => node.key) };
+}
+
+function applyRoomCaptureFields(snapshot: OptimisationSnapshot, states: Pick<ConnectedRoomPlanningNode, "key" | "start_temperature_c" | "start_stored_heat_c">[],
+  warnings: import("./planner/planning-warnings.ts").PlanningWarning[], nodes: ConnectedRoomPlanningNode[]): OptimisationSnapshot {
   const pending=snapshot.room_network_capture;
   if(!pending)throw new Error("No pending connected room capture");
   const outdoorKnown=snapshot.outdoor_temperature_c?.length===snapshot.slots.length&&snapshot.outdoor_temperature_c.every(value=>typeof value==="number"&&Number.isFinite(value));
   const models=new Map(pending.rooms.map(room=>[room.key,outdoorKnown&&room.connected_exchange&&connectedRoomHeaterSupported(room.connected_exchange)&&!roomResponseEvidenceLimited(room.model_warnings)?room.model:null]));
-  const captured=new Map(nodes.map(node=>[node.key,node]));
+  const captured=new Map(states.map(node=>[node.key,node]));
   const {room_network_capture:_pending,room_network:_previous,...complete}=snapshot;
   return {...complete,room_network:{nodes,forecast:connectedRoomForecastIdentity()},thermal_zones:snapshot.thermal_zones?.map(zone=>{
     if(!models.has(zone.key))return zone;

@@ -14,7 +14,6 @@ import {
 } from "./planner/models/room/state.ts";
 import type { DynamicThermalZoneModel } from "./planner/models/room/thermal.ts";
 import {
-  connectedRoomDependencies,
   type ConnectedRoomPlanningNode,
 } from "./planner/models/room/network.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
@@ -229,7 +228,7 @@ export function assembleConnectedRoomNodes(
 }
 
 /** Resolve named model dependencies only after all staged nodes are assembled. */
-export function finalizeConnectedRoomNodes(nodes: ConnectedRoomPlanningNode[]) {
+export function finalizeConnectedRoomNodes<T extends {key: string}>(nodes: T[], dependencies: (node: T) => string[]) {
   const warnings: ReturnType<typeof planningWarning>[] = [];
   // Missing model identity is distinct from missing observations. A receiving
   // equation cannot be evaluated with a fabricated peer response.
@@ -237,7 +236,7 @@ export function finalizeConnectedRoomNodes(nodes: ConnectedRoomPlanningNode[]) {
   for (;;) {
     const keys = new Set(usable.map((node) => node.key));
     const next = usable.filter((node) => {
-      const missing = connectedRoomDependencies(node).filter((from) =>
+      const missing = dependencies(node).filter((from) =>
         !keys.has(from)
       );
       if (missing.length) {

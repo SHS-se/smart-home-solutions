@@ -17,6 +17,22 @@ function empty(): TrafficTotals {
     request_body_bytes_estimate: 0, request_bodies_unmeasured: 0, elapsed_ms: 0 };
 }
 
+/** Count UTF-8 without allocating another copy of an already serialized body. */
+function utf8Bytes(value: string): number {
+  let bytes = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length &&
+      value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3; // Lone surrogates encode as the replacement character.
+  }
+  return bytes;
+}
+
 /** Only fixed API resource names; object keys, IDs and query values are omitted. */
 export function trafficEndpoint(input: RequestInfo | URL, method?: string): string {
   const verb = (method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
@@ -95,7 +111,7 @@ export class NetworkTraffic {
     if (!totals) { totals = empty(); this.endpoints.set(key, totals); }
     totals.requests++;
     const body = init?.body;
-    if (typeof body === 'string') totals.request_body_bytes_estimate += new TextEncoder().encode(body).byteLength;
+    if (typeof body === 'string') totals.request_body_bytes_estimate += utf8Bytes(body);
     else if (body instanceof ArrayBuffer) totals.request_body_bytes_estimate += body.byteLength;
     else if (ArrayBuffer.isView(body)) totals.request_body_bytes_estimate += body.byteLength;
     else if (body != null || (input instanceof Request && input.body !== null)) totals.request_bodies_unmeasured++;

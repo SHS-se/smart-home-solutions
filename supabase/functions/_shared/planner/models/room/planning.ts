@@ -10,6 +10,8 @@ import type { PassiveRoomHeat, ThermalZoneModel } from "./thermal.ts";
 
 /** Current inventory joined to a captured model; never stored in the forecast product. */
 export interface PreparedRoom {
+  /** Reference whose full process population the database freezes with this job. */
+  connected_reference?: { binding: string; revision: string | null };
   connected_exchange?: ConnectedRoomResponse;
   key: string;
   name: string;

@@ -1,11 +1,13 @@
 // Independent synthetic native means and planning scratch, never household data.
 import { assert, assertEquals } from "@std/assert";
 import { CONNECTED_CAPTURE_IMPLEMENTATION } from "./connected-room-planning-capture.ts";
+import { advanceConnectedProcessInference, beginConnectedProcessInference, connectedProcessResponse } from "./device-learning/room/connected-process.ts";
 import { syntheticConnectedResponse } from "./connected-exchange.fixture.ts";
 import { encodeRoomResponseFitCapture, decodeRoomResponseFitCapture, ROOM_RESPONSE_CAPTURE_REVISION } from "./device-model-learning/room-band-fit-capture.ts";
 import { compactCapture } from "./device-model-learning/room-evidence.fixture.ts";
 import type { ThermalQuarterRow } from "./thermal-training.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { connectedRoomDependencies, type ConnectedRoomPlanningNode } from "./planner/models/room/network.ts";
 import type { ModelDatabase } from "./device-model-store.ts";
 import type { ConnectedPlanningOwner } from "./connected-room-planning-capture.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
@@ -21,6 +23,7 @@ async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: Connect
   const input = {model_version:RULES_MODEL_VERSION, snapshot} as CapturedRulesInput;
   const original = structuredClone(input);
   let completed: CapturedRulesInput | undefined;
+  let completedNodes: ConnectedRoomPlanningNode[] = [];
   const dispatch = {phase:"capture",cursor:0,target:64,round:0,replicas:[]};
   const request = JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage:"owned",
     owner:{home_id:owner.home_id,job_id:owner.job_id,fence:owner.fence},action:{kind:"advance"}});
@@ -37,10 +40,21 @@ async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: Connect
         assertEquals({home:args.p_home_id,job:args.p_job_id,fence:args.p_fence},{home:owner.home_id,job:owner.job_id,fence:owner.fence});
         result={data:{dispatch,slice_fence:1,customer_id:owner.customer_id,input:original},error:null};
       } else if(name==="checkpoint_energy_owned_planning_stage") {
-        const update=args.p_update as {phase:string;input?:CapturedRulesInput};
+        const update=args.p_update as {phase:string;input?:CapturedRulesInput;completed_node_keys?:string[]};
         completed=update.input;
+        if (completed?.snapshot.room_network && update.completed_node_keys) {
+          assertEquals(completed.snapshot.room_network.nodes, []);
+          completed.snapshot.room_network.nodes = update.completed_node_keys.map(key => completedNodes.find(node => node.key === key)!);
+        }
         result={data:{...dispatch,phase:update.phase,cursor:1},error:null};
       } else result=await db.rpc(name==="checkpoint_energy_owned_room_capture"?"checkpoint_energy_planning_room_capture":name,args);
+      if (name === "load_energy_planning_room_capture" && result.data?.state?.phase === "complete") {
+        assertEquals(args.p_project_completed, true);
+        const {nodes,...state} = result.data.state;
+        completedNodes = nodes;
+        result = {data:{...result.data,state,completed_headers:completedNodes.map(node => ({key:node.key,
+          start_temperature_c:node.start_temperature_c,start_stored_heat_c:node.start_stored_heat_c,required_peers:connectedRoomDependencies(node)}))},error:null};
+      }
       transport.db_response_bytes+=bytes(result);
       return JSON.parse(JSON.stringify(result));
     }}));
@@ -96,7 +110,8 @@ Deno.test("staged planning freezes bounded source blocks and completes through a
             full_sha256: full.sha256, from_at: full.from_at, row_from: first, total_rows: rows.length };
         }
         const delivered = structuredClone(state);
-        if (delivered && ['reuse','process','filter'].includes(String(delivered.phase))) delete delivered.nodes;
+        assertEquals(args.p_node_delta, true);
+        if (delivered && delivered.phase !== "complete") delete delivered.nodes;
         data = { cursor, state: delivered, blocks: blocks.filter(block => (block as {room:number}).room === (state?.room ?? 0)), numeric: loadedNumeric }; break;
       }
       case "freeze_energy_connected_planning_sources": {
@@ -135,7 +150,9 @@ Deno.test("staged planning freezes bounded source blocks and completes through a
       case "checkpoint_energy_planning_room_capture": {
         assertEquals(args.p_expected_cursor, cursor);
         cursor++;
-        state = { ...(state?.nodes ? { nodes: state.nodes } : {}), ...structuredClone(args.p_state as Record<string, unknown>) };
+        const { completed_nodes, ...update } = structuredClone(args.p_state as Record<string, unknown>);
+        const nodes = (state?.nodes ?? []) as unknown[];
+        state = { nodes: nodes.concat(completed_nodes ?? []), ...update };
         if (state.room === 0 && state.phase === 'process' && (args.p_numeric || phases.at(-1) === 'reuse')) starts.push(Number(state.row));
         phases.push(String(state.phase));
         const block = args.p_raw as { base64: string } | null;
@@ -251,4 +268,53 @@ Deno.test("source worker transport keeps accepted models out of receipt requests
   assert(transport.requests > 0);
   assert(transport.max_request_bytes < 1024, "Capture requests contain identity only, never the accepted belief");
   console.info("[SYNTHETIC-CONNECTED-CAPTURE-TRANSPORT]", transport);
+});
+
+Deno.test("only the active frozen receiver supplies qualification and retained-response assembly", async () => {
+  const model = syntheticConnectedResponse(false);
+  const complete = advanceConnectedProcessInference([], beginConnectedProcessInference(model, [], undefined, 8), 0, 10);
+  const frozen = connectedProcessResponse(complete), { process_belief: belief, ...header } = frozen;
+  assert(belief);
+  // A distinctive, valid frozen hyperparameter distinguishes this capture from a newly seeded prior.
+  belief.initial_hazard.rate_h = 17.25;
+  const snapshot = dispatchedEvSnapshot();
+  snapshot.captured_at = header.basis.history_from;
+  snapshot.slots = [];
+  snapshot.room_network_capture = { rooms: [{ key: "receiver", name: "Receiver", model: null, device_keys: [],
+    rated_power_w: 0, maximum_power_w_by_slot: [], connected_exchange: header, connected_reference: { binding: "synthetic", revision: "first" } }], observations: [] };
+  const owner = { job_id: "synthetic", home_id: "synthetic", customer_id: "synthetic", fence: 7 };
+  const raw = await encodeRoomResponseFitCapture([], header.basis.history_from);
+  const numeric = { capture: raw.base64, sha256: raw.sha256, full_sha256: raw.sha256, from_at: header.basis.history_from,
+    row_from: 0, total_rows: 0 };
+  const state = { version: 1, implementation: CONNECTED_CAPTURE_IMPLEMENTATION, runtime: Deno.version.v8,
+    room: 0, from_at: header.basis.history_from, next_from_at: header.basis.history_from, policy: header.basis.source_policy,
+    row: 0, warnings: [], posterior: frozen.reference_state, diagnostics: { thermal_state_identified: true } };
+  for (const phase of ["qualify", "assemble"] as const) {
+    for (const available of ["valid", "absent", "corrupt"] as const) {
+      let next: Record<string, unknown> | undefined;
+      const db: ModelDatabase = { rpc(name, args) {
+        if (name === "load_energy_planning_room_capture") return Promise.resolve({ data: { cursor: 3, state: { ...state, phase },
+          frozen_model: available === "valid" ? frozen : available === "corrupt" ? {...frozen,process_belief:{}} : null, blocks: [], numeric }, error: null });
+        if (name === "load_energy_connected_inference") return Promise.resolve({ data: [], error: null });
+        assertEquals(name, "checkpoint_energy_planning_room_capture");
+        assertEquals(args.p_expected_cursor, 3); next = args.p_state as Record<string, unknown>;
+        return Promise.resolve({ data: {}, error: null });
+      } };
+      assert((await advanceConnectedPlanningCapture(db, owner, snapshot)).pending);
+      assert(next);
+      if (available !== "valid") {
+        assertEquals(next.phase, "complete");
+        assertEquals(next.nodes, undefined);
+        assertEquals(next.completed_nodes, undefined);
+        assertEquals((next.warnings as {code:string}[]).map(w => w.code), ["room_evidence_unavailable"]);
+      } else if (phase === "qualify") {
+        assertEquals(next.phase, "process");
+        assertEquals((next.process as typeof complete).belief.initial_hazard, belief.initial_hazard);
+      } else {
+        assertEquals(next.phase, "complete");
+        assertEquals((next.completed_nodes as { process_belief: unknown }[])[0].process_belief, belief);
+      }
+      assertEquals(snapshot.room_network_capture.rooms[0].connected_exchange?.process_belief, undefined);
+    }
+  }
 });

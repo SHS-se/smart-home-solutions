@@ -1,3 +1,5 @@
+import { nativeForecastTotals } from "./planner-wasm/core.ts";
+import { z } from "zod";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import { syntheticJointRoomForecast } from "./room-network-forecast.fixture.ts";
@@ -236,4 +238,20 @@ Deno.test("catalog selection preserves antithetic global addresses and missing r
   const h = structuredClone(input.beliefs[0]);
   h.hypotheses[0].posterior.covariance[0][2] = 1;
   assertThrows(() => planner.roomNetworkHeader({ belief: h }));
+});
+
+
+Deno.test("native totals validate every index and preserve the privately decoded number vector", () => {
+  const previous = z.number().finite().array();
+  const sparse = Array<number>(2); sparse[1] = 1;
+  const values = [[], [1, -0, -2.5, Number.MAX_VALUE, Number.MIN_VALUE], [null], ["0"], [true], [undefined],
+    [NaN], [Infinity], [-Infinity], [Object(4)], new Array(1), sparse, new Uint8Array([1]), {0: 1, length: 1}, null, 3];
+  for (const value of values) assertEquals(nativeForecastTotals.safeParse(value).success, previous.safeParse(value).success);
+  const wire = "[-0,1.25,3]";
+  const first = JSON.parse(wire), second = JSON.parse(wire);
+  const checked = nativeForecastTotals.parse(first);
+  assert(checked === first);
+  assert(Object.is(checked[0], -0));
+  checked[1] = 2;
+  assertEquals(second[1], 1.25);
 });

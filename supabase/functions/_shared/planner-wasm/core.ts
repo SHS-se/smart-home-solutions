@@ -158,10 +158,17 @@ const roomNetworkOutcome = z.discriminatedUnion("kind", [
   z.object({kind: z.literal("planned"), plan: roomNetworkProjection.extend({literal:roomPlan.array()})}),
 ]);
 
+// The native result has just crossed JSON.parse. Check its owned numerical
+// vectors in place before exposing the result or using it for convergence.
+export const nativeForecastTotals = z.custom<number[]>((value) => {
+  if (!Array.isArray(value)) return false;
+  for (let i = 0; i < value.length; i++) if (!Number.isFinite(value[i])) return false;
+  return true;
+});
 const numericRoomNetworkStatistics=z.object({
   trajectories:z.number().int().nonnegative(),replayed_paths:z.number().int().nonnegative(),
-  total:z.number().finite().array(),
-  replicates:z.object({trajectories:z.number().int().nonnegative(),total:z.number().finite().array()}).array(),
+  total:nativeForecastTotals,
+  replicates:z.object({trajectories:z.number().int().nonnegative(),total:nativeForecastTotals}).array(),
   infeasible:z.number().int().nonnegative().array().length(3),
 });
 const packedRoomNetworkStatistics=numericRoomNetworkStatistics.extend({

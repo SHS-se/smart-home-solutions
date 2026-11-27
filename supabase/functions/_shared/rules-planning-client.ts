@@ -1,3 +1,4 @@
+import type { ConnectedRoomForecastIdentity } from "./planner/models/room/network.ts";
 import type { OwnedPlanningOwner, OwnedPlanningAction, OwnedPlanningResponse, OwnedPlanningDispatch } from "./owned-planning-contract.ts";
 import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { PlanningError, type PlanningFailureDisposition } from "./planning-errors.ts";
@@ -30,7 +31,9 @@ export type RemoteRulesProgress =
 /** Only convergence counts are resolved by preparation. Seed, model and source
  * inputs were captured already and cannot be replaced by a worker response. */
 export function resolvedRemoteForecastCounts(input: CapturedRulesInput, prepared: PreparedRulesInput) {
-  const before = input.snapshot.room_network?.forecast, after = prepared.snapshot.room_network?.forecast;
+  return resolvedForecastCounts(input.snapshot.room_network?.forecast, prepared.snapshot.room_network?.forecast);
+}
+export function resolvedForecastCounts(before: ConnectedRoomForecastIdentity | undefined, after: ConnectedRoomForecastIdentity | undefined) {
   if (!before || after?.trajectories === undefined) return null;
   const invalid = () => new EnergyPlanningError("Planning worker changed the captured numerical identity", 502, "invalid_planning_response", "retry");
   if (before.revision !== after.revision || before.accuracy_revision !== after.accuracy_revision ||

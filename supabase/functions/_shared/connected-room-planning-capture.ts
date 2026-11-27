@@ -1,9 +1,9 @@
 import { ROOM_LEARNER_VERSION } from "./room-learner-version.ts";
 import type { ModelDatabase, RoomConnectionGraph } from "./device-model-store.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
-import type { ConnectedRoomPlanningNode } from "./planner/models/room/network.ts";
+import { connectedRoomDependencies, type ConnectedRoomPlanningNode } from "./planner/models/room/network.ts";
 import { roomPlanClock } from "./planner/models/room/state.ts";
-import { filterConnectedRoomExchange, type ConnectedFilterDiagnostics, type ConnectedRoomResponse, type ConnectedProcessBelief, type ExchangePosterior } from "./planner/models/room/connected-exchange.ts";
+import { filterConnectedRoomExchange, readConnectedRoomResponse, type ConnectedFilterDiagnostics, type ConnectedRoomResponse, type ConnectedProcessBelief, type ExchangePosterior } from "./planner/models/room/connected-exchange.ts";
 import { beginConnectedProcessInference, advanceConnectedProcessInference, connectedProcessResponse, type ConnectedProcessProgress } from "./device-learning/room/connected-process.ts";
 import { readRoomQuarters, ROOM_RESPONSE_IMPLEMENTATION, ROOM_SOURCE_IMPLEMENTATION } from "./device-model-learning/room.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
@@ -11,7 +11,7 @@ import { encodeRoomEvidenceCapture, decodeRoomEvidenceCapture, qualifyRoomEviden
 import { encodeRoomResponseFitCapture, decodeRoomResponseFitCapture, ROOM_RESPONSE_CAPTURE_REVISION } from "./device-model-learning/room-band-fit-capture.ts";
 import { thermalQuarter } from "./thermal-training.ts";
 import { assembleConnectedRoomNodes, finalizeConnectedRoomNodes } from "./room-network-capture.ts";
-import { applyConnectedRoomCapture } from "./room-model-capture.ts";
+import { applyConnectedRoomCapture, completeOwnedRoomCapture, type CompletedRoomHeader } from "./room-model-capture.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 
 import type { OwnedPlanningOwner } from "./owned-planning-contract.ts";
@@ -40,6 +40,8 @@ interface EncodedBlock { from_at: string; to_at: string; capture: string; sha256
 interface StoredCapture {
   cursor: number;
   state: CaptureState | null;
+  frozen_model?: unknown;
+  completed_headers?: CompletedRoomHeader[];
   blocks?: EncodedBlock[];
   numeric?: { capture: string | null; sha256: string; full_sha256: string; from_at: string; row_from: number; total_rows: number } | null;
 }
@@ -59,7 +61,7 @@ export const CONNECTED_CAPTURE_IMPLEMENTATION = `${ROOM_RESPONSE_IMPLEMENTATION}
  * Source qualification sees the complete frozen population for one receiver.
  * Filtering carries its posterior across requests without refitting parameters. */
 export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: ConnectedPlanningOwner,
-  snapshot: OptimisationSnapshot, options: { retainParentLease?: boolean } = {}): Promise<{ pending: boolean; snapshot?: OptimisationSnapshot; receipt?: unknown }> {
+  snapshot: OptimisationSnapshot, options: { retainParentLease?: boolean } = {}): Promise<{ pending: boolean; snapshot?: OptimisationSnapshot; completed_node_keys?: string[]; receipt?: unknown }> {
   const pending = snapshot.room_network_capture;
   if (!pending?.rooms.length) return { pending: false, snapshot };
   const rpc = async <T>(name: string, body: Record<string, unknown>): Promise<T> => {
@@ -68,33 +70,45 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
     return data as T;
   };
   const identity = { p_home_id: owner.home_id, p_job_id: owner.job_id, p_fence: owner.fence };
-  const saved = await rpc<StoredCapture | null>("load_energy_planning_room_capture", identity);
+  const saved = await rpc<StoredCapture | null>("load_energy_planning_room_capture", { ...identity, p_node_delta: true, ...(options.retainParentLease && {p_project_completed:true}) });
   if (!saved) return { pending: true };
   const through = roomPlanClock(snapshot).start_ms, toAt = new Date(through).toISOString();
-  const startRoom = (index: number, nodes: ConnectedRoomPlanningNode[] | undefined, warnings: PlanningWarning[]): CaptureState => {
+  const startRoom = (index: number, warnings: PlanningWarning[]): CaptureState => {
     const model = pending.rooms[index]?.connected_exchange;
     const from_at = new Date(Math.min(Date.parse(model?.basis.history_from ?? toAt), through)).toISOString();
     return { version: 1, implementation: CONNECTED_CAPTURE_IMPLEMENTATION, runtime: Deno.version.v8, room: index, phase: index < pending.rooms.length ? "source" : "complete",
-      from_at, next_from_at: from_at, policy: null, row: 0, nodes, warnings };
+      from_at, next_from_at: from_at, policy: null, row: 0, warnings };
   };
-  const checkpoint = async (next: CaptureState, raw: unknown = null, numeric: unknown = null, proof: unknown = null) => ({ pending: true,
+  const checkpoint = async (next: CaptureState & { completed_nodes?: ConnectedRoomPlanningNode[] }, raw: unknown = null, numeric: unknown = null, proof: unknown = null) => ({ pending: true,
     receipt: await rpc(options.retainParentLease ? "checkpoint_energy_owned_room_capture" : "checkpoint_energy_planning_room_capture", { ...identity, p_expected_cursor: saved.cursor,
       p_state: next, p_raw: raw, p_numeric: numeric, p_source_proof: proof }) });
-  const state = saved.state ?? startRoom(0, [], []);
+  const state = saved.state ?? startRoom(0, []);
   // Optimizer coordinates and covariance are executable state. A deployment
   // restarts this derived preparation inside the same admitted attempt.
   if (state.version !== 1 || state.implementation !== CONNECTED_CAPTURE_IMPLEMENTATION || state.runtime !== Deno.version.v8 ||
     !Number.isSafeInteger(state.room) || state.room < 0 || state.room > pending.rooms.length) {
-    return checkpoint(startRoom(0, [], []));
+    return checkpoint({ ...startRoom(0, []), nodes: [] });
   }
   if (state.phase === "complete") {
-    const network = finalizeConnectedRoomNodes(state.nodes!);
+    if (options.retainParentLease) {
+      const network = finalizeConnectedRoomNodes(saved.completed_headers!, node => node.required_peers);
+      return { pending: false, ...completeOwnedRoomCapture(snapshot, network.nodes, [...state.warnings, ...network.warnings]) };
+    }
+    const network = finalizeConnectedRoomNodes(state.nodes!, connectedRoomDependencies);
     return { pending: false, snapshot: applyConnectedRoomCapture(snapshot, network.nodes, [...state.warnings, ...network.warnings]) };
   }
-  const room = pending.rooms[state.room], model = state.process_response ?? room.connected_exchange;
-  const skipRoom = (error: unknown) => checkpoint(startRoom(state.room + 1, state.nodes, [...state.warnings,
+  const room = pending.rooms[state.room];
+  let model = state.process_response ?? room.connected_exchange;
+  const skipRoom = (error: unknown) => checkpoint(startRoom(state.room + 1, [...state.warnings,
     planningWarning("room_evidence_unavailable", room.key, `${room.name}: connected-room evidence could not be captured.`,
       "Existing comfort instructions and measured electrical demand remain active.", { reason: error instanceof Error ? error.message : String(error) })]));
+  // Only qualification and assembly without a newly inferred response consume
+  // the accepted population. All other phases need its small physical body.
+  if (room.connected_reference && (state.phase === "qualify" || state.phase === "assemble" && !state.process_response)) {
+    const frozen = readConnectedRoomResponse(saved.frozen_model);
+    if (!frozen?.process_belief) return await skipRoom(new Error("Missing or invalid frozen room exchange population"));
+    model = frozen;
+  }
   if (!model) return skipRoom(new Error("Missing captured receiving response"));
 
   if (state.phase === "source") {
@@ -265,5 +279,5 @@ export async function advanceConnectedPlanningCapture(db: ModelDatabase, owner: 
   if (state.phase !== "assemble" || !state.posterior || !state.diagnostics) throw new Error("Invalid connected planning assembly");
   const assembled = assembleConnectedRoomNodes(snapshot, [{ room, model, rows, filtered: { posterior: state.posterior, diagnostics: state.diagnostics } }],
     new Map(pending.observations), pending.rooms.flatMap(room => room.connected_exchange ? [room.connected_exchange] : []));
-  return checkpoint(startRoom(state.room + 1, [...state.nodes!, ...assembled.nodes], [...state.warnings, ...assembled.warnings]));
+  return checkpoint({ ...startRoom(state.room + 1, [...state.warnings, ...assembled.warnings]), completed_nodes: assembled.nodes });
 }

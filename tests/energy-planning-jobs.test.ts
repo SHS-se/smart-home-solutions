@@ -1755,8 +1755,31 @@ Deno.test('completed admission is frozen by reference with its exact JSON text a
     const getResult = () => value<{snapshot:unknown;snapshot_hash:string;input?:unknown}|null>('load_energy_owned_planning_result($1,$2,$3)',scope);
     assertEquals(await getResult(),null);
     const read = (args:unknown[]) => value('read_energy_owned_snapshot_for_hash($1,$2,$3,$4)',args);
+    await db.exec(await migration('20261127122000_stream_owned_snapshot_hash'));
+    const readPart = (args:unknown[]) => value('read_energy_owned_snapshot_for_hash($1,$2,$3,$4,$5)',args);
+    const signature='public.read_energy_owned_snapshot_for_hash(uuid,uuid,bigint,bigint,integer)';
+    for(const role of ['anon','authenticated','service_role']) {
+      assertEquals(await value('has_function_privilege($1,$2,$3)',[role,signature,'execute']),role==='service_role');
+    }
     const exact = await read([...scope,9]);
     assertEquals(exact,JSON.parse(input).snapshot);
+    assertEquals(await readPart([...scope,9,null]),{snapshot:{snapshot_id:snapshot,room_network:{nodes:[]}},node_count:1});
+    assertEquals(await readPart([...scope,9,0]),{value:123});
+    for(const invalid of [[other,owner.id,owner.fence,9],[home,owner.id,owner.fence+1,9],[...scope,8],[home,owner.id,null,9]]) {
+      assertEquals(await readPart([...invalid,0]),null);
+      assertEquals(await readPart([...invalid,null]),null);
+    }
+    assertEquals(await readPart([...scope,9,-1]),null);
+    assertEquals(await readPart([...scope,9,1]),null);
+    // A lease can expire after the header was read and before the next node.
+    await db.exec('BEGIN');
+    try {
+      await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[owner.id]);
+      assertEquals(await readPart([...scope,9,0]),null);
+      await db.query("UPDATE private.energy_planning_jobs SET fence=fence+1,lease_until=clock_timestamp()+interval '1 minute' WHERE id=$1",[owner.id]);
+      assertEquals(await readPart([...scope,9,0]),null);
+      assertEquals(await readPart([home,owner.id,owner.fence+1,9,0]),{value:123});
+    } finally { await db.exec('ROLLBACK'); }
     const {sha256Hex} = await import('../supabase/functions/_shared/ha-device-auth.ts');
     const digest = await sha256Hex(JSON.stringify(exact));
     const seal = (args:unknown[]) => value<{phase:string}|null>('seal_energy_owned_planning_snapshot($1,$2,$3,$4,$5,$6,$7)',args);
@@ -1771,6 +1794,7 @@ Deno.test('completed admission is frozen by reference with its exact JSON text a
     assertEquals((await seal(valid))?.phase,'ready');
     assertEquals(await seal([...valid.slice(0,-1),'f'.repeat(64)]),null,'duplicate cannot replace digest');
     assertEquals(await read([...scope,9]),null);
+    assertEquals(await readPart([...scope,9,0]),null);
     const sealed=await getResult();
     assertEquals(sealed?.snapshot,{snapshot_id:snapshot});
     assertEquals(sealed?.snapshot_hash,digest);
@@ -1907,14 +1931,16 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
   try {
     await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
     await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
-    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid,state json);');
+    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid,state jsonb,cursor integer DEFAULT 42,completed_nodes jsonb DEFAULT \'[]\');');
     // Source qualification/replay has separate actual SQL tests. This fixture
     // starts at its completed immutable state; every subsequent RPC is production.
-    await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint) RETURNS json LANGUAGE sql AS $$
+    await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint,p_node_delta boolean) RETURNS json LANGUAGE sql AS $$
       SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
     await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
     await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
     await db.exec(await migration('20261126200000_seal_owned_planning_snapshots'));
+    await db.exec(await migration('20261127121000_owned_planning_room_projections'));
+    await db.exec(await migration('20261127122000_stream_owned_snapshot_hash'));
     const connected = connectedRoomSnapshot(); connected.snapshot_id = snapshot;
     connected.operating_scope = { modes: { $battery:'controlling',$pool:'controlling',$ev:'controlling','synthetic-a':'controlling' },
       device_owners: { 'synthetic-a-heater':'synthetic-a' }, external_demands: {} };
@@ -1932,17 +1958,18 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     const original = JSON.parse(JSON.stringify(input));
     const args = { ...capturedSubmission(snapshot,{model_version:RULES_MODEL_VERSION,accepted_reference_revision:0}),input,protocol:RULES_PLANNING_PROTOCOL };
     const accepted = await rpc<Receipt>(db,'accept_energy_planning_job',args);
-    await db.query('INSERT INTO private.energy_planning_room_capture VALUES($1,$2)',[accepted.job_id,JSON.stringify({version:1,
+    await db.query('INSERT INTO private.energy_planning_room_capture(job_id,state,completed_nodes) VALUES($1,$2,$3)',[accepted.job_id,JSON.stringify({version:1,
       implementation:CONNECTED_CAPTURE_IMPLEMENTATION,runtime:Deno.version.v8,room:nodes.length,phase:'complete',
-      from_at:admitted.captured_at,next_from_at:admitted.captured_at,policy:null,row:0,nodes,warnings:[]})]);
+      from_at:admitted.captured_at,next_from_at:admitted.captured_at,policy:null,row:0,warnings:[]}),JSON.stringify(nodes)]);
     const calls: string[] = [], bytes = { http_request:0,http_response:0,db_request:0,db_response:0,http_calls:0,max_http_request:0,max_http_response:0 };
-    let publication: Record<string,unknown> | undefined;
+    let publication: Record<string,unknown> | undefined, catalogIdentity: string | undefined;
     const stageCheckpoints: {phase:string;pending:boolean;next_room?:number}[] = [];
     const client = createClient('http://localhost:54321','synthetic-service',{auth:{persistSession:false},global:{fetch:async(url,init)=>{
       const name = String(url).split('/').at(-1)!; const body = JSON.parse(String(init?.body??'{}'));
       if (!String(url).includes('/rpc/')) return Response.json([]);
       calls.push(name); bytes.db_request+=new TextEncoder().encode(String(init?.body??'')).length;
       if(name==='publish_energy_planning_job') publication=body;
+      if(name==='read_energy_forecast_records') catalogIdentity=body.p_identity;
       if(name==='checkpoint_energy_owned_planning_stage') {
         const update=body.p_update;
         const progress=update.phase==='prepare'&&update.payload ? await unpackOwnedPlanningValue<{forecast_pending?:true;next_room:number}>(update.payload) : null;
@@ -1954,7 +1981,7 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
         const names = Object.keys(body); assert(names.every(key=>/^[a-z_]+$/.test(key)));
         const named = signatures.some(signature=>signature.proargnames?.includes(names[0]));
         const query = named ? `SELECT public.${name}(${names.map((key,i)=>`${key}=>$${i+1}`).join(',')}) AS value` : `SELECT public.${name}($1::json) AS value`;
-        const values = named ? names.map(key=>typeof body[key]==='object'?JSON.stringify(body[key]):body[key]) : [JSON.stringify(body)];
+        const values = named ? names.map(key=>body[key]!==null && typeof body[key]==='object'?JSON.stringify(body[key]):body[key]) : [JSON.stringify(body)];
         const data = (await db.query<{value:unknown}>(query,values)).rows[0].value;
         const response=Response.json(data); bytes.db_response+=(await response.clone().arrayBuffer()).byteLength; return response;
       } catch(error) { return Response.json({message:(error as Error).message,code:(error as {code?:string}).code??'XX000'},{status:500}); }
@@ -1997,6 +2024,13 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
     const hash=await sha256Hex(JSON.stringify(archived.snapshot));
     assertEquals((publication!.current as {input_hash:string}).input_hash,hash);
     assertEquals((publication!.run as {input_hash:string}).input_hash,hash);
+    const { prepareCapturedRoomProposals } = await import('../supabase/functions/_shared/rules-planning-execution.ts');
+    const beforeForecast=structuredClone(archived);
+    beforeForecast.snapshot.room_network!.forecast=(await import('../supabase/functions/_shared/room-network-contract.ts')).connectedRoomForecastIdentity();
+    let local=prepareCapturedRoomProposals(beforeForecast,null);
+    while(!local.forecast && local.room_progress) local=prepareCapturedRoomProposals(beforeForecast,local.room_progress);
+    assert(local.forecast);
+    assertEquals(catalogIdentity,local.forecast.nativeInput.identity);
     const downloaded=JSON.parse(JSON.stringify(replayExecution({input:archived,snapshot_hash:hash,planner_version:archived.model_version,runtime_version:Deno.version.v8})));
     assertEquals(downloaded.entrypoint.export,'executeRulesPlanning');
     assertEquals(JSON.parse(JSON.stringify(executeRulesPlanning(downloaded.entrypoint.arguments).plan)),JSON.parse(JSON.stringify(receipt.plan)));

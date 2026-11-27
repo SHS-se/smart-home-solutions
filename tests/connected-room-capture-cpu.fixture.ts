@@ -62,7 +62,8 @@ export function connectedCaptureReplay(input: ConnectedCpuCheckpoint) {
       switch (name) {
         case "load_energy_planning_room_capture": {
           const state = saved.state ? { ...saved.state } : null;
-          if (state && ['process', 'reuse', 'filter'].includes(String(state.phase))) delete state.nodes;
+          assertEquals(args.p_node_delta, true);
+          if (state && state.phase !== "complete") delete state.nodes;
           let numeric: unknown = saved.numeric;
           if (saved.numeric) {
             const full = saved.numeric;
@@ -130,10 +131,12 @@ export function connectedCaptureReplay(input: ConnectedCpuCheckpoint) {
               header_bytes: number;
               row_bytes: number;
             } | null;
+          const { completed_nodes, ...update } = boundary.p_state as Record<string, unknown>;
+          const nodes = (saved.state?.nodes ?? []) as unknown[];
           saved = {
             ...saved,
             cursor: saved.cursor + 1,
-            state: { ...(saved.state?.nodes ? {nodes: saved.state.nodes} : {}), ...boundary.p_state as Record<string, unknown> },
+            state: { nodes: nodes.concat(completed_nodes ?? []), ...update },
             ...(numeric
               ? {
                 numeric: {

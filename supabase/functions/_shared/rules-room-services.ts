@@ -1,6 +1,5 @@
-import { connectedRoomDependencies } from "./planner/models/room/network.ts";
 import type { RoomNetworkWork } from "./room-network-contract.ts";
-import { prepareConnectedRoomStage, advanceConnectedRoomBarrier, compileConnectedRoomForecast, type ConnectedRoomForecastRequest } from "./rules-connected-room-services.ts";
+import { prepareConnectedRoomStage, advanceConnectedRoomBarrier, compileConnectedRoomForecast, compileConnectedRoomCatalog, proposalDependencies, type ConnectedRoomCatalog, type ConnectedRoomProposalNetwork, type ConnectedRoomForecastRequest } from "./rules-connected-room-services.ts";
 import type { RoomHeatingPlan } from "./room-heating-schedule.ts";
 import { compileRoomSchedule, storeRoomCommands, electricalSource, retainedRoomTarget } from "./room-scheduling-inputs.ts";
 import { heatingDraw } from "./planner/weather-heating.ts";
@@ -40,6 +39,7 @@ export interface RoomPrices {
 
 export interface RoomPlanningInputs {
   snapshot: OptimisationSnapshot;
+  proposal_network?: ConnectedRoomProposalNetwork;
   retained: Retained;
   headroom?: number[];
   prices?: RoomPrices;
@@ -78,17 +78,24 @@ export function prepareRoomProposals(inputs: RoomPlanningInputs, trace?: Plannin
   return { progress, ...(captured_forecast ? { forecast: captured_forecast } : {}) };
 }
 
+export function prepareOwnedRoomProposals(inputs: RoomPlanningInputs, previous: RoomPreparationProgress | null, trace?: PlanningTrace) {
+  const { catalog, ...progress } = advanceRoomPreparation(inputs, trace, previous, 1, "catalog");
+  return { progress, catalog };
+}
+
 /** Process the next room in the same order as local preparation. */
-function advanceRoomPreparation({ snapshot, retained, headroom, prices }: RoomPlanningInputs,
+function advanceRoomPreparation(inputs: RoomPlanningInputs,
   trace: PlanningTrace | undefined, previous: RoomPreparationProgress | null, limit: number,
-  completion: "evaluate" | "capture"): RoomPreparationProgress & { captured_forecast?: ConnectedRoomForecastRequest } {
+  completion: "evaluate" | "capture" | "catalog"): RoomPreparationProgress & { captured_forecast?: ConnectedRoomForecastRequest; catalog?: ConnectedRoomCatalog } {
+  const { snapshot, retained, headroom, prices } = inputs;
+  const roomNetwork = inputs.proposal_network ?? snapshot.room_network;
   const zones = snapshot.thermal_zones ?? [];
   const start = previous?.next_room ?? 0;
   const n = snapshot.slots.length;
   if (previous && (previous.snapshot_id !== snapshot.snapshot_id || !Number.isInteger(start) || start <= 0 || start > zones.length || start === zones.length && !previous.network_work && !previous.forecast_pending)) {
     throw new PlanningInputError("Room preparation continuation does not match the captured snapshot");
   }
-  if(previous?.forecast_pending && (previous.forecast_pending !== true || start !== zones.length || previous.network_work || !snapshot.room_network)) {
+  if(previous?.forecast_pending && (previous.forecast_pending !== true || start !== zones.length || previous.network_work || !roomNetwork)) {
     throw new PlanningInputError("Forecast compilation continuation does not match completed proposals");
   }
   const result: RoomServices = previous?.services ?? {
@@ -114,7 +121,7 @@ function advanceRoomPreparation({ snapshot, retained, headroom, prices }: RoomPl
   const resetConnected=(keys:string[],error:unknown,completed:Zone[])=>{
     const affected=new Set(keys);
     for(;;){const before=affected.size;
-      for(const node of snapshot.room_network?.nodes??[])for(const from of connectedRoomDependencies(node)){
+      for(const node of roomNetwork?.nodes??[])for(const from of proposalDependencies(node)){
         if(affected.has(node.key)||affected.has(from)){affected.add(node.key);affected.add(from);}
       }
       if(affected.size===before)break;
@@ -139,7 +146,7 @@ function advanceRoomPreparation({ snapshot, retained, headroom, prices }: RoomPl
     const thermostats = members.filter(m => m.control_type === "setpoint");
     let network: Record<string,RoomHeatingPlan> | undefined;
     try {
-      if (!disabled.has(zone.key)) network=prepareConnectedRoomStage({snapshot,retained,headroom,prices},zone,result,networkPlans,disabled,trace);
+      if (!disabled.has(zone.key)) network=prepareConnectedRoomStage(inputs,zone,result,networkPlans,disabled,trace);
     } catch(error) {
       resetConnected([zone.key],error,zones.slice(0,zones.indexOf(zone)+1));
       complete?.();continue;
@@ -172,13 +179,13 @@ function advanceRoomPreparation({ snapshot, retained, headroom, prices }: RoomPl
     const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
-    const connectedModel=snapshot.room_network?.nodes.find(node=>node.key===zone.key)?.model;
+    const connectedModel=roomNetwork?.nodes.find(node=>node.key===zone.key)?.model;
     const limitedFit = roomResponseEvidenceLimited(zone.model_warnings) || !!connectedModel && !connectedRoomHeaterSupported(connectedModel);
     if (!disabled.has(zone.key) && !limitedFit && !executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && !isEquilibrium(zone.model) && temperature !== null &&
       outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && heaterResponse(zone.model) >= 0 && (isEquilibrium(zone.model) || zone.model.cooling_constant_per_h >= 0)) {
       const scheduled = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       comfortMisses=scheduled.misses;
-      if(snapshot.room_network)networkPlans={...networkPlans,[zone.key]:scheduled.plan};
+      if(roomNetwork)networkPlans={...networkPlans,[zone.key]:scheduled.plan};
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
       complete?.();
       continue;
@@ -186,19 +193,20 @@ function advanceRoomPreparation({ snapshot, retained, headroom, prices }: RoomPl
     prepareEmpiricalRoom(snapshot, disabled.has(zone.key) ? {...zone,model:null} : zone, retained, remaining, surplus, result);
     complete?.();
   }
-  let networkWork:RoomNetworkWork|undefined, capturedForecast:ConnectedRoomForecastRequest|undefined;
+  let networkWork:RoomNetworkWork|undefined, capturedForecast:ConnectedRoomForecastRequest|undefined, catalog:ConnectedRoomCatalog|undefined;
   // Whole-network compilation and catalog materialization must not share the
   // final room's bounded CPU request. Unbounded local execution uses the same
   // operations directly; the marker only records the durable pause boundary.
-  const forecastPending=next_room===zones.length && !!snapshot.room_network && Number.isFinite(limit) && start<zones.length;
-  if(next_room===zones.length && snapshot.room_network && !forecastPending){
+  const forecastPending=next_room===zones.length && !!roomNetwork && Number.isFinite(limit) && start<zones.length;
+  if(next_room===zones.length && roomNetwork && !forecastPending){
     try {
-      if (completion === "capture") capturedForecast=compileConnectedRoomForecast({snapshot,retained,headroom,prices},result,networkPlans,disabled);
-      else networkWork=advanceConnectedRoomBarrier({snapshot,retained,headroom,prices},result,networkPlans,disabled,previous?.network_work,trace,Number.isFinite(limit)&&start<zones.length);
+      if (completion === "catalog") catalog=compileConnectedRoomCatalog(inputs,result,networkPlans,disabled);
+      else if (completion === "capture") capturedForecast=compileConnectedRoomForecast(inputs,result,networkPlans,disabled);
+      else networkWork=advanceConnectedRoomBarrier(inputs,result,networkPlans,disabled,previous?.network_work,trace,Number.isFinite(limit)&&start<zones.length);
     }
-    catch(error){resetConnected(snapshot.room_network.nodes.filter(node=>!disabled.has(node.key)).map(node=>node.key),error,zones);}
+    catch(error){resetConnected(roomNetwork.nodes.filter(node=>!disabled.has(node.key)).map(node=>node.key),error,zones);}
   }
-  return {snapshot_id: snapshot.snapshot_id, next_room, services: result, ...(networkPlans ? {network_plans: networkPlans} : {}), ...(disabled.size ? {network_disabled_keys:[...disabled]} : {}), ...(networkWork?{network_work:networkWork}:{}), ...(capturedForecast?{captured_forecast:capturedForecast}:{}), ...(forecastPending?{forecast_pending:true as const}:{})};
+  return {snapshot_id: snapshot.snapshot_id, next_room, services: result, ...(networkPlans ? {network_plans: networkPlans} : {}), ...(disabled.size ? {network_disabled_keys:[...disabled]} : {}), ...(networkWork?{network_work:networkWork}:{}), ...(capturedForecast?{captured_forecast:capturedForecast}:{}), ...(catalog?{catalog}:{}), ...(forecastPending?{forecast_pending:true as const}:{})};
 }
 
 export type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];

@@ -16,6 +16,8 @@ import type {
   NativeRoomReplica,
 } from "../supabase/functions/_shared/room-network-contract.ts";
 import { connectedAdmissionCpuInput, runConnectedAdmissionCpu } from "./connected-room-admission-cpu.fixture.ts";
+import type { ConnectedRoomResponse } from "../supabase/functions/_shared/planner/models/room/connected-exchange.ts";
+import { projectedPlanningNetwork } from "../supabase/functions/_shared/room-network.fixture.ts";
 import { applyConnectedRoomCapture } from "../supabase/functions/_shared/room-model-capture.ts";
 import type { ConnectedRoomForecastRequest } from "../supabase/functions/_shared/rules-connected-room-services.ts";
 
@@ -25,6 +27,7 @@ export const CONNECTED_REPLICA_CPU_PHASES = [
   "resumed",
   "qualify",
   "finish",
+  "apply",
 ] as const;
 export type ConnectedReplicaCpuPhase =
   typeof CONNECTED_REPLICA_CPU_PHASES[number];
@@ -46,6 +49,8 @@ async function preparationFixtures(stiff: boolean, wide: boolean) {
     null,
     resolveRulePolicy(),
   );
+  const { room_network, ...snapshot } = capture.snapshot;
+  const projected = { input: { ...capture, snapshot }, proposal_network: projectedPlanningNetwork(room_network!) };
   const fixtures: Uint8Array<ArrayBuffer>[] = [];
   let previous: Parameters<typeof prepareCapturedRoomProposals>[1] = null;
   for (let room = 0;; room++) {
@@ -64,7 +69,7 @@ async function preparationFixtures(stiff: boolean, wide: boolean) {
                 replicas: [],
               },
               slice_fence: 1,
-              input: capture,
+              ...projected,
               payload: previous ? await packOwnedPlanningValue(previous) : null,
             },
           } satisfies ConnectedReplicaCpuFixture,
@@ -161,11 +166,12 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
 /** A cold request and a resumed request on the same warm worker. The source
  * is the independently generated 13-room, 13,312-particle admission fixture. */
 export async function connectedDenseReplicaCpuInput() {
-  const fixture = JSON.parse(new TextDecoder().decode(connectedAdmissionCpuInput()));
+  const frozen = new Map<string, ConnectedRoomResponse>();
+  const fixture = JSON.parse(new TextDecoder().decode(connectedAdmissionCpuInput((key, model) => frozen.set(key, model))));
   const {serialized} = await runConnectedAdmissionCpu(fixture);
   const capture = JSON.parse(serialized).input as CapturedRulesInput;
   const nodes = capture.snapshot.room_network_capture!.rooms.map(room => {
-    const response = room.connected_exchange!, belief = response.process_belief!;
+    const response = frozen.get(room.key)!, belief = response.process_belief!;
     const posterior = belief.hypotheses[0].posterior;
     return {
       key: room.key, model: {...response, reference_state: posterior, process_belief: undefined},
@@ -286,6 +292,7 @@ export async function connectedReplicaCpuInputs(): Promise<
       }
     }
   }
+  const { room_network, ...snapshot } = capture.snapshot;
   const contextBytes = await packOwnedPlanningValue({
     progress: next.room_progress,
     forecast: context,
@@ -311,15 +318,13 @@ export async function connectedReplicaCpuInputs(): Promise<
         seed: input.seed,
         identity: input.identity,
       }),
-      node: await packOwnedPlanningValue(input.beliefs[0]),
+      catalog_source: { key: input.network.nodes[0].key, node: room_network!.nodes.find(node => node.key === input.network.nodes[0].key) ?? null },
     },
     qualify: {
       dispatch: { ...dispatch, phase: "qualify" },
       slice_fence: 1,
       identity: input.identity,
-      input: capture,
       header,
-      context: contextBytes,
       replicas: await Promise.all(
         complete.map(async (work, replica) => ({
           replica,
@@ -340,6 +345,12 @@ export async function connectedReplicaCpuInputs(): Promise<
       captured_target: 64,
     }),
   };
+  const merged = planner.roomNetworkMerge({network: input.network, seed: input.seed, identity: input.identity, replicas: complete});
+  const {trajectories,replayed_paths,replicates} = merged.statistics;
+  const qualified = {output:planner.roomNetworkFinalize({network:input.network,work:merged.work}),
+    counts:{trajectories,replayed_paths,replicates:replicates.map(({trajectories}) => ({trajectories}))}};
+  fixtures.apply = {dispatch:{...dispatch,phase:"qualify"},slice_fence:1,identity:input.identity,
+    input:{...capture,snapshot},forecast:room_network!.forecast,context:contextBytes,qualified:await packOwnedPlanningValue(qualified)};
   return Object.fromEntries(
     CONNECTED_REPLICA_CPU_PHASES.map(
       (phase) => [
@@ -433,10 +444,16 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture) {
           (checkpoint.p_update as { node: number }).node,
           0,
         );
-      } else {assertEquals(
-          (checkpoint.p_update as { phase: string }).phase,
-          fixture.phase === "finish" ? "solve" : "integrate",
-        );}
+      } else if (fixture.phase === "finish") {
+        const update = checkpoint.p_update as {phase:string;qualified:string};
+        assertEquals(update.phase, "qualify");
+        const result = await unpackOwnedPlanningValue<{counts:{trajectories:number}}>(update.qualified);
+        assertEquals(result.counts.trajectories, 64);
+      } else if (fixture.phase === "apply") {
+        const update = checkpoint.p_update as {phase:string;forecast_counts:{trajectories:number}};
+        assertEquals(update.phase, "solve");
+        assertEquals(update.forecast_counts.trajectories, 64);
+      } else assertEquals((checkpoint.p_update as {phase:string}).phase, "integrate");
       return { requestBytes, responseBytes };
     },
   };

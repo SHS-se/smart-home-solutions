@@ -1,5 +1,5 @@
 /** Compact orchestration wire. Numerical artifacts never pass through ingestion. */
-export const OWNED_PLANNING_REVISION = "owned_replicas_v1";
+export const OWNED_PLANNING_REVISION = "owned_replicas_v2";
 export interface OwnedPlanningOwner { home_id: string; job_id: string; fence: number }
 export type OwnedPlanningAction = { kind: "advance" } | { kind: "replica"; replica: 0 | 1 | 2 | 3 };
 export interface OwnedPlanningDispatch {

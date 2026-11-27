@@ -1,4 +1,5 @@
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows, assertRejects } from "@std/assert";
+import { ownedPlanningBase64, unpackOwnedPlanningValue, OwnedPlanningArtifactError } from "./owned-planning-codec.ts";
 import { compressForecastValue, decompressForecastValue, encodeForecastCatalogPages, forecastCatalogRecordText } from "./room-forecast-catalog.ts";
 
 Deno.test("synthetic posterior catalog addresses UTF-8 records without splitting or dropping oversized states", () => {
@@ -31,4 +32,9 @@ Deno.test("compressed immutable forecast context round trips exact synthetic JSO
   const bytes = await compressForecastValue(context);
   assert(bytes.length < new TextEncoder().encode(JSON.stringify(context)).length);
   assertEquals(await decompressForecastValue(bytes), context);
+  const encoded = ownedPlanningBase64(bytes);
+  assertEquals(await unpackOwnedPlanningValue(encoded), context);
+  assertEquals(await unpackOwnedPlanningValue(" \n" + encoded.replace(/=+$/, "")), context);
+  await assertRejects(() => unpackOwnedPlanningValue("invalid!"), OwnedPlanningArtifactError);
+  await assertRejects(() => unpackOwnedPlanningValue(btoa("invalid gzip")), OwnedPlanningArtifactError);
 });

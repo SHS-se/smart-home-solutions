@@ -10,7 +10,7 @@ import {
   forecastConnectedExchange,
 } from "./planner/models/room/connected-exchange.ts";
 import { connectedIntegrationAccuracy } from "./planner/models/room/ensemble-accuracy.ts";
-import { connectedRoomDependencies } from "./planner/models/room/network.ts";
+import { connectedRoomDependencies, type ConnectedRoomPlanningNode, type ConnectedRoomForecastIdentity } from "./planner/models/room/network.ts";
 import { roomPlanClock } from "./planner/models/room/state.ts";
 import { isThermostat } from "./planner/thermostat.ts";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
@@ -37,6 +37,14 @@ import {
   type RoomNetworkWork,
 } from "./room-network-contract.ts";
 
+/** A proposal uses winner physics and exact dependency order. The execution archive owns the populations. */
+export type ConnectedRoomProposalNode = Omit<ConnectedRoomPlanningNode, "process_belief"> & {
+  required_peers: string[]; hypothesis_peers: string[];
+};
+export interface ConnectedRoomProposalNetwork { forecast: ConnectedRoomForecastIdentity; nodes: ConnectedRoomProposalNode[] }
+export function proposalDependencies(node: ConnectedRoomPlanningNode | ConnectedRoomProposalNode) {
+  return "required_peers" in node ? node.required_peers : connectedRoomDependencies(node);
+}
 /** The final barrier includes disconnected identified thermal rooms using their
  * original compiled transitions. Empirical-only demand remains a fixed ledger
  * entry. Thus later stochastic demand cannot invalidate an interleaved room. */
@@ -48,7 +56,7 @@ function compileNetwork(
   disabled: ReadonlySet<string>,
 ) {
   const { snapshot, retained, prices } = inputs,
-    network = snapshot.room_network;
+    network = inputs.proposal_network ?? snapshot.room_network;
   if (
     snapshot.schema_version < 12 || !network ||
     (zone && !network.nodes.some((node) => node.key === zone.key))
@@ -133,18 +141,14 @@ function compileNetwork(
     elapsed += hours;
     return start;
   });
-  const beliefs: NativeRoomNetworkBelief[] = [];
   const nativeNodes: NativeRoomNetworkInput["nodes"] = nodes.map((node) => {
     const response = node.model,
       thermal = response.thermal,
       heater = thermal.heater;
-    const incoming = zone
-      ? response.incoming
-      : node.process_belief.hypotheses.flatMap((h) => h.incoming);
-    const requiredPeers = new Set(connectedRoomDependencies(node));
-    const peerKeys = [
-      ...new Set([...incoming.map((edge) => edge.from), ...requiredPeers]),
-    ];
+    const incomingPeers = zone ? response.incoming.map(edge => edge.from)
+      : "hypothesis_peers" in node ? node.hypothesis_peers : node.process_belief.hypotheses.flatMap(h => h.incoming.map(edge => edge.from));
+    const requiredPeers = new Set(proposalDependencies(node));
+    const peerKeys = [...new Set([...incomingPeers, ...requiredPeers])];
     const topology = peerKeys.flatMap((from) => {
       const index = nodeIndex.get(from);
       if (index === undefined) {
@@ -158,37 +162,6 @@ function compileNetwork(
         return [];
       }
       return [{ from, index }];
-    });
-    beliefs.push({
-      bounded_thermal: node.initial_state === "bounded_thermal",
-      thermal_noise_c2_per_h: response.thermal_noise_c2_per_h,
-      reset_priors: node.process_belief.reset_priors?.map((prior) => ({
-        ...prior,
-        from: nodeIndex.get(prior.from)!,
-      })),
-      hypotheses: connectedProcessWeightedHypotheses(node.process_belief).map(
-        (h) => {
-          const selected = h.incoming.flatMap((edge, index) => {
-            const from = nodeIndex.get(edge.from);
-            if (from === undefined) {
-              if (
-                edge.kind === "constant" && edge.per_h === 0 &&
-                !requiredPeers.has(edge.from)
-              ) return [];
-              throw new Error("Missing hypothesis peer");
-            }
-            return [{ edge: { ...edge, from }, index }];
-          });
-          return {
-            log_weight: h.log_weight,
-            posterior: h.posterior,
-            incoming: selected.map((value) => value.edge),
-            hazards: h.hazards
-              ? selected.map((value) => h.hazards![value.index])
-              : undefined,
-          };
-        },
-      ),
     });
     return {
       key: node.key,
@@ -246,11 +219,6 @@ function compileNetwork(
           memory_scale: q.memory_scale ?? null,
         })),
       });
-      beliefs.push({
-        hypotheses: [],
-        thermal_noise_c2_per_h: 0,
-        bounded_thermal: true,
-      });
     }
   }
   const native: NativeRoomNetworkInput = {
@@ -274,7 +242,45 @@ function compileNetwork(
       ? { accepted: compiled.map((room) => accepted[room.zone.key]) }
       : {}),
   };
-  return { native, beliefs, compiled, stage };
+  return { native, compiled, stage };
+}
+/** Compile exactly one catalogue entry, irrespective of where its source was stored. */
+export function compileConnectedNodeBelief(node: ConnectedRoomPlanningNode | null, native: NativeRoomNetworkInput): NativeRoomNetworkBelief {
+  if (!node) return { hypotheses: [], thermal_noise_c2_per_h: 0, bounded_thermal: true };
+  const nodeIndex = new Map(native.nodes.map((node, index) => [node.key, index]));
+  const requiredPeers = new Set(connectedRoomDependencies(node));
+  const response = node.model;
+  return {
+    bounded_thermal: node.initial_state === "bounded_thermal",
+    thermal_noise_c2_per_h: response.thermal_noise_c2_per_h,
+    reset_priors: node.process_belief.reset_priors?.map((prior) => ({
+      ...prior,
+      from: nodeIndex.get(prior.from)!,
+    })),
+    hypotheses: connectedProcessWeightedHypotheses(node.process_belief).map(
+      (h) => {
+        const selected = h.incoming.flatMap((edge, index) => {
+          const from = nodeIndex.get(edge.from);
+          if (from === undefined) {
+            if (
+              edge.kind === "constant" && edge.per_h === 0 &&
+              !requiredPeers.has(edge.from)
+            ) return [];
+            throw new Error("Missing hypothesis peer");
+          }
+          return [{ edge: { ...edge, from }, index }];
+        });
+        return {
+          log_weight: h.log_weight,
+          posterior: h.posterior,
+          incoming: selected.map((value) => value.edge),
+          hazards: h.hazards
+            ? selected.map((value) => h.hazards![value.index])
+            : undefined,
+        };
+      },
+    ),
+  };
 }
 function storePlans(
   prepared: Pick<NonNullable<ReturnType<typeof compileNetwork>>, "compiled" | "stage">,
@@ -342,58 +348,52 @@ export function prepareConnectedRoomStage(
 }
 /** Compile the final numerical problem once, after ordered proposals. The
  * returned context is serializable and contains the existing command mapping. */
-export function compileConnectedRoomForecast(
+export function compileConnectedRoomCatalog(
   inputs: RoomPlanningInputs,
   result: RoomServices,
   accepted: Record<string, RoomHeatingPlan> | undefined,
   disabled: ReadonlySet<string>,
 ) {
+  const network = inputs.proposal_network ?? inputs.snapshot.room_network;
   if (
-    !inputs.snapshot.room_network || !accepted ||
-    !inputs.snapshot.room_network.nodes.some((node) => !disabled.has(node.key))
+    !network || !accepted ||
+    !network.nodes.some((node) => !disabled.has(node.key))
   ) return;
   const prepared = compileNetwork(inputs, null, result, accepted, disabled);
   if (!prepared) return;
-  const forecast = inputs.snapshot.room_network.forecast;
+  const forecast = network.forecast;
   if (!forecast || forecast.revision !== ROOM_NETWORK_WORK_REVISION) {
     throw new Error("Missing frozen joint forecast identity");
   }
-  const identity = Array.from(
-    sha256(
-      new TextEncoder().encode(
-        JSON.stringify({
-          snapshot: inputs.snapshot.snapshot_id,
-          forecast,
-          network: prepared.native,
-          beliefs: prepared.beliefs,
-        }),
-      ),
-    ),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
-  const layout = {
-    sets: 3,
-    rooms: prepared.native.rooms.length,
-    roomNodeIndexes: prepared.native.rooms.map((room) => room.node),
-    nodes: prepared.native.nodes.length,
-    slots: prepared.native.hours.length,
-    hours: prepared.native.hours,
-    roomPowerW: prepared.compiled.map((room) =>
-      room.actuators.reduce((sum, t) => sum + t.power_w, 0)
-    ),
-    actuatorPowerW: prepared.compiled.flatMap((room) =>
-      room.actuators.map((t) => t.power_w)
-    ),
-    maximumPricePerKwh: Math.max(
-      ...prepared.native.import_sek_per_kwh.map(Math.abs),
-      ...prepared.native.export_sek_per_kwh.map(Math.abs),
-    ),
-  };
+  return { network: prepared.native, context: { compiled: prepared.compiled, stage: prepared.stage, forecast } };
+}
+
+/** Native room inputs already contain the ordered thermostats, powers and clock used for accuracy. */
+export function connectedForecastLayout(network: NativeRoomNetworkInput) {
   return {
-    context: { compiled: prepared.compiled, stage: prepared.stage, identity, layout, forecast },
-    nativeInput: { network: prepared.native, beliefs: prepared.beliefs, seed: forecast.seed,
-      identity, replicate_count: forecast.replicates },
+    sets: 3,
+    rooms: network.rooms.length,
+    roomNodeIndexes: network.rooms.map(room => room.node),
+    nodes: network.nodes.length,
+    slots: network.hours.length,
+    hours: network.hours,
+    roomPowerW: network.rooms.map(room => room.input.thermostats.reduce((sum, actuator) => sum + actuator.power_w, 0)),
+    actuatorPowerW: network.rooms.flatMap(room => room.input.thermostats.map(actuator => actuator.power_w)),
+    maximumPricePerKwh: Math.max(...network.import_sek_per_kwh.map(Math.abs), ...network.export_sek_per_kwh.map(Math.abs)),
   };
+}
+export type ConnectedRoomCatalog = NonNullable<ReturnType<typeof compileConnectedRoomCatalog>>;
+
+export function compileConnectedRoomForecast(inputs: RoomPlanningInputs, result: RoomServices,
+  accepted: Record<string, RoomHeatingPlan> | undefined, disabled: ReadonlySet<string>) {
+  const plan = compileConnectedRoomCatalog(inputs, result, accepted, disabled);
+  if (!plan) return;
+  const { network, context } = plan, { forecast } = context;
+  const nodes = new Map(inputs.snapshot.room_network!.nodes.map(node => [node.key, node]));
+  const beliefs = network.nodes.map(({key}) => compileConnectedNodeBelief(nodes.get(key) ?? null, network));
+  const identity = Array.from(sha256(new TextEncoder().encode(JSON.stringify({ snapshot: inputs.snapshot.snapshot_id, forecast, network, beliefs }))),
+    byte => byte.toString(16).padStart(2, "0")).join("");
+  return { context: { ...context, identity, layout: connectedForecastLayout(network) }, nativeInput: { network, beliefs, seed: forecast.seed, identity, replicate_count: forecast.replicates } };
 }
 export type ConnectedRoomForecastRequest = NonNullable<ReturnType<typeof compileConnectedRoomForecast>>;
 export type ConnectedRoomForecastContext = ConnectedRoomForecastRequest["context"];
@@ -403,7 +403,7 @@ export type ConnectedRoomForecastContext = ConnectedRoomForecastRequest["context
 export function applyConnectedRoomForecast(
   inputs: RoomPlanningInputs,
   result: RoomServices,
-  context: ConnectedRoomForecastContext,
+  context: ConnectedRoomCatalog["context"],
   output: NativeRoomNetworkOutput,
   statistics: { trajectories: number; replayed_paths: number; replicates: Array<{ trajectories: number }> },
 ) {
@@ -411,7 +411,7 @@ export function applyConnectedRoomForecast(
   const completed = { ...context.forecast, trajectories: statistics.trajectories,
     replayed_paths: statistics.replayed_paths,
     replicate_trajectories: statistics.replicates.map(replica => replica.trajectories) };
-  inputs.snapshot.room_network!.forecast = completed;
+  if (inputs.snapshot.room_network) inputs.snapshot.room_network.forecast = completed;
   result.network_forecast = completed;
 }
 

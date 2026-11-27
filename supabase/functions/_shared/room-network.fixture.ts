@@ -149,3 +149,14 @@ export function connectedRoomSnapshot(
   }
   return s;
 }
+
+
+/** Model the private SQL projection independently of the production compiler. */
+export function projectedPlanningNetwork(network: NonNullable<OptimisationSnapshot["room_network"]>) {
+  return { forecast: network.forecast, nodes: network.nodes.map(({ process_belief, ...node }) => {
+    const incoming = process_belief.hypotheses.flatMap(h => h.incoming);
+    return { ...node, hypothesis_peers: [...new Set(incoming.map(e => e.from))],
+      required_peers: [...new Set([...incoming.filter(e => e.kind !== "constant" || e.per_h > 0).map(e => e.from),
+        ...process_belief.reset_priors.map(p => p.from)])] };
+  }) };
+}

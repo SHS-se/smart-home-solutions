@@ -40,6 +40,22 @@ Deno.test('traffic preserves transport failures and marks unmeasured responses e
   assertEquals(meter.snapshot().total.responses_measured, 0);
 });
 
+Deno.test('request counters handle surrogate pairs and replacements without encoding the body again', async () => {
+  const payloads: [string, number][] = [
+    ['', 0], ['ASCII', 5], ['å', 2], ['☀', 3], ['😀', 4],
+    ['\ud800', 3], ['\udc00', 3], ['\ud800\ud800\udc00', 7], ['e\u0301', 3],
+  ];
+  const encode = TextEncoder.prototype.encode;
+  let encodings = 0;
+  try {
+    TextEncoder.prototype.encode = function (value) { encodings++; return encode.call(this, value); };
+    const meter = new NetworkTraffic(async () => new Response(null, { status: 204 }));
+    for (const [body] of payloads) await meter.fetch('https://db.example/rest/v1/rpc/capture', { method: 'POST', body });
+    assertEquals(meter.snapshot().total.request_body_bytes_estimate, payloads.reduce((sum, [, size]) => sum + size, 0));
+    assertEquals(encodings, 0, 'diagnostics must not allocate another serialized request body');
+  } finally { TextEncoder.prototype.encode = encode; }
+});
+
 Deno.test('traffic measures no-content responses and unknown request bodies correctly', async () => {
   const meter = new NetworkTraffic(async () => new Response(null, { status: 204 }));
   const req = new Request('https://db.example/rest/v1/customers', { method: 'POST', body: 'opaque' });

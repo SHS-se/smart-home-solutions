@@ -140,11 +140,31 @@ existing qualifier clips native intervals to the requested population. Binding,
 policy, graph and correction checks still apply. Heated receivers select their
 own source reader before the passive reader scans household evidence.
 
+Room numerical data follows the stage that consumes it:
+
+| Stage | Data crossing into the worker |
+| --- | --- |
+| Admission | Model headers and their revision/binding identities. The admission transaction freezes the corresponding accepted populations under the new job. |
+| Receiving-room qualification | The active room's frozen population and observations. Completed rooms remain in database scratch. |
+| Capture completion | Room keys, dependency lists and initial temperatures. SQL restores the selected full nodes into the frozen execution input. |
+| Ordered room proposals | Current node geometry, state and exact ordered peer dependencies. |
+| Native catalog compilation | One receiving population at a time. The existing catalog pages retain its exact numerical records. |
+| Forecast qualification and household solve | The compiled native network, replica results and completed room schedules. |
+| Snapshot sealing | Small snapshot fields and one original node at a time for the same JSON snapshot hash. |
+
+The full execution input remains database-owned for replay and publication.
+Catalog identity hashes use the exact JavaScript-encoded prefixes and numerical
+record bytes in their original order. Transport projections leave the public
+snapshot contract, physical model, uncertainty populations and source ownership
+unchanged. Compatible deployment readers let already-owned requests finish
+under their existing fences.
+
 ## Connected-room state capture (26 November 2026)
 
 Hosted room capture freezes the accepted receiving-room models, the app-owned
-connection map identity and the current observations in the admitted planning
-input. It defers connected-state inference to scratch owned by that same durable
+connection map identity and the current observations under the admitted planning
+job. Headers travel in the input; the admission transaction pins the matching
+numerical populations alongside it. Connected-state inference uses scratch owned by that same durable
 planning job. This preparation finishes before native room scheduling starts;
 it does not create a separate actor or a second learning-job kind. Existing
 accepted instructions remain active while preparation advances.
