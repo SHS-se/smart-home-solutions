@@ -167,6 +167,8 @@ export interface NativeRoomNetworkReplicaAdvanceInput {
   replica: NativeRoomReplica;
   target_local_draws: number;
   max_work: number;
+  /** Per-invocation scheduling budget, measured from native entry. */
+  max_elapsed_ms?: number;
   work?: NativeRoomNetworkReplicaWork;
   selected_hypotheses: NativeRoomNetworkSelectedHypothesis[];
 }

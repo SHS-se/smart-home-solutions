@@ -1,4 +1,5 @@
-import { nativeForecastTotals } from "./planner-wasm/core.ts";
+import { createWasmPlanner, nativeForecastTotals } from "./planner-wasm/core.ts";
+import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
 import { z } from "zod";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
@@ -234,6 +235,40 @@ for (const scenario of ["ordinary", "resets", "stiff"] as const) {
     assertEquals(stored, expected.work);
   });
 }
+Deno.test("elapsed replica slices preserve exact minute, reset and conditional-stratum continuations", () => {
+  const { network, seed, identity, beliefs } = fixture("resets");
+  network.hours = [1 / 60, 1 / 60];
+  for (const belief of beliefs) {
+    for (const h of belief.hypotheses) h.hazards = [{ shape: 1, rate_h: .00002 }];
+  }
+  let now = 0;
+  const planner = createWasmPlanner(Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0)), () => ++now);
+  const input = { network, seed, identity, replica: 0 as const, target_local_draws: 1,
+    max_work: 131072, node_headers: beliefs.map(belief => planner.roomNetworkHeader({ belief })),
+    selected_hypotheses: beliefs.flatMap((belief, node) => belief.hypotheses.map((h, index) =>
+      ({ node, index, json: JSON.stringify(h) }))) };
+  const expected = planner.roomNetworkReplicaAdvance(input);
+  assert(expected.reached_target);
+  assertEquals(expected.work.statistics.replayed_paths, 2);
+  // The first stratum has two physical minutes and no resets. A deadline that
+  // already expired during input preparation still completes one whole minute.
+  const minute = planner.roomNetworkReplicaAdvance({ ...input, max_elapsed_ms: 0 });
+  assertEquals(minute, planner.roomNetworkReplicaAdvance({ ...input, max_work: 1 }));
+  assertEquals(minute.work.cursor, 1);
+  const paired = planner.roomNetworkReplicaAdvance({ ...input, work: minute.work, max_work: 1, max_elapsed_ms: 50 });
+  assertEquals(paired.work.statistics.replayed_paths, 1);
+  assertEquals(paired.work.statistics.trajectories, 0);
+  // Interrupt the reset stratum partway through its first physical minute.
+  // A second clock tick in one invocation must finish another batch natively.
+  for (const ticks of [1, 2]) {
+    const timed = planner.roomNetworkReplicaAdvance({ ...input, work: paired.work, max_elapsed_ms: ticks });
+    assertEquals(timed.work.cursor - paired.work.cursor, 64 * ticks);
+    assertEquals(timed.work.minute, paired.work.minute);
+    assertEquals(timed, planner.roomNetworkReplicaAdvance({ ...input, work: paired.work, max_work: 64 * ticks }));
+    assertEquals(planner.roomNetworkReplicaAdvance({ ...input, work: timed.work }), expected);
+  }
+});
+
 Deno.test("deterministic catalog uses one exact replica and rejects duplicate execution", () => {
   const input = syntheticJointRoomForecast(2, 0, .25),
     planner = nativePlanner();

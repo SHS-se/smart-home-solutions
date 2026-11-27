@@ -929,9 +929,13 @@ fn finish_path(work: &mut Work, path: Path) {
 }
 
 pub fn advance(input: Input) -> Result<Advanced, String> {
-    run(input, None)
+    run(input, None, None)
 }
-fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced, String> {
+fn run(
+    mut input: Input,
+    provider: Option<&ReplicaProvider>,
+    deadline_reached: Option<&dyn Fn() -> bool>,
+) -> Result<Advanced, String> {
     if input.beliefs.len() != input.network.nodes.len()
         || input.replicate_count == 0
         || input.max_minute_steps == 0
@@ -1030,6 +1034,10 @@ fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced,
     let mut steps = 0;
     let mut spent = 0usize;
     while work.statistics.trajectories < target && spent < input.max_minute_steps {
+        // Even an expensive input decode must earn a durable cursor advance.
+        if steps > 0 && deadline_reached.is_some_and(|expired| expired()) {
+            break;
+        }
         if work.path.is_none() {
             let trajectory = global_draw(work.replica, work.statistics.trajectories)?;
             if let Some(provider) = provider {
@@ -1046,6 +1054,14 @@ fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced,
         let slot = work.slot;
         let quarter_steps = (input.network.hours[slot] * 60.).ceil() as usize;
         if quarter_steps > 0 {
+            let remaining = input.max_minute_steps - spent;
+            // A minute may contain many resets. Poll the clock between
+            // batches at the same exact process continuation used for max_work.
+            let reset_budget = if deadline_reached.is_some() {
+                remaining.min(64)
+            } else {
+                remaining
+            };
             let InnovationAdvance {
                 minute: prepared,
                 work: reset_work,
@@ -1056,13 +1072,13 @@ fn run(mut input: Input, provider: Option<&ReplicaProvider>) -> Result<Advanced,
                 slot,
                 work.minute,
                 &mut noise_cache,
-                input.max_minute_steps - spent,
+                reset_budget,
             )?;
             spent += reset_work;
             steps += reset_work;
             let Some(MinuteInnovations { rates, noise }) = prepared else {
                 work.path = Some(path);
-                break;
+                continue;
             };
             let dt = input.network.hours[slot] / quarter_steps as f64;
             let thermal_norm = input
@@ -1696,6 +1712,7 @@ struct ReplicaInput {
     replica: usize,
     target_local_draws: usize,
     max_work: usize,
+    max_elapsed_ms: Option<u32>,
     work: Option<ReplicaWork>,
     selected_hypotheses: Vec<SelectedHypothesis>,
 }
@@ -1705,7 +1722,10 @@ struct ReplicaAdvanced {
     reached_target: bool,
     needs_global_draw: Option<usize>,
 }
-fn replica_advance(input: ReplicaInput) -> Result<ReplicaAdvanced, String> {
+fn replica_advance(
+    input: ReplicaInput,
+    elapsed_ms: impl Fn() -> f64,
+) -> Result<ReplicaAdvanced, String> {
     if input.replica >= 4
         || input.node_headers.len() != input.network.nodes.len()
         || input.target_local_draws == 0
@@ -1737,6 +1757,9 @@ fn replica_advance(input: ReplicaInput) -> Result<ReplicaAdvanced, String> {
         replica: input.replica,
         selected,
     };
+    let deadline = input
+        .max_elapsed_ms
+        .map(|ms| move || elapsed_ms() >= f64::from(ms));
     let result = run(
         Input {
             network: input.network,
@@ -1753,6 +1776,9 @@ fn replica_advance(input: ReplicaInput) -> Result<ReplicaAdvanced, String> {
             work: input.work.map(ReplicaWork::into_work),
         },
         Some(&provider),
+        deadline
+            .as_ref()
+            .map(|expired| expired as &dyn Fn() -> bool),
     )?;
     let next = global_draw(Some(input.replica), result.work.statistics.trajectories)?;
     let needs_global_draw = if !result.reached_target
@@ -1886,8 +1912,24 @@ pub fn header_json(bytes: &[u8]) -> Vec<u8> {
 pub fn select_json(bytes: &[u8]) -> Vec<u8> {
     api(bytes, select)
 }
+#[cfg(target_arch = "wasm32")]
+fn slice_clock() -> impl Fn() -> f64 {
+    #[link(wasm_import_module = "shs_clock")]
+    extern "C" {
+        fn monotonic_ms() -> f64;
+    }
+    // The host supplies a monotonic reading; the timestamp never leaves this call.
+    let started = unsafe { monotonic_ms() };
+    move || unsafe { monotonic_ms() - started }
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn slice_clock() -> impl Fn() -> f64 {
+    let started = std::time::Instant::now();
+    move || started.elapsed().as_secs_f64() * 1000.
+}
 pub fn replica_json(bytes: &[u8]) -> Vec<u8> {
-    api(bytes, replica_advance)
+    let elapsed_ms = slice_clock();
+    api(bytes, |input| replica_advance(input, elapsed_ms))
 }
 pub fn merge_json(bytes: &[u8]) -> Vec<u8> {
     api(bytes, merge)

@@ -241,13 +241,13 @@ function plannerMemory(
 }
 
 /** Fresh native memory per invocation for live planning and independent reference checks. */
-export function createWasmPlanner(bytes: Uint8Array) {
+export function createWasmPlanner(bytes: Uint8Array, monotonicMs = () => performance.now()) {
   const module = new WebAssembly.Module(new Uint8Array(bytes));
-  return { ...createPlanner(module, false),
+  return { ...createPlanner(module, false, monotonicMs),
     /** One solve request owns the allocator for its sequential postprocessing
      * projections. No physical state or memory crosses request boundaries. */
     projectionSession() {
-      const { project, complete } = createPlanner(module, true);
+      const { project, complete } = createPlanner(module, true, monotonicMs);
       return { project, complete };
     },
   };
@@ -259,10 +259,11 @@ export function createWasmPlanner(bytes: Uint8Array) {
  * return independently decoded JSON, so only the allocator is retained here.
  */
 export function createWasmReplayPlanner(bytes: Uint8Array) {
-  return createPlanner(new WebAssembly.Module(new Uint8Array(bytes)), true);
+  return createPlanner(new WebAssembly.Module(new Uint8Array(bytes)), true, () => performance.now());
 }
 
-function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
+function createPlanner(module: WebAssembly.Module, reuseProjections: boolean, monotonicMs: () => number) {
+  const imports = { shs_clock: { monotonic_ms: monotonicMs } };
   let projectionInstance: WebAssembly.Instance | undefined;
   let projectionFailure: Error | undefined;
   function invoke<T>(
@@ -274,8 +275,8 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
     const retained = reuseProjections && exportName === "planner_project";
     if (retained && projectionFailure) throw projectionFailure;
     const instance = planningStage(trace, "wasm_instantiate", () => retained
-      ? projectionInstance ??= new WebAssembly.Instance(module)
-      : new WebAssembly.Instance(module));
+      ? projectionInstance ??= new WebAssembly.Instance(module, imports)
+      : new WebAssembly.Instance(module, imports));
     const {
       memory,
       planner_alloc: alloc,

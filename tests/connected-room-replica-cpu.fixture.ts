@@ -105,6 +105,23 @@ function encodeReplicaFixture(fixture: ConnectedReplicaCpuFixture) {
   return new TextEncoder().encode(JSON.stringify(fixture));
 }
 
+type ReplicaHeader = Pick<NativeRoomNetworkReplicaAdvanceInput, "network" | "node_headers" | "seed" | "identity">;
+
+function selectedReplicaRecords(header: Pick<ReplicaHeader, "node_headers" | "seed">, hypotheses: NativeRoomNetworkHypothesis[][],
+  replica: NativeRoomReplica, first: number, count: number) {
+  const selections = nativePlanner().roomNetworkSelect({ node_headers: header.node_headers, seed: header.seed, replica,
+    local_draws: Array.from({ length: count }, (_, i) => first + i) });
+  const records = new Map<string, { node: number; index: number; json: string }>();
+  for (const draw of selections) {
+    draw.hypothesis_indexes.forEach((index, node) => {
+      if (index !== null) records.set(`${node}:${index}`, {
+        node, index, json: JSON.stringify(hypotheses[node][index]),
+      });
+    });
+  }
+  return [...records.values()];
+}
+
 async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"], partialWork: number, includeSiblings = false) {
   const planner = nativePlanner();
   const node_headers = input.beliefs.map((belief) =>
@@ -116,19 +133,11 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
     seed: input.seed,
     identity: input.identity,
   };
+  const hypotheses = input.beliefs.map(b => b.hypotheses);
   const checkpoint = async (replica: NativeRoomReplica) => {
-    const selections = planner.roomNetworkSelect({ ...header, replica, local_draws: [0, 1] });
-    const records = new Map<string, { node: number; index: number; json: string }>();
-    for (const draw of selections) {
-      draw.hypothesis_indexes.forEach((index, node) => {
-        if (index !== null) records.set(`${node}:${index}`, {
-          node, index, json: JSON.stringify(input.beliefs[node].hypotheses[index]),
-        });
-      });
-    }
     const work = planner.roomNetworkReplicaAdvance({
       ...header, replica, target_local_draws: 16, max_work: partialWork,
-      selected_hypotheses: [...records.values()],
+      selected_hypotheses: selectedReplicaRecords(header, hypotheses, replica, 0, 2),
     }).work;
     return { cursor: work.cursor, work: await packOwnedPlanningValue(work) };
   };
@@ -149,14 +158,15 @@ async function replicaCpuPair(input: ConnectedRoomForecastRequest["nativeInput"]
     work: null,
   };
   return {
-    initial: {phase: "initial", saved, hypotheses: input.beliefs.map(b => b.hypotheses),
+    initial: {phase: "initial", saved, hypotheses,
       siblingCheckpoints: includeSiblings ? await Promise.all(([1, 2, 3] as const).map(checkpoint)) : undefined,
     } satisfies ConnectedReplicaCpuFixture,
     resumed: {...saved, ...await checkpoint(0)},
   };
 }
 
-const DENSE_REPLICA_WORK = Math.floor(8192 * (9 / 13) ** 2);
+// This fixed prefix places each synthetic resume inside its first conditional stratum.
+const DENSE_RESUME_FIXTURE_WORK = 3926;
 
 /** Independent 13-room, 13,312-particle admission fixture for cold and resumed workers. */
 export async function connectedDenseReplicaCpuInput(scaledCovariance = false) {
@@ -199,7 +209,7 @@ export async function connectedDenseReplicaCpuInput(scaledCovariance = false) {
     assert(next.room_progress);
     next = prepareCapturedRoomProposals(capture, next.room_progress);
   }
-  const pair = await replicaCpuPair(next.forecast.nativeInput, DENSE_REPLICA_WORK, true);
+  const pair = await replicaCpuPair(next.forecast.nativeInput, DENSE_RESUME_FIXTURE_WORK, true);
   return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */
@@ -245,33 +255,9 @@ export async function connectedReplicaCpuInputs(): Promise<
     header,
     work: null,
   };
-  const records = (
-    replica: NativeRoomReplica,
-    first: number,
-    count: number,
-  ) => {
-    const selections = planner.roomNetworkSelect({
-      node_headers,
-      seed: input.seed,
-      replica,
-      local_draws: Array.from({ length: count }, (_, i) => first + i),
-    });
-    return [
-      ...new Map(
-        selections.flatMap((draw) =>
-          draw.hypothesis_indexes.flatMap((index, node) =>
-            index === null ? [] : [
-              [`${node}:${index}`, {
-                node,
-                index,
-                json: JSON.stringify(input.beliefs[node].hypotheses[index]),
-              }] as const,
-            ]
-          )
-        ),
-      ).values(),
-    ];
-  };
+  const hypotheses = input.beliefs.map(b => b.hypotheses);
+  const records = (replica: NativeRoomReplica, first: number, count: number) =>
+    selectedReplicaRecords({ node_headers, seed: input.seed }, hypotheses, replica, first, count);
   const partial = planner.roomNetworkReplicaAdvance({
     network: input.network,
     node_headers,
@@ -381,6 +367,23 @@ export async function connectedReplicaCpuInputs(): Promise<
     ),
   ) as Record<ConnectedReplicaCpuPhase, Uint8Array<ArrayBuffer>>;
 }
+/** A timed worker may stop at any native continuation. Compare both partitions
+ * after finishing the same outer draw, including its conditional reset stratum. */
+function finishReplicaDraw(header: ReplicaHeader, hypotheses: NativeRoomNetworkHypothesis[][], replica: NativeRoomReplica,
+  target: number, work?: NativeRoomNetworkReplicaWork) {
+  const first = work?.statistics.trajectories ?? 0;
+  const records = selectedReplicaRecords(header, hypotheses, replica, first, target - first);
+  while (!work || work.statistics.trajectories < target) {
+    const previousCursor = work?.cursor ?? 0;
+    work = nativePlanner().roomNetworkReplicaAdvance({ ...header, replica, work, target_local_draws: target,
+      max_work: 131072, selected_hypotheses: records }).work;
+    assert(work.cursor > previousCursor, "reference reaches its complete draw without missing records");
+  }
+  assertEquals(work.statistics.trajectories, target);
+  assertEquals(work.path, null);
+  return work;
+}
+
 export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, replica = 0) {
   let checkpoint: Record<string, unknown> | undefined,
     requestBytes = 0,
@@ -415,6 +418,10 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, r
   };
   return {
     db,
+    continuation() {
+      assert(checkpoint && typeof checkpoint.p_work === "string" && typeof checkpoint.p_next_cursor === "number");
+      return { work: checkpoint.p_work, cursor: checkpoint.p_next_cursor };
+    },
     async check(scaledResume = false) {
       assert(checkpoint, "actual worker checkpoints its bounded stage");
       if (fixture.phase === "initial" || fixture.phase === "resumed") {
@@ -423,15 +430,17 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, r
         >(checkpoint.p_work as string);
         assertEquals(checkpoint.p_replica, replica);
         assertEquals(work.replica, replica);
+        assertEquals(checkpoint.p_next_cursor, work.cursor);
+        assertEquals(checkpoint.p_completed, work.statistics.trajectories);
         assert(work.cursor > Number(fixture.saved.cursor));
-        if (fixture.phase === "initial" && fixture.subsequent) {
-          assertEquals(work.cursor, fixture.subsequent.cursor);
-          assertEquals(work, await unpackOwnedPlanningValue(fixture.subsequent.work as string));
-        }
+        const header = await unpackOwnedPlanningValue<ReplicaHeader>(fixture.saved.header as string);
+        const previous = fixture.saved.work ? await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(fixture.saved.work as string) : undefined;
+        const target = work.statistics.trajectories + (work.path == null ? 0 : 1);
+        assert(target > 0 && target <= Number(fixture.saved.target_local_draws));
+        assertEquals(finishReplicaDraw(header, fixture.hypotheses, work.replica, target, work),
+          finishReplicaDraw(header, fixture.hypotheses, work.replica, target, previous));
         if (scaledResume) {
-          type Header = Pick<NativeRoomNetworkReplicaAdvanceInput, "network" | "node_headers" | "seed" | "identity">;
-          const header = await unpackOwnedPlanningValue<Header>(fixture.saved.header as string);
-          const previous = await unpackOwnedPlanningValue<NativeRoomNetworkReplicaWork>(fixture.saved.work as string);
+          assert(previous);
           const path = previous.path as { quarter_rates: number[][][] };
           assert(previous.pending && path, "resume both conditional reset strata");
           assert(header.node_headers.every(node => node.thermal_noise_c2_per_h > 0));
@@ -441,11 +450,6 @@ export function connectedReplicaCpuReplay(fixture: ConnectedReplicaCpuFixture, r
           assert(header.network.nodes.some((node, i) => (node.outdoor_per_h + 2 * outgoing[i]) * dt > .25));
           assert(header.network.nodes.every((node, i) =>
             Math.max(node.outdoor_per_h + outgoing[i], node.lag_h > 0 ? 1 / node.lag_h : 0) * dt < 1));
-          const reference = nativePlanner().roomNetworkReplicaAdvance({
-            ...header, replica: work.replica, work: previous, target_local_draws: Number(fixture.saved.target_local_draws),
-            max_work: DENSE_REPLICA_WORK, selected_hypotheses: [],
-          });
-          assertEquals(work, reference.work);
         }
         const path = work.path as
           | { states: Array<{ temperatures: number[] }> }

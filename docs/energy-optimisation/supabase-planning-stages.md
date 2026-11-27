@@ -240,6 +240,13 @@ only their pages, without pruning hypotheses or rebuilding probability weights
 in SQL. Immutable network/context and opaque numerical checkpoints travel as gzip
 payloads between the database and worker.
 
+Each native replica invocation starts a 150 ms clock before decoding its input
+and has a hard ceiling of 131,072 work units. It checks the clock after a
+completed minute or a batch of up to 64 reset events has advanced the cursor.
+The clock lives only in the request, so resumption uses the checkpointed physical
+state and random sequence. The 1,000 ms CPU gate measures the two complete
+concurrent handlers together, including checkpoint serialization.
+
 Integration schedules up to four forecast replicas in groups of at most two
 concurrent worker requests. The caller awaits each group and checks the shared
 deadline before launching the next. These are distinct from the inference replicas.

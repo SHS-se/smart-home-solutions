@@ -96,10 +96,9 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
     }
     const advanced = planner.roomNetworkReplicaAdvance({ ...header, identity: saved.identity, replica: action.replica,
       target_local_draws: saved.target_local_draws,
-      // A warm Edge execution may serve another replica before retiring. Leave
-      // CPU for that action and the compressed checkpoint after each native slice.
-      // Concurrent siblings can share an isolate; local pair timing is insufficient.
-      max_work: Math.max(1, Math.min(131072, Math.floor(8192 * (9 / header.network.nodes.length) ** 2))),
+      // Two sibling actions can share an isolate. Yield at a durable boundary
+      // with time left for the second action and checkpoint compression.
+      max_elapsed_ms: 150, max_work: 131072,
       work, selected_hypotheses: hypotheses }, trace);
     const dispatch = await rpc<OwnedPlanningDispatch | null>("checkpoint_energy_forecast_replica", {
       p_replica: action.replica, p_slice_fence: saved.slice_fence, p_cursor: saved.cursor,

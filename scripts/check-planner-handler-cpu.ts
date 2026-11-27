@@ -348,7 +348,14 @@ async function connectedReplicaSample(mode: "sequential" | "wave" | "resumed" = 
         const group = actions.slice(first, first + OWNED_WORKER_REPLICA_CONCURRENCY);
         groups.push((await measure(async () => { await Promise.all(group.map(send)); })).cpu_ms);
       }
-    } else for (const action of actions) await send(action);
+    } else {
+      await send(actions[0]);
+      if (actions.length === 2) {
+        // A warm invocation resumes the actual checkpoint from the timed cold call.
+        actions[1].request.saved = { ...fixture.saved, ...actions[0].replay.continuation() };
+        await send(actions[1]);
+      }
+    }
   });
   for (const {replay} of actions) await replay.check(mode === "resumed");
   return groups.length ? {...sample, group_cpu_ms: groups} : sample;
