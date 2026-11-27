@@ -187,7 +187,7 @@ export async function connectedDenseReplicaCpuInput() {
     assert(next.room_progress);
     next = prepareCapturedRoomProposals(capture, next.room_progress);
   }
-  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(24576 * (9 / 13) ** 2));
+  const pair = await replicaCpuPair(next.forecast.nativeInput, Math.floor(12288 * (9 / 13) ** 2));
   return encodeReplicaFixture({...pair.initial, subsequent: pair.resumed});
 }
 /** Prepare transport before spawning measured cold processes. */

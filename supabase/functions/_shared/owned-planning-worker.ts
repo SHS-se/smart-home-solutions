@@ -98,7 +98,8 @@ async function advanceOwnedPlanningAction(db: ModelDatabase, owner: OwnedPlannin
       target_local_draws: saved.target_local_draws,
       // A warm Edge execution may serve another replica before retiring. Leave
       // CPU for that action and the compressed checkpoint after each native slice.
-      max_work: Math.max(1, Math.min(131072, Math.floor(24576 * (9 / header.network.nodes.length) ** 2))),
+      // Concurrent siblings can share an isolate; local pair timing is insufficient.
+      max_work: Math.max(1, Math.min(131072, Math.floor(12288 * (9 / header.network.nodes.length) ** 2))),
       work, selected_hypotheses: hypotheses }, trace);
     const dispatch = await rpc<OwnedPlanningDispatch | null>("checkpoint_energy_forecast_replica", {
       p_replica: action.replica, p_slice_fence: saved.slice_fence, p_cursor: saved.cursor,
