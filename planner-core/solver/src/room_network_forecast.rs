@@ -291,7 +291,9 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
     // resolves an OR even if other quarters remain numerically ambiguous.
     let (mut new_certain, mut new_possible) = (false, false);
     let prefix_shortfall = |values: &[f64], end: usize| {
-        (0..=end).map(|room| horizon_shortfall_difference(values, input, room)).sum::<f64>()
+        (0..=end)
+            .map(|room| horizon_shortfall_difference(values, input, room))
+            .sum::<f64>()
     };
     for room in 0..rooms {
         for slot in 0..slots {
@@ -1281,7 +1283,11 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
                 new_miss |= flags.0;
             }
         }
-        if !crate::room_policy::prefer_proposal(shortfall[0] - shortfall[1], cost[0] - cost[1], new_miss) {
+        if !crate::room_policy::prefer_proposal(
+            shortfall[0] - shortfall[1],
+            cost[0] - cost[1],
+            new_miss,
+        ) {
             dominates = false;
         }
     }

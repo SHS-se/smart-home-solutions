@@ -1,7 +1,11 @@
 //! Existing room-first, comfort-first objective. Numerical priorities are unchanged.
 /// A price premium is justified by strictly lower comfort exposure, including
 /// partial recovery. Preserve quarters the literal schedule already satisfies.
-pub(crate) fn prefer_proposal(shortfall_difference: f64, cost_difference: f64, new_miss: bool) -> bool {
+pub(crate) fn prefer_proposal(
+    shortfall_difference: f64,
+    cost_difference: f64,
+    new_miss: bool,
+) -> bool {
     shortfall_difference <= 1e-8
         && (cost_difference <= 1e-8 || shortfall_difference < -1e-8 && !new_miss)
 }
