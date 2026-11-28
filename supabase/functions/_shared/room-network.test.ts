@@ -19,6 +19,27 @@ const prices = (s: OptimisationSnapshot): RoomPrices => ({
   surplus_w: s.slots.map(() => 0),
 });
 
+Deno.test("synthetic literal heat program includes loss into a cold connected passive room", () => {
+  const s = fixture(false, .5);
+  for (const [index, node] of s.room_network!.nodes.entries()) {
+    const temperature = index === 0 ? 21 : 10;
+    node.start_temperature_c = node.posterior.temperature_c = temperature;
+    node.model.thermal.outdoor_per_h = 0;
+    node.model.incoming = [{kind: "constant", from: index === 0 ? "synthetic-b" : "synthetic-a", per_h: index === 0 ? .5 : 0}];
+    node.posterior.log_rates = [];
+    node.posterior.covariance = [[0, 0], [0, 0]];
+    node.process_belief.hypotheses[0].incoming = node.model.incoming;
+    node.process_belief.hypotheses[0].posterior = node.posterior;
+  }
+  s.thermal_zones![0].start_temperature_c = 21;
+  const {forecast} = prepareRoomProposals({snapshot: s, retained: [], headroom: Array(16).fill(4000), prices: prices(s)}, undefined, null, Infinity);
+  const program = forecast!.nativeInput.network.literal![0].relays_on;
+  // Independent plant: the passive room stays at 10 C. At 21 C the .5/h
+  // exchange loses 5.5 C/h, exceeding the 2000 W heater's 4 C/h gain.
+  // After the initially satisfied quarter every remaining quarter needs heat.
+  assertEquals(program, [[false], ...Array.from({length: 15}, () => [true])]);
+});
+
 Deno.test("synthetic adaptive posterior changes native room commands and electrical demand", () => {
   const weak = fixture(false, .02), strong = fixture(false, .02);
   for (const [snapshot, rate] of [[weak, .02], [strong, .7]] as const) {
@@ -101,18 +122,15 @@ Deno.test("later neighbour commands replay earlier thermostat demand and preserv
       expectedShortfall(final.services.unplanned_expected_shortfall_c!) + 1e-8,
   );
   if (cost(selected) > cost(literal) + 1e-8) {
-    let closes = false;
+    assert(expectedShortfall(final.services.expected_shortfall_c!) <
+      expectedShortfall(final.services.unplanned_expected_shortfall_c!) - 1e-8);
     for (const zone of s.thermal_zones!) {
       for (let i = 0; i < 16; i++) {
-        const chosen = final.services.temperature[zone.key][i]! <
-          zone.comfort_min_c[i] - 1e-6;
-        const base = final.services.unplanned_temperature[zone.key][i]! <
-          zone.comfort_min_c[i] - 1e-6;
-        assert(!chosen || base);
-        closes ||= base && !chosen;
+        const chosen = final.services.expected_shortfall_c![zone.key][i];
+        const base = final.services.unplanned_expected_shortfall_c![zone.key][i];
+        assert(chosen <= 1e-6 || base > 1e-6);
       }
     }
-    assert(closes);
   }
   for (let i = 0; i < 16; i++) {
     assertAlmostEquals(

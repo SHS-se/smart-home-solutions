@@ -1047,13 +1047,9 @@ fn literal_schedule(
     Some(result)
 }
 
-/// Optional changes must preserve comfort. They may cost more than the literal
-/// schedule only when they meet scheduled comfort the literal schedule misses:
-/// every quarter the proposal is short, the literal schedule is short too, and
-/// at least one quarter it misses is met. Preheating for a comfort deadline
-/// qualifies; a response too weak to reach any missed target cannot buy
-/// unlimited energy through the search's large shortfall weight, because
-/// narrowing a gap without closing it never justifies extra spending.
+/// Optional changes preserve satisfied quarters and may cost more when they
+/// reduce degree-hours below comfort. Recovery remains useful even when the
+/// equipment or thermal uncertainty leaves every quarter short of its target.
 pub(crate) fn dominates_reference(input: &Input, proposal: &Plan, reference: &Plan) -> bool {
     let cost = |plan: &Plan| {
         input
@@ -1080,21 +1076,12 @@ pub(crate) fn dominates_reference(input: &Input, proposal: &Plan, reference: &Pl
             })
             .sum::<f64>()
     };
-    // Tolerances cover floating point accumulation only, not model quality.
-    if shortfall(proposal) > shortfall(reference) + 1e-8 {
-        return false;
-    }
-    if cost(proposal) <= cost(reference) + 1e-8 {
-        return true;
-    }
     let short = |plan: &Plan, i: usize| plan.temperature_c[i] < input.quarters[i].required_c - 1e-6;
-    let quarters = 0..input.quarters.len();
-    quarters
-        .clone()
-        .all(|i| !short(proposal, i) || short(reference, i))
-        && quarters
-            .into_iter()
-            .any(|i| short(reference, i) && !short(proposal, i))
+    crate::room_policy::prefer_proposal(
+        shortfall(proposal) - shortfall(reference),
+        cost(proposal) - cost(reference),
+        (0..input.quarters.len()).any(|i| short(proposal, i) && !short(reference, i)),
+    )
 }
 
 #[derive(Serialize)]

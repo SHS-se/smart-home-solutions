@@ -8,6 +8,22 @@ import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 const COMFORT_FROM = 24;
 const SETBACK = 18, COMFORT = 22;
 
+Deno.test("synthetic unreachable comfort still purchases useful recovery before the target rises", () => {
+  const step = {decay: 1, offset_c: 0, stored_heat_release: 0, gain_c_per_w: .01 / 60,
+    stored_heat_gain_c_per_w: 0, carry: 0};
+  const quarters: RoomQuarter[] = [18, 24].map(preferred => ({
+    hours: .25, steps: 15, step, transition: {...step, gain_c_per_w: .0025},
+    required_c: 24, maximum_c: 30, maximum_w: 100,
+    relay_w: [100], fixed_relays: [null], fixed_targets_c: [],
+    room_target: {preferred_c: preferred, fixed_c: null, fixed_switches: []},
+    import_sek_per_kwh: 2, export_sek_per_kwh: 1, surplus_w: 0,
+  }));
+  const plan = planRoomHeating(18, [], quarters, 0, undefined, [{kind: "fixed", on_w: 100}]);
+  assertEquals(plan.relays_on, [[true], [true]]);
+  assertAlmostEquals(plan.temperature_c[1], 18.5, 1e-10);
+  assert(plan.shortfall_c.every(value => value > 0));
+});
+
 /** A floor-heated bathroom: Setback overnight, Comfort from quarter 24. */
 function bathroom(prices: number[] = Array(32).fill(1)): OptimisationSnapshot {
   const s: OptimisationSnapshot = { ...dispatchedEvSnapshot(), schema_version: 7 };
@@ -338,7 +354,7 @@ function sharedRelayRoom(): OptimisationSnapshot {
   return snapshot;
 }
 
-Deno.test("an unflagged weak response cannot purchase a horizon of speculative heat", () => {
+Deno.test("a weak supported response may purchase partial recovery while retaining accepted commands", () => {
   const snapshot = sharedRelayRoom();
   const zone = snapshot.thermal_zones![0];
   assert(zone.model && "gain_c_per_wh" in zone.model);
@@ -350,7 +366,10 @@ Deno.test("an unflagged weak response cannot purchase a horizon of speculative h
   result.commands.rack.slice(1).forEach((command, i) => {
     assert(command.type === "switch_schedule");
   });
-  assert(result.room_power.bathroom.reduce((sum, watts) => sum + watts / 4000, 0) < 1);
+  const exposure = (temperatures: Array<number | null>) => temperatures.reduce<number>((sum, temperature, i) =>
+    sum + Math.max(0, Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]) - temperature!) * .25, 0);
+  assert(exposure(result.temperature.bathroom) < exposure(result.unplanned_temperature.bathroom));
+  assert(result.room_power.bathroom.every(watts => watts === 0 || watts === 2000));
 });
 
 Deno.test("schedule comparison preserves genuine sustained heating demand", () => {

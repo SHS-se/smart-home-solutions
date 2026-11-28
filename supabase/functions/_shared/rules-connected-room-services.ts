@@ -205,8 +205,7 @@ function compileNetwork(
       ),
       incoming: topology.map(({ from, index }) => ({
         node: index,
-        rates: zone
-          ? clock.hours.map((hours, i) => {
+        rates: clock.hours.map((hours, i) => {
             const steps = Math.ceil(hours * 60),
               edge = response.incoming.findIndex((edge) => edge.from === from);
             return Array.from({ length: steps }, (_, minute) =>
@@ -215,8 +214,7 @@ function compileNetwork(
                 node.posterior,
                 offsets[i] + (minute + .5) * hours / steps,
               )[edge]);
-          })
-          : [[0]],
+          }),
       })),
     };
   });
@@ -377,6 +375,12 @@ export function compileConnectedRoomCatalog(
   const prepared = compileNetwork(inputs, null, result, accepted, disabled);
   if (!prepared) return;
   prepared.native.literal = nativePlanner().roomNetworkLiteral(prepared.native);
+  // The literal program needs the nominal connected physics. Only after it
+  // is frozen may the stochastic catalog use placeholders: each sampled path
+  // installs its own rates before replay, without transporting nominal arrays.
+  for (const node of prepared.native.nodes) {
+    for (const edge of node.incoming) edge.rates = [[0]];
+  }
   const forecast = network.forecast;
   if (!forecast || forecast.revision !== ROOM_NETWORK_WORK_REVISION) {
     throw new Error("Missing frozen joint forecast identity");

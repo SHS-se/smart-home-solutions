@@ -1,5 +1,16 @@
 # Requirements for planner and controller constraints
 
+User requirement, 28 November 2026: fix room scheduling that omits connected
+heat loss and rejects useful recovery. Compile the literal whole-quarter heat
+program under the same nominal connected-room physics as proposals, before
+freezing its commands for joint stochastic replay. Higher electricity cost is
+permitted when the proposal strictly reduces expected degree-hours below the
+boundary comfort minimum, even if no quarter becomes completely satisfied.
+Preserve already-satisfied quarters, each room's total comfort exposure,
+accepted commands, sparse-evidence safeguards and electrical constraints.
+This replaces the 24 November requirement that extra spending must completely
+close at least one missed quarter. It does not change learned thermal models.
+
 User requirement, 22 November 2026: missing observations must not turn historical
 device demand into a new executable schedule. Both plan charts show individual
 scheduled bands only where the interval has an instruction; other forecast demand

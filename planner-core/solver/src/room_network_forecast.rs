@@ -204,8 +204,6 @@ struct ShortfallEstimate {
 struct DeadlineCertificate {
     new_certain: bool,
     new_possible: bool,
-    improved_certain: bool,
-    improved_possible: bool,
 }
 /// Intersect the marginal intervals with the common-path difference interval.
 /// A new miss requires a > epsilon >= b, hence a-b > 0; an improvement requires
@@ -241,9 +239,6 @@ fn deadline_certificate(
         new_certain: corners.iter().all(|flags| flags.0),
         new_possible: corners.iter().any(|flags| flags.0)
             && difference + difference_twice_standard_error_c > 0.,
-        improved_certain: corners.iter().all(|flags| flags.1),
-        improved_possible: corners.iter().any(|flags| flags.1)
-            && difference - difference_twice_standard_error_c < 0.,
     }
 }
 fn replicate_error(stats: &Statistics, functional: impl Fn(&[f64]) -> f64) -> f64 {
@@ -294,8 +289,10 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
     }
     // A prefix uses OR over its quarter predicates. One certified true witness
     // resolves an OR even if other quarters remain numerically ambiguous.
-    let (mut new_certain, mut new_possible, mut improved_certain, mut improved_possible) =
-        (false, false, false, false);
+    let (mut new_certain, mut new_possible) = (false, false);
+    let prefix_shortfall = |values: &[f64], end: usize| {
+        (0..=end).map(|room| horizon_shortfall_difference(values, input, room)).sum::<f64>()
+    };
     for room in 0..rooms {
         for slot in 0..slots {
             let a = (rooms + 2 * nodes + room) * slots + slot;
@@ -315,9 +312,11 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
             );
             new_certain |= certificate.new_certain;
             new_possible |= certificate.new_possible;
-            improved_certain |= certificate.improved_certain;
-            improved_possible |= certificate.improved_possible;
         }
+        let shortfall_difference = prefix_shortfall(&means, room);
+        let shortfall_error = replicate_error(stats, |values| prefix_shortfall(values, room));
+        let improved_certain = shortfall_difference + shortfall_error < -1e-8;
+        let improved_possible = shortfall_difference - shortfall_error < -1e-8;
         let a = stride - rooms + room;
         let b = stride + a;
         let difference = means[a] - means[b];
@@ -1270,7 +1269,6 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
     for end in 0..rooms {
         let cost = [means[stride - rooms + end], means[2 * stride - rooms + end]];
         let mut shortfall = [0.; 2];
-        let mut improved = false;
         let mut new_miss = false;
         for slot in 0..slots {
             for room in 0..=end {
@@ -1281,12 +1279,9 @@ pub fn choose(network: &NetworkInput, work: &Work) -> Result<Output, String> {
                 // Deadline status is based on expected positive-part shortfall.
                 let flags = deadline_flags(a, b);
                 new_miss |= flags.0;
-                improved |= flags.1;
             }
         }
-        if shortfall[0] > shortfall[1] + 1e-8
-            || (cost[0] > cost[1] + 1e-8 && (new_miss || !improved))
-        {
+        if !crate::room_policy::prefer_proposal(shortfall[0] - shortfall[1], cost[0] - cost[1], new_miss) {
             dominates = false;
         }
     }
@@ -1975,10 +1970,9 @@ mod deadline_certificate_tests {
         let shared = estimate(1e-6, 2e-6);
         let exact_pair = deadline_certificate(shared, shared, 0.);
         assert!(!exact_pair.new_certain && !exact_pair.new_possible);
-        assert!(!exact_pair.improved_certain && !exact_pair.improved_possible);
         // Equal point estimates alone do not establish paired equality.
         let uncertain_pair = deadline_certificate(shared, shared, 1e-6);
-        assert!(uncertain_pair.new_possible && uncertain_pair.improved_possible);
+        assert!(uncertain_pair.new_possible);
     }
 
     #[test]
@@ -1987,21 +1981,18 @@ mod deadline_certificate_tests {
         let low = estimate(0.75e-6, 0.1e-6);
         let worse = deadline_certificate(high, low, 0.1e-6);
         assert!(worse.new_certain && worse.new_possible);
-        assert!(!worse.improved_certain && !worse.improved_possible);
         let better = deadline_certificate(low, high, 0.1e-6);
-        assert!(better.improved_certain && better.improved_possible);
         assert!(!better.new_certain && !better.new_possible);
         let ambiguous =
             deadline_certificate(estimate(1.1e-6, 0.4e-6), estimate(0.9e-6, 0.4e-6), 0.6e-6);
-        assert!(!ambiguous.new_certain && !ambiguous.improved_certain);
-        assert!(ambiguous.new_possible && ambiguous.improved_possible);
+        assert!(!ambiguous.new_certain);
+        assert!(ambiguous.new_possible);
         let at = estimate(1e-6, 0.);
         let above = estimate(1.25e-6, 0.);
         let below = estimate(0.75e-6, 0.);
         assert!(deadline_certificate(above, at, 0.).new_certain);
-        assert!(deadline_certificate(at, above, 0.).improved_certain);
         let both_met = deadline_certificate(at, below, 0.);
-        assert!(!both_met.new_possible && !both_met.improved_possible);
+        assert!(!both_met.new_possible);
     }
 
     #[test]
@@ -2028,11 +2019,9 @@ mod deadline_certificate_tests {
                                     {
                                         continue;
                                     }
-                                    let (new_miss, improved) = deadline_flags(actual_a, actual_b);
+                                    let (new_miss, _) = deadline_flags(actual_a, actual_b);
                                     assert!(!new_miss || certificate.new_possible);
-                                    assert!(!improved || certificate.improved_possible);
                                     assert!(!certificate.new_certain || new_miss);
-                                    assert!(!certificate.improved_certain || improved);
                                 }
                             }
                         }

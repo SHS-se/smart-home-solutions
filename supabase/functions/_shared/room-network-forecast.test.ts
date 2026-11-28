@@ -78,15 +78,16 @@ Deno.test("joint trajectories are invariant to minute continuation boundaries", 
 
 Deno.test("hot-room counterfactuals preserve each checkpoint, physical outcome and feasibility decision", () => {
   // Computed with the original unconditional minute-by-minute counterfactual
-  // replay. Each digest includes every returned continuation and the final
-  // command output, including packed Float64 totals and per-replica statistics.
+  // replay at bb137df. Each digest includes every physical continuation and
+  // final command output, including packed Float64 totals and replica statistics.
+  // Policy assessment is tested separately: partial recovery now permits cost.
   const equal = [
-    "afc172ca027ca015c0e0cf1171b9ca4687e585248a9fdd1eb6045afc02f6a726",
-    "b070ee08e934b385e9afb63954ddf497a4248d099625ebfafe87e342bdccc6c6",
+    "9ee0512f721c03510eb4034f429901534d925b150cf177daf9821a1251299a3b",
+    "16f1fbad049851cc51499eb60baa0c76e9d8596bb0eb25175f6602aeef616542",
   ];
   const rejected = [
-    "4d1ddfe2eeeea0abac60a0b557b3a0b4fabc891275f3306e9e68913ef19ba2e3",
-    "176aa6d06699a8d0f9ee848c1ea4eb086126403e5181c1ec66db9c98710d5572",
+    "bd3133833da11e1ffcadda3b3b02ac2b239a98b0e9dd1b87c5ddad9eaebafddb",
+    "23dd8ea1959d633677e48a85fa7aa8e34d6eee6daddd4a7e26d28add704c563c",
   ];
   for (const cause of ["equal", "overheat", "headroom"] as const) {
     const input = syntheticJointRoomForecast(2, .25, .5, .01);
@@ -107,7 +108,7 @@ Deno.test("hot-room counterfactuals preserve each checkpoint, physical outcome a
       let work: NativeRoomNetworkAdvanceInput["work"];
       for (;;) {
         const advanced = planner.roomNetworkAdvance({ ...input, work, max_minute_steps: budget });
-        trace.update(JSON.stringify(advanced));
+        trace.update(JSON.stringify({...advanced, assessment: undefined}));
         work = advanced.work;
         if (advanced.reached_target) break;
         work = JSON.parse(JSON.stringify(work));
@@ -364,7 +365,7 @@ Deno.test("native rejection certificate follows unconditional horizon comfort lo
   assertEquals(warmer.assessment.proposal_rejection, null);
 });
 
-Deno.test("native cost certificate preserves deadline improvement exception and unresolved threshold states", () => {
+Deno.test("native cost certificate preserves satisfied quarters and resolves partial comfort improvement", () => {
   const input = syntheticJointRoomForecast(2, 0, 1);
   input.target_trajectories = 16;
   for (const node of input.beliefs) node.hypotheses.push(structuredClone(node.hypotheses[0]));
@@ -388,7 +389,7 @@ Deno.test("native cost certificate preserves deadline improvement exception and 
   const rejected = assess(()=>2);
   assertEquals(rejected.proposal_rejection?.kind, "prefix_cost");
   assertEquals(rejected.deadline_resolved, true);
-  // Higher cost is permitted by the existing improvement exception.
+  // Higher cost is permitted by lower total comfort exposure.
   const improved = assess(()=>0);
   assertEquals(improved.proposal_rejection, null);
   assertEquals(improved.deadline_resolved, true);
@@ -396,6 +397,42 @@ Deno.test("native cost certificate preserves deadline improvement exception and 
   const ambiguous = assess(r=>r===3?4e-6:0);
   assertEquals(ambiguous.proposal_rejection, null);
   assertEquals(ambiguous.deadline_resolved, false);
+});
+
+Deno.test("synthetic joint selection pays for partial comfort recovery with uncertainty in every quarter", () => {
+  const input = syntheticJointRoomForecast(2, 0, 1);
+  input.target_trajectories = 16;
+  for (const belief of input.beliefs) belief.hypotheses.push(structuredClone(belief.hypotheses[0]));
+  const base = drain({...input, max_minute_steps: 100000});
+  const slots = 4, rooms = 2, nodes = 2, stride = 42;
+  const compare = (improvement: number) => {
+    const work = structuredClone(base);
+    const replicates = work.statistics.replicates.map((replica, index) => {
+      const values = Array(stride * 3).fill(0);
+      for (let room = 0; room < rooms; room++) {
+        for (let slot = 0; slot < slots; slot++) {
+          const cell = (rooms + 2 * nodes + room) * slots + slot;
+          // Every independent replica remains short in every quarter; its
+          // paired exposure still records useful recovery without perfect heat.
+          values[cell] = 2 + index / 10;
+          values[stride + cell] = values[cell] + improvement;
+        }
+        values[stride - rooms + room] = 1;
+      }
+      return values.map(value => value * replica.trajectories);
+    });
+    work.statistics.total = packStatistics(replicates[0].map((_, i) => replicates.reduce((sum, row) => sum + row[i], 0)));
+    work.statistics.replicates.forEach((replica, i) => replica.total = packStatistics(replicates[i]));
+    return {assessment: nativePlanner().roomNetworkAdvance({...input, work}).assessment,
+      output: nativePlanner().roomNetworkFinalize({network: input.network, work})};
+  };
+  const useful = compare(1);
+  assertEquals(useful.assessment.proposal_rejection, null);
+  assertEquals(useful.assessment.deadline_resolved, true);
+  assertEquals(useful.output.plans[0].targets_c, input.network.accepted![0].targets_c);
+  assertEquals(compare(0).assessment.proposal_rejection?.kind, "prefix_cost");
+  assertEquals(compare(0).output.plans[0].targets_c, [[21], [21], [21], [21]]);
+  assertEquals(compare(-1).assessment.proposal_rejection?.kind, "horizon_shortfall");
 });
 
 Deno.test("common shortfall during a held first hour cannot invent a new deadline miss", () => {
