@@ -1916,6 +1916,24 @@ Deno.test('owned forecast pages and replica writers retain exact authority, bala
   } finally { await db.close(); }
 });
 
+async function completedCaptureDatabase() {
+  const db = await ownershipDatabase();
+  await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
+  await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
+  await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid,state jsonb,cursor integer DEFAULT 42,completed_nodes jsonb DEFAULT \'[]\');');
+  // Source qualification/replay has separate actual SQL tests. This fixture
+  // starts at its completed immutable state; every subsequent RPC is production.
+  await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint,p_node_delta boolean) RETURNS json LANGUAGE sql AS $$
+    SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
+  await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
+  await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
+  await db.exec(await migration('20261126200000_seal_owned_planning_snapshots'));
+  await db.exec(await migration('20261127121000_owned_planning_room_projections'));
+  await db.exec(await migration('20261127122000_stream_owned_snapshot_hash'));
+  await db.exec(await migration('20261128011000_bound_planning_capture_handoff'));
+  return db;
+}
+
 Deno.test('owned SQL worker publishes immutable completed arguments and downloaded replay reproduces the plan', async () => {
   const { createClient } = await import('npm:@supabase/supabase-js@2.90.1');
   const { PlanningJobs } = await import('../supabase/functions/_shared/energy-planning-jobs.ts');
@@ -1927,20 +1945,8 @@ Deno.test('owned SQL worker publishes immutable completed arguments and download
   const { executeRulesPlanning } = await import('../supabase/functions/_shared/rules-planning-execution.ts');
   const { sha256Hex } = await import('../supabase/functions/_shared/ha-device-auth.ts');
   const { unpackOwnedPlanningValue } = await import('../supabase/functions/_shared/owned-planning-codec.ts');
-  const db = await ownershipDatabase();
+  const db = await completedCaptureDatabase();
   try {
-    await db.exec(await migration('20261126153000_archive_completed_planning_inputs'));
-    await db.exec(await migration('20261126153100_durable_connected_planning_execution'));
-    await db.exec('CREATE TABLE private.energy_planning_room_source_blocks(job_id uuid); CREATE TABLE private.energy_planning_room_capture(job_id uuid,state jsonb,cursor integer DEFAULT 42,completed_nodes jsonb DEFAULT \'[]\');');
-    // Source qualification/replay has separate actual SQL tests. This fixture
-    // starts at its completed immutable state; every subsequent RPC is production.
-    await db.exec(`CREATE FUNCTION public.load_energy_planning_room_capture(p_home_id uuid,p_job_id uuid,p_fence bigint,p_node_delta boolean) RETURNS json LANGUAGE sql AS $$
-      SELECT json_build_object('cursor',42,'state',state) FROM private.energy_planning_room_capture WHERE job_id=$2 $$;`);
-    await db.exec(await migration('20261126154000_owned_planning_forecast_replicas'));
-    await db.exec(await migration('20261126160000_reuse_admitted_planning_input'));
-    await db.exec(await migration('20261126200000_seal_owned_planning_snapshots'));
-    await db.exec(await migration('20261127121000_owned_planning_room_projections'));
-    await db.exec(await migration('20261127122000_stream_owned_snapshot_hash'));
     const connected = connectedRoomSnapshot(); connected.snapshot_id = snapshot;
     connected.operating_scope = { modes: { $battery:'controlling',$pool:'controlling',$ev:'controlling','synthetic-a':'controlling' },
       device_owners: { 'synthetic-a-heater':'synthetic-a' }, external_demands: {} };
@@ -2089,5 +2095,72 @@ Deno.test('capture and runtime checkpoint commit together under both cursor fenc
     assertEquals(await save(0,load.dispatch.cursor,load.slice_fence),null);
     assertEquals((await db.query<{cursor:number}>('SELECT cursor FROM private.energy_planning_room_capture')).rows,[{cursor:1}]);
     assert((await db.query<{live:boolean}>('SELECT lease_until>clock_timestamp() live FROM private.energy_planning_jobs WHERE id=$1',[owner.id])).rows[0].live);
+  } finally {await db.close();}
+});
+
+
+Deno.test('completed room populations join after compact validation and roll back atomically on attachment failure', async () => {
+  const db = await completedCaptureDatabase();
+  try {
+    const original = {model_version:'synthetic-version',preference:{unchanged:1},snapshot:{snapshot_id:snapshot,
+      room_network_capture:{rooms:[]}}};
+    const accepted=await rpc<Receipt>(db,'accept_energy_planning_job',{
+      ...capturedSubmission(snapshot,{model_version:'synthetic-version',accepted_reference_revision:0}),input:original});
+    const owner=(await attemptClaim(db,accepted.job_id))!;
+    const scope=[home,owner.id,owner.fence];
+    // Independently synthetic populations: large values must bypass generic
+    // metadata validation, while their final ordered JSON stays exact.
+    const nodes=['receiver-a','receiver-b'].map((key,index)=>({key,process_belief:{hypotheses:
+      Array.from({length:512},(_,i)=>({log_weight:-i/1024,incoming:[],synthetic:
+        Array.from({length:24},(_,j)=>Math.imul(i+1+index,j+23465789).toString(36))}))}}));
+    await db.query('INSERT INTO private.energy_planning_room_capture(job_id,state,completed_nodes) VALUES($1,$2,$3)',
+      [owner.id,JSON.stringify({phase:'complete',runtime:'synthetic-runtime'}),JSON.stringify(nodes)]);
+    const loaded=(await db.query<{v:{slice_fence:number;dispatch:{cursor:number}}}>(
+      "SELECT load_energy_owned_planning_stage($1,$2,$3,'synthetic','synthetic-runtime',true) v",scope)).rows[0].v;
+    const input={...original,snapshot:{snapshot_id:snapshot,room_network:{nodes:[]}}};
+    const update={phase:'prepare',input,completed_node_keys:nodes.map(node=>node.key),payload:null};
+    const save=(body:unknown,fence=loaded.slice_fence)=>db.query<{v:{phase:string}|null}>(
+      'SELECT checkpoint_energy_owned_planning_stage($1,$2,$3,$4,$5,$6) v',
+      [...scope,loaded.dispatch.cursor,fence,JSON.stringify(body)]);
+    await db.exec(`ALTER FUNCTION public.checkpoint_energy_planning_execution(uuid,uuid,bigint,integer,json,json)
+      RENAME TO checkpoint_compact_execution_real;
+      CREATE FUNCTION public.checkpoint_energy_planning_execution(p_home_id uuid,p_job_id uuid,p_fence bigint,
+        p_expected_cursor integer,p_input json,p_state json) RETURNS json LANGUAGE plpgsql AS $$ BEGIN
+        IF json_array_length(p_input#>'{snapshot,room_network,nodes}')<>0 THEN
+          RAISE EXCEPTION 'Expanded populations reached generic metadata validation'; END IF;
+        RETURN public.checkpoint_compact_execution_real(p_home_id,p_job_id,p_fence,p_expected_cursor,p_input,p_state);
+      END; $$;`);
+    const previous=await migration('20261127121000_owned_planning_room_projections');
+    await db.exec(previous.slice(previous.indexOf('CREATE OR REPLACE FUNCTION public.checkpoint_energy_owned_planning_stage')));
+    await assertRejects(()=>save(update),Error,'Expanded populations reached generic metadata validation');
+    await db.exec(await migration('20261128011000_bound_planning_capture_handoff'));
+    assertEquals((await save(update,loaded.slice_fence+1)).rows[0].v,null);
+    await assertRejects(()=>save({...update,completed_node_keys:[...update.completed_node_keys].reverse()}),Error,'do not match');
+    await assertRejects(()=>save({...update,input:{...input,preference:{unchanged:2}}}),Error,'Invalid frozen planning execution');
+    await assertRejects(()=>save({...update,input:{...input,snapshot:{...input.snapshot,snapshot_id:other}}}),Error,'Invalid frozen planning execution');
+    await db.exec(`CREATE FUNCTION private.synthetic_attachment_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF json_array_length(NEW.input#>'{snapshot,room_network,nodes}')>0 THEN RAISE EXCEPTION 'Synthetic attachment failure'; END IF;
+      RETURN NEW; END; $$;
+      CREATE TRIGGER synthetic_attachment_failure BEFORE UPDATE ON private.energy_planning_execution
+      FOR EACH ROW EXECUTE FUNCTION private.synthetic_attachment_failure();`);
+    await assertRejects(()=>save(update),Error,'Synthetic attachment failure');
+    assertEquals((await db.query('SELECT count(*)::integer n FROM private.energy_planning_execution')).rows,[{n:0}],
+      'the intermediate compact checkpoint never commits on failure');
+    assertEquals((await db.query('SELECT phase,cursor FROM private.energy_planning_runtime WHERE job_id=$1',[owner.id])).rows,
+      [{phase:'capture',cursor:loaded.dispatch.cursor}]);
+    assertEquals((await db.query<{nodes:unknown}>('SELECT completed_nodes nodes FROM private.energy_planning_room_capture WHERE job_id=$1',[owner.id])).rows[0].nodes,nodes);
+    await db.exec('DROP TRIGGER synthetic_attachment_failure ON private.energy_planning_execution');
+    assertEquals((await save(update)).rows[0].v?.phase,'prepare');
+    const final=(await db.query<{input:unknown;text:string}>(
+      'SELECT input,input::text text FROM private.energy_planning_execution WHERE job_id=$1',[owner.id])).rows[0];
+    assertEquals(final.input,{...input,snapshot:{...input.snapshot,room_network:{nodes}}});
+    const expected=(await db.query<{text:string}>(`SELECT private.planning_replace_member($1::json,'snapshot',
+      private.planning_replace_member($1::json->'snapshot','room_network',
+        private.planning_replace_member($1::json#>'{snapshot,room_network}','nodes',
+          (SELECT json_agg(n ORDER BY ordinality) FROM private.energy_planning_room_capture c
+           CROSS JOIN LATERAL jsonb_array_elements(c.completed_nodes) WITH ORDINALITY a(n,ordinality) WHERE c.job_id=$2))))::text text`,
+      [JSON.stringify(input),owner.id])).rows[0].text;
+    assertEquals(final.text,expected,'attachment preserves the previous exact JSON reconstruction');
+    assertEquals((await save(update)).rows[0].v,null,'a duplicate cursor cannot overwrite the attached populations');
   } finally {await db.close();}
 });

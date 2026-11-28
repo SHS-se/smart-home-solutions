@@ -161,6 +161,12 @@ and random draws are unchanged. This pure-code optimization follows the normal
 generated learner-identity transition and therefore causes one initial refit.
 Both executors and dispatcher capabilities must match before activation.
 
+At the completed capture handoff, SQL validates the compact execution metadata
+before attaching the already authenticated ordered receiver populations. Both
+writes commit in the same transaction; attachment failure preserves the complete
+capture for retry. Large populations never pass through the generic metadata
+validator, and the stored execution JSON retains its exact prior representation.
+
 Planning source capture also reuses a certified fitted block that overlaps the
 start of the model's history. It retains the original envelope and digest; the
 existing qualifier clips native intervals to the requested population. Binding,
