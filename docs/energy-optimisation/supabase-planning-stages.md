@@ -293,6 +293,11 @@ concurrent handlers together, including checkpoint serialization.
 Integration schedules up to four forecast replicas in groups of at most two
 concurrent worker requests. The caller awaits each group and checks the shared
 deadline before launching the next. These are distinct from the inference replicas.
+The ingest entry point uses native `Deno.serve`. Synthetic hosted comparisons
+showed the legacy standard-library HTTP adapter exhausting the function-call
+allowance across separate bounded exchanges; the native adapter completed those
+same exchanges. Keep the native server boundary as well as the per-exchange cap.
+
 An exchange shares a 24-call allowance across every worker stage and replica,
 reserving six calls for upstream hops within Supabase's
 [30-call per-trace limit](https://supabase.com/docs/guides/functions/recursive-functions).

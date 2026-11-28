@@ -33,7 +33,6 @@ import { ExecutionReplanError, parseExecutionChanges, parseExecutionReplan, shou
 // boundary. The large plan is overwritten per home; only compact run summaries
 // are appended and both histories have explicit retention.
 
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import { devicePowerReport } from "../_shared/device-power-report.ts";
@@ -329,7 +328,7 @@ async function refreshPreparedForecasts(
     issued_at:new Date().toISOString()};
 }
 
-serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
+Deno.serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const trace = new PlanningTrace(requestId);
   const ingestStarted = performance.now();
