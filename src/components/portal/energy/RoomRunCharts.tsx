@@ -192,6 +192,24 @@ function ModelSummary({ view }: { view: RoomResponseView }) {
   const response = view.response!;
   const model = response.model;
   const format = (value: number, digits = 2) => value.toLocaleString(language, { maximumFractionDigits: digits });
+  if (response.connected) {
+    const thermal = response.connected.thermal, heater = thermal.heater;
+    const parameters = [
+      [t('Modellens värmarparameter', 'Model heater parameter') + (heater ? ` · ${format(heater.gain_reference_outdoor_c)} °C ${t('ute', 'outdoors')}` : ''), heater ? `${format(heater.gain_c_per_wh * 1000)} °C/kWh` : t('Inte identifierad', 'Not identified')],
+      [t('Värmeförlust till uteluften', 'Outside heat loss'), `${format(thermal.outdoor_per_h, 4)} /h`],
+      [t('Värmefördröjning', 'Heater lag'), heater ? `${format(heater.lag_h)} h` : '—'],
+      [t('Rum med modellerat värmeutbyte', 'Rooms with modelled heat exchange'), format(response.connected.incoming.length, 0)],
+      ...(heater ? [[t('Värmarresponsens relativa väderlutning', 'Relative weather slope of heater response'), `${format(heater.gain_outdoor_slope_per_c, 4)} /°C`]] : []),
+    ];
+    return <div className="space-y-2"><dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" data-testid="room-model-summary">
+      {parameters.map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="font-medium">{value}</dd></div>)}
+      {response.trainingFrom && response.trainingTo && <div className="col-span-2"><dt>{t('Träningsdata', 'Training data')}</dt>
+        <dd className="font-medium">{response.trainingFrom.slice(0, 10)} – {response.trainingTo.slice(0, 10)}</dd></div>}
+    </dl><p className="text-xs text-muted-foreground">{t(
+      'Förlusten till uteluften är koefficienten gånger skillnaden mellan inne- och utetemperatur. Värmeutbytet med varje anslutet rum beräknas separat.',
+      'Outside heat loss is the coefficient multiplied by the indoor–outdoor temperature difference. Heat exchange with each connected room is calculated separately.')}</p></div>;
+  }
+  if (!model) return null;
   return <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-4" data-testid="room-model-summary">
     <div><dt>{t('Modellens värmarparameter', 'Model heater parameter')}{model.gain_reference_outdoor_c != null && ` · ${format(model.gain_reference_outdoor_c)} °C ${t('ute', 'outdoors')}`}</dt><dd className="font-medium">{isEquilibrium(model)
       ? `${format(model.heater_c_per_w * 1000)} °C/kW` : `${format(model.gain_c_per_wh * 1000)} °C/kWh`}</dd></div>
@@ -446,7 +464,9 @@ function measuredReason(code: string, t: (sv: string, en: string) => string): st
 
 function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
   const { language, t } = useLanguage();
-  const calibration = view.response!.measuredRuns!;
+  const calibration = view.diagnostics?.calibration ?? view.response!.measuredRuns!;
+  const validation = view.diagnostics ? null : view.response!.measuredRuns?.validation;
+  const lineLabel = view.diagnostics ? t('Bästa anpassade linje', 'Best-fit line') : t('Publicerad linje', 'Published line');
   // A point is selected in one chart; the other chart's point for the same run stays closed.
   const [selected, setSelected] = useState<{ kind: 'heating' | 'cooling'; id: string } | null>(null);
   const format = (value: number, digits = 2) => value.toLocaleString(language, { maximumFractionDigits: digits });
@@ -487,7 +507,10 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
       <h4 className="font-semibold">{t('Uppmätta förlopp efter utetemperatur', 'Measured runs by outdoor temperature')}</h4>
       <p className="text-xs text-muted-foreground">{t('Punkterna är beräknade från temperatur- och energimätningar vid de förhållanden som rådde under varje förlopp.',
         'Points are calculated from temperature and energy readings at the conditions observed during each run.')}</p>
-      <p className="text-xs text-muted-foreground">{t('Uppvärmning och avsvalning bedöms var för sig, mot linjen i sitt eget diagram. Linjerna kommer från den publicerade anpassningen.',
+      <p className="text-xs text-muted-foreground">{view.diagnostics ? t(
+        'Linjerna sammanfattar uppmätta förlopp under modellens träningsperiod med de observationer som finns nu. De ändrar inte planerarens anpassade modell. Nettoökningen inkluderar värmeförluster och värmeutbyte under förloppet.',
+        'The best-fit lines summarize measured runs in the model’s training window using observations available now. They do not change the planner’s fitted model. Net rise includes heat lost and exchanged during the run.') : t(
+        'Uppvärmning och avsvalning bedöms var för sig, mot linjen i sitt eget diagram. Linjerna kommer från den publicerade anpassningen.',
         'Heating and cooling are judged separately, each against the line in its own chart. The lines come from the published fit.')}</p>
       <p className="text-xs tabular-nums" data-testid="measured-run-counts">{format(view.measuredPoints.length, 0)} {t('visade förlopp', 'runs shown')}</p>
       {view.observedRuns === null && <p role="status" className="text-xs text-muted-foreground">{t('Förloppen för denna modellrevision är inte tillgängliga. Linjerna kommer från den publicerade anpassningen.',
@@ -502,10 +525,10 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
         detail={{ label: chart.kind === 'heating' ? t('Vald uppvärmningspunkt', 'Selected heating point') : t('Vald avsvalningspunkt', 'Selected cooling point'),
           onClose: () => setSelected(null),
           render: id => { const run = byId.get(id); return run ? <MeasuredPointDetail kind={chart.kind} run={run} line={chart.line} onClose={() => setSelected(null)} /> : null; } }} />
-        : <p className="py-3 text-xs text-muted-foreground">{t('Inga mätbara punkter eller publicerad linje är tillgängliga.', 'No measurable points or published line are available.')}</p>}
+        : <p className="py-3 text-xs text-muted-foreground">{t('Inga mätbara avslutade förlopp finns för detta mått under perioden.', 'No measurable completed runs for this measure are available in this window.')}</p>}
       <p className="text-xs text-muted-foreground tabular-nums">{chart.line ? t(
-        `Publicerad linje: ${format(chart.line.intercept)} ${chart.unit} vid ${format(chart.line.reference_outdoor_c)} °C ute, lutning ${format(chart.line.slope_per_c, 3)} ${chart.unit}/°C. ${format(chart.line.points, 0)} förlopp i anpassningen.`,
-        `Published line: ${format(chart.line.intercept)} ${chart.unit} at ${format(chart.line.reference_outdoor_c)} °C outdoors, slope ${format(chart.line.slope_per_c, 3)} ${chart.unit}/°C. ${format(chart.line.points, 0)} runs in the fit.`,
+        `${lineLabel}: ${format(chart.line.intercept)} ${chart.unit} vid ${format(chart.line.reference_outdoor_c)} °C ute, lutning ${format(chart.line.slope_per_c, 3)} ${chart.unit}/°C. ${format(chart.line.points, 0)} förlopp i anpassningen.`,
+        `${lineLabel}: ${format(chart.line.intercept)} ${chart.unit} at ${format(chart.line.reference_outdoor_c)} °C outdoors, slope ${format(chart.line.slope_per_c, 3)} ${chart.unit}/°C. ${format(chart.line.points, 0)} runs in the fit.`,
       ) : t('Ingen linje har publicerats för detta mått.', 'No line has been published for this measure.')}</p>
       <p className="text-xs tabular-nums" data-testid={`measured-run-counts-${chart.kind}`}>{format(chart.counts.kept, 0)} {t('nära linjen', 'close to the line')}{' · '}
         {format(chart.counts.flagged, 0)} {t('flaggade', 'flagged')}{' · '}{format(chart.counts.missing, 0)} {chart.kind === 'heating'
@@ -519,25 +542,27 @@ function MeasuredRoomRunCharts({ view }: { view: RoomResponseView }) {
       {t('Mätanmärkningar för visade förlopp', 'Measurement notes for the runs shown')}</summary>
       <ul className="list-disc space-y-1 pl-5">{[...missingReasons].map(([reason, count]) => <li key={reason}>{measuredReason(reason, t)} · {format(count, 0)}</li>)}</ul>
     </details>}
-    {(calibration.validation.trajectory_mae_c !== null || calibration.validation.projected_trajectory_mae_c != null) &&
+    {validation && (validation.trajectory_mae_c !== null || validation.projected_trajectory_mae_c != null) &&
       <section className="space-y-1 text-xs" data-testid="room-prediction-error">
         <h5 className="font-medium">{t('Medelabsolut prognosfel för temperatur', 'Mean absolute temperature prediction error')}</h5>
         <dl>
-          {calibration.validation.trajectory_mae_c !== null && <Row term={t('Anpassad respons', 'Fitted response')}>{format(calibration.validation.trajectory_mae_c)} °C</Row>}
-          {calibration.validation.projected_trajectory_mae_c != null && <Row term={t('Planerarens prognos', 'Planner forecast')}>{format(calibration.validation.projected_trajectory_mae_c)} °C</Row>}
+          {validation.trajectory_mae_c !== null && <Row term={t('Anpassad respons', 'Fitted response')}>{format(validation.trajectory_mae_c)} °C</Row>}
+          {validation.projected_trajectory_mae_c != null && <Row term={t('Planerarens prognos', 'Planner forecast')}>{format(validation.projected_trajectory_mae_c)} °C</Row>}
         </dl>
-        <p className="text-muted-foreground">{format(calibration.validation.observations, 0)} {t('valideringsobservationer', 'validation observations')}
-          {calibration.validation.projected_trajectory_mae_c != null && ' · ' + t('Planerarens prognos räknar inte med framtida positiva tillskott från omätt värme.',
+        <p className="text-muted-foreground">{format(validation.observations, 0)} {t('valideringsobservationer', 'validation observations')}
+          {validation.projected_trajectory_mae_c != null && ' · ' + t('Planerarens prognos räknar inte med framtida positiva tillskott från omätt värme.',
             'The planner forecast excludes future positive unmetered heat gains.')}</p>
       </section>}
     <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">{t('Planerarens modellparametrar', 'Planner model parameters')}</summary>
       <ModelSummary view={view} />
-      <p className="mt-2 text-muted-foreground">{t('Planeraren anpassar värmarens respons och värmeutbytet med uteluften och övriga hemmet till temperatur- och energimätningarna genom hela förloppet. Avsvalningen avtar när temperaturskillnaderna minskar. Toppunkterna ovan beskriver förloppen; de bestämmer inte värmarens respons. Om mätningarna inte kan identifiera responsen används den kronologiska anpassningen.',
+      <p className="mt-2 text-muted-foreground">{view.response?.connected ? t(
+        'Planeraren använder den publicerade modellen för värmaren, uteluften och varje anslutet rum. Linjerna ovan beskriver uppmätta förlopp och ändrar inte modellens parametrar.',
+        'The planner uses the published model for the heater, outdoors and each connected room. The lines above describe measured runs and do not change model parameters.') : t('Planeraren anpassar värmarens respons och värmeutbytet med uteluften och övriga hemmet till temperatur- och energimätningarna genom hela förloppet. Avsvalningen avtar när temperaturskillnaderna minskar. Toppunkterna ovan beskriver förloppen; de bestämmer inte värmarens respons. Om mätningarna inte kan identifiera responsen används den kronologiska anpassningen.',
         'The planner fits heater response and heat exchange with outdoors and the rest of the home to temperature and energy readings throughout each run. Cooling slows as temperature differences shrink. The peak points above describe the runs; they do not determine heater response. Where the readings cannot identify a response, the chronological fit is used.')}</p>
     </details>
   </section>;
 }
 
 export default function RoomRunCharts(props: { view: RoomResponseView }) {
-  return props.view.response?.measuredRuns ? <MeasuredRoomRunCharts {...props} /> : <LegacyRoomRunCharts {...props} />;
+  return props.view.diagnostics || props.view.response?.measuredRuns ? <MeasuredRoomRunCharts {...props} /> : <LegacyRoomRunCharts {...props} />;
 }

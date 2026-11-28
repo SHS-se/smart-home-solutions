@@ -6,8 +6,9 @@ pub(crate) fn prefer_proposal(
     cost_difference: f64,
     new_miss: bool,
 ) -> bool {
-    shortfall_difference <= 1e-8
-        && (cost_difference <= 1e-8 || shortfall_difference < -1e-8 && !new_miss)
+    !new_miss
+        && shortfall_difference <= 1e-8
+        && (cost_difference <= 1e-8 || shortfall_difference < -1e-8)
 }
 
 pub(crate) struct RoomObjective {
@@ -32,5 +33,20 @@ impl RoomObjective {
         let energy = hours / 1000. * (export_price * covered + import_price * (watts - covered));
 
         energy + 10_000. * (required - next).max(0.) + 1_000. * (next - maximum).max(0.) + future
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefer_proposal;
+
+    #[test]
+    fn savings_never_buy_a_new_cold_quarter() {
+        for cost in [-0.1, 0., 0.1] {
+            assert!(!prefer_proposal(-0.25, cost, true));
+            assert!(prefer_proposal(-0.25, cost, false));
+        }
+        assert!(!prefer_proposal(0.25, -1., false));
+        assert!(!prefer_proposal(0., 0.1, false));
     }
 }

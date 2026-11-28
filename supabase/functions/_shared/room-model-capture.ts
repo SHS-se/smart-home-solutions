@@ -1,4 +1,5 @@
 import type { ConnectedRoomPlanningNode } from "./planner/models/room/network.ts";
+import { roomOutdoorSeries } from "./room-outdoor.ts";
 import {connectedRoomForecastIdentity} from "./room-network-contract.ts";
 import { estimateRoomState, roomPlanClock, type RoomStateReading } from "./planner/models/room/state.ts";
 import { readDoorwayProbes, type DoorwayProbeRow } from "./room-doorway-probes.ts";
@@ -283,6 +284,7 @@ export async function captureRoomPlanningState(
   snapshot: OptimisationSnapshot, rooms: CapturedRoom[],
 ): Promise<OptimisationSnapshot> {
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
+  delete snapshot.room_outdoor_estimate_c;
   const recentEnd = Math.floor(Date.parse(snapshot.captured_at) / SLOT_MS) * SLOT_MS;
   const quarters = recentQuarterStarts(recentEnd);
   const delayedRooms = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0);
@@ -292,7 +294,9 @@ export async function captureRoomPlanningState(
   const passiveQuarters = recentQuarterStarts(passiveEnd);
   const passiveRooms = rooms.filter(room => room.passive_heat);
   const doorwayRooms = rooms.filter(room => room.doorway);
-  const [latestResult, scheduleResult, recentResult, passiveSources, doorwayProbes] = await Promise.all([
+  const missingWeather = snapshot.slots.some((_, i) =>
+    typeof snapshot.outdoor_temperature_c?.[i] !== "number" || !Number.isFinite(snapshot.outdoor_temperature_c[i]));
+  const [latestResult, scheduleResult, recentResult, passiveSources, doorwayProbes, outdoorResult] = await Promise.all([
     // Available observations remain evidence independently of their report age.
     supabase.rpc("get_energy_latest_room_temperatures", {
       p_customer_id: customerId, p_home_id: homeId, p_from: "1970-01-01T00:00:00.000Z",
@@ -322,6 +326,12 @@ export async function captureRoomPlanningState(
           return null;
         })
       : Promise.resolve<DoorwayProbeRow[]>([]),
+    // A stale weather observation is still an anchor. No age or gap threshold
+    // may erase it when the provider is unavailable.
+    missingWeather ? supabase.from("energy_optimisation_outdoor_slots")
+      .select("start_ts,temperature_c").eq("home_id", homeId).lte("start_ts", snapshot.captured_at)
+      .not("temperature_c", "is", null).order("start_ts", {ascending: false}).limit(1)
+      : Promise.resolve({data: [], error: null}),
   ]);
   for (const result of [latestResult, scheduleResult, recentResult]) {
     if (result.error) {
@@ -364,6 +374,28 @@ export async function captureRoomPlanningState(
       "Room state estimates retain received inputs and exclude unobserved heater warmth.")]);
   }
   const historyByRoom = new Map(history.map(row => [row.room_key, row]));
+  const observedWeather = history.flatMap(row => row.outdoor_quarters ?? []);
+  for (const row of outdoorResult.data ?? []) {
+    if (row.temperature_c != null && Number.isFinite(Number(row.temperature_c))) {
+      observedWeather.push([Date.parse(row.start_ts), Number(row.temperature_c)]);
+    }
+  }
+  const observedOutdoor = observedWeather.filter(([at, value]) => at <= captured && Number.isFinite(value))
+    .sort((a, b) => b[0] - a[0])[0]?.[1];
+  if (missingWeather) {
+    const observed = observedWeather.map(([, value]) => value)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    // Only observed weather can add a capture anchor. Provider values are
+    // combined by roomOutdoorSeries; no estimate is written to observation tables.
+    if (observed.length) snapshot.room_outdoor_estimate_c = Math.min(...observed);
+    const resolved = roomOutdoorSeries(snapshot);
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings?.filter(w => w.code !== "outdoor_estimate"), [planningWarning(
+      "outdoor_estimate", "rooms", "Outdoor forecast coverage is incomplete.",
+      resolved ? "Missing room-weather quarters use the coldest available observed or forecast temperature; known forecast quarters are retained."
+        : "No outdoor observation or forecast supports a room-temperature projection. Compatible comfort instructions and measured demand remain active.",
+      { estimated_quarters: snapshot.slots.filter((_, i) => !Number.isFinite(snapshot.outdoor_temperature_c?.[i])).length,
+        ...(resolved ? { estimate_c: Math.min(...resolved) } : {}) })]);
+  }
   const recent = new Map<string, number[]>();
   const stored = new Map<string, number>();
   const historyWarnings: ReturnType<typeof planningWarning>[] = [];
@@ -392,7 +424,10 @@ export async function captureRoomPlanningState(
   const initializedRooms = rooms.map(room => {
     if (!room.model || isEquilibrium(room.model)) return room;
     const reading = observations.get(room.key);
-    const outdoor = snapshot.outdoor_temperature_c?.find((v): v is number => typeof v === "number" && Number.isFinite(v));
+    // Initial state uses the nowcast or observed weather, never tomorrow's
+    // colder estimate. The resolved cold-side series belongs to future planning.
+    const nowcast = snapshot.outdoor_temperature_c?.[0];
+    const outdoor = typeof nowcast === "number" && Number.isFinite(nowcast) ? nowcast : observedOutdoor;
     const house = snapshot.house_temperature_c?.find((v): v is number => typeof v === "number" && Number.isFinite(v));
     if (!reading || outdoor === undefined || ((room.model.house_coupling_per_h ?? 0) > 0 && house === undefined)) {
       return { ...room, model: null };
@@ -492,7 +527,7 @@ function applyRoomCaptureFields(snapshot: OptimisationSnapshot, states: Pick<Con
   warnings: import("./planner/planning-warnings.ts").PlanningWarning[], nodes: ConnectedRoomPlanningNode[]): OptimisationSnapshot {
   const pending=snapshot.room_network_capture;
   if(!pending)throw new Error("No pending connected room capture");
-  const outdoorKnown=snapshot.outdoor_temperature_c?.length===snapshot.slots.length&&snapshot.outdoor_temperature_c.every(value=>typeof value==="number"&&Number.isFinite(value));
+  const outdoorKnown=roomOutdoorSeries(snapshot)!==null;
   const models=new Map(pending.rooms.map(room=>[room.key,outdoorKnown&&room.connected_exchange&&connectedRoomHeaterSupported(room.connected_exchange)&&!roomResponseEvidenceLimited(room.model_warnings)?room.model:null]));
   const captured=new Map(states.map(node=>[node.key,node]));
   const {room_network_capture:_pending,room_network:_previous,...complete}=snapshot;

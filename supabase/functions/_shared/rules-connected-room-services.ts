@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { roomOutdoorSeries } from "./room-outdoor.ts";
 import { roomHeater } from "./planner/room-heater.ts";
 import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 import { connectedRoomHeaterSupported, roomResponseEvidenceLimited } from "./planner/room-response.ts";
@@ -59,8 +60,9 @@ function compileNetwork(
 ) {
   const { snapshot, retained, prices } = inputs,
     network = inputs.proposal_network ?? snapshot.room_network;
+  const outdoor = roomOutdoorSeries(snapshot);
   if (
-    snapshot.schema_version < 12 || !network ||
+    snapshot.schema_version < 12 || !network || !outdoor ||
     (zone && !network.nodes.some((node) => node.key === zone.key))
   ) return;
   const nodes = network.nodes.filter((node) => !disabled.has(node.key));
@@ -108,7 +110,7 @@ function compileNetwork(
     if (!members.length) return [];
     const watts = snapshot.slots.map((slot, i) => members.reduce((sum, member) => {
       if (unavailableOwner(snapshot, commandOwner(snapshot, member), slot.start)) return sum;
-      const draw = empiricalHeaterWatts(member, i, retained[i]?.device_commands?.[member.key], snapshot.outdoor_temperature_c?.[i] ?? null);
+      const draw = empiricalHeaterWatts(member, i, retained[i]?.device_commands?.[member.key], outdoor[i]);
       return Number.isFinite(draw) ? sum + draw : sum;
     }, 0));
     return [{node: index, watts}];
@@ -137,6 +139,7 @@ function compileNetwork(
     const relays = devices.filter((m) => m.control_type === "switch_schedule")
       .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
     return {
+      node: nodeIndex.get(room.key)!,
       zone: room,
       members: thermostats,
       relays,
@@ -193,13 +196,13 @@ function compileNetwork(
               0,
               1 +
                 heater.gain_outdoor_slope_per_c *
-                  (snapshot.outdoor_temperature_c![i]! -
+                  (outdoor[i] -
                     heater.gain_reference_outdoor_c),
             )
           : 0
       ),
       forcing_c_per_h: clock.hours.map((_, i) =>
-        thermal.outdoor_per_h * snapshot.outdoor_temperature_c![i]! +
+        thermal.outdoor_per_h * outdoor[i] +
         thermal.background_per_h +
         thermal.solar_per_wm2_h * (snapshot.solar_irradiance_w_per_m2?.[i] ?? 0)
       ),
@@ -317,6 +320,9 @@ function storePlans(
     result.room_power[room.zone.key] = plan.power_w;
     (result.expected_shortfall_c ??= {})[room.zone.key] = plan.shortfall_c;
     result.temperature[room.zone.key] = plan.temperature_c;
+    if ("mean_temperature_c" in output) {
+      (result.mean_temperature ??= {})[room.zone.key] = output.mean_temperature_c[room.node];
+    }
     if ("literal" in output) {
       (result.unplanned_expected_shortfall_c ??= {})[room.zone.key] = output.literal[j].shortfall_c;
       result.unplanned_temperature[room.zone.key] = output.literal[j].temperature_c;

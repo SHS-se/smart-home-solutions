@@ -1,4 +1,5 @@
 import { roomPlanClock } from "./planner/models/room/state.ts";
+import { roomOutdoorSeries } from "./room-outdoor.ts";
 import { heatingDraw } from "./planner/weather-heating.ts";
 import {
   heatingModelRuns,
@@ -82,6 +83,8 @@ export function compileRoomSchedule(
   result: RoomServices,
 ) {
   const model = zone.model!, n = snapshot.slots.length;
+  const outdoor = roomOutdoorSeries(snapshot);
+  if (!outdoor) throw new Error("Room weather has no observed or forecast basis");
   const shared = snapshot.schema_version >= 12;
   const heaters = controlled.map(member => {
     const contract = roomHeater(member);
@@ -99,7 +102,7 @@ export function compileRoomSchedule(
     const physics = model;
     const conditions = {
       hours,
-      outdoor_c: snapshot.outdoor_temperature_c![i]!,
+      outdoor_c: outdoor[i],
       house_c: (zone.doorway_boundary_c ?? snapshot.house_temperature_c)?.[i],
       background_c_per_h: backgroundRateForSlot(
         physics,

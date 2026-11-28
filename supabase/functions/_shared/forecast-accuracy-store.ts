@@ -1,30 +1,33 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OptimisationPlan } from './planner/planning-contracts.ts';
 import { calculateAccuracy, type AccuracyEvidence } from './forecast-accuracy.ts';
-import { controlledRooms } from './planner/controlled-rooms.ts';
+import { controlledRooms, roomForecastComparison } from './planner/controlled-rooms.ts';
 
 /** Called only after successful publication. A failed archive is a gap, never a plan rejection. */
 export async function archiveAccuracyForecast(db: SupabaseClient, homeId: string, customerId: string, plan: OptimisationPlan) {
   const slots = plan.plans.priority.slots;
   if (!slots.length) return;
-  // Only rooms the plan drives: any other room follows its own thermostat.
-  const rooms = controlledRooms(plan);
+  const rooms = controlledRooms(plan).map(room => ({...room, comparison: roomForecastComparison(plan, room)}));
   const roomIndex = new Map((plan.thermal_projection?.starts ?? []).map((start, i) => [Date.parse(start), i]));
   const roomTemperatures = (start: string) => {
     const i = roomIndex.get(Date.parse(start));
     return i === undefined ? null : Object.fromEntries(rooms.flatMap(room =>
-      Number.isFinite(room.planned_temperature_c[i]) ? [[room.key, room.planned_temperature_c[i]]] : []));
+      room.comparison === 'executed_interval_mean' && Number.isFinite(room.planned_mean_temperature_c?.[i])
+        ? [[room.key, room.planned_mean_temperature_c![i]]] : []));
   };
   const {error} = await db.from('energy_forecast_records').insert({home_id: homeId, customer_id: customerId,
     plan_id: plan.plan_id, horizon_end: new Date(Date.parse(slots.at(-1)!.start) + 900_000).toISOString(),
     forecast: {timezone: plan.timezone, battery: plan.capabilities.battery && !!plan.battery, model_version: plan.model_version, issued_at: plan.issued_at,
-      devices: plan.device_models.map(d => ({key: d.key, name: d.name})),
-      ...(rooms.length ? {rooms: rooms.map(room => ({key: room.key, name: room.name}))} : {}),
+      comparison_basis: 'executed_interval_means_v1', temperature_aggregation: 'interval_mean',
+      battery_mode: plan.operating_scope?.modes.$battery ?? 'mode_unrecorded',
+      devices: plan.device_models.map(d => ({key: d.key, name: d.name,
+        mode: plan.operating_scope?.modes[plan.operating_scope.device_owners[d.key]] ?? 'mode_unrecorded'})),
+      ...(rooms.length ? {rooms: rooms.map(room => ({key: room.key, name: room.name, comparison: room.comparison}))} : {}),
       slots: slots.map(s => ({start: s.start, duration_hours: s.duration_hours, load_w: s.load_w, pv_w: s.pv_w,
         device_loads_w: s.device_loads_w, battery_charge_w: s.battery_charge_w,
         battery_discharge_w: s.battery_discharge_w, battery_soc: s.battery_soc,
         estimated_import_sek_per_kwh: s.import_price_sek_per_kwh === null ? s.shadow_import_sek_per_kwh ?? null : null,
-        ...(rooms.length ? {room_temperature_c: roomTemperatures(s.start)} : {})}))}});
+        ...(rooms.length ? {room_mean_temperature_c: roomTemperatures(s.start)} : {})}))}});
   if (error && error.code !== '23505') throw new Error(error.message);
 }
 

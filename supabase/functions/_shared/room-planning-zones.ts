@@ -1,3 +1,4 @@
+import { roomOutdoorSeries } from "./room-outdoor.ts";
 import { roomPlanClock } from "./planner/models/room/state.ts";
 // Each room's planning input joins one captured model revision to current
 // equipment, comfort settings, measured temperature and retained heat. Forecast
@@ -44,7 +45,7 @@ export function roomPlanningZones(
   const starts = snapshot.slots.map(slot => slot.start);
   const n = starts.length;
   const lockout = summerHeatingLockoutForStarts(starts, snapshot.timezone);
-  const outdoor = complete(snapshot.outdoor_temperature_c, n) ? snapshot.outdoor_temperature_c : null;
+  const outdoor = roomOutdoorSeries(snapshot);
   const house = complete(snapshot.house_temperature_c, n) ? snapshot.house_temperature_c : null;
   const zones: ThermalZonePlanningInput[] = [];
   const notes: PlanningWarning[] = [];

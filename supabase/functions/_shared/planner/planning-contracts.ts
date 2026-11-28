@@ -487,6 +487,9 @@ export interface OptimisationSnapshot {
    * this, electrical planning does not.
    */
   outdoor_temperature_c?: (number | null)[];
+  /** Cold-side observed weather basis for missing room forecast slots. Capture
+   * owned, never a measured value or part of the prepared forecast cache. */
+  room_outdoor_estimate_c?: number;
   /**
    * Global horizontal irradiance per slot, W/m². Filled server-side for every
    * home, and optional in a way outdoor temperature is not: a zone with a
@@ -1106,5 +1109,8 @@ export interface ThermalPlanningProjection {
  /** The room's device models, whose owners' operating modes say whether it is controlled. */
  device_keys?:string[];control_type:"switch_schedule"|"setpoint"|"mixed";load_type:DeviceLoadType|"mixed";
  priority:number;rated_power_w:number;comfort_min_c:number[];target_c:number[];comfort_max_c:number[];
- planned_temperature_c:number[];unplanned_temperature_c:number[];planned_power_w:number[];unplanned_power_w:number[]}[];
+ planned_temperature_c:number[];unplanned_temperature_c:number[];
+ /** Model-integrated interval means, distinct from comfort-boundary endpoints. */
+ planned_mean_temperature_c?:number[];
+ planned_power_w:number[];unplanned_power_w:number[]}[];
 }

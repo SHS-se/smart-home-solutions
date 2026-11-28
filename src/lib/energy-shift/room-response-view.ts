@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { readConnectedRoomResponse, type ConnectedRoomResponse } from '../../../supabase/functions/_shared/planner/models/room/connected-exchange';
+import type { RoomRunDiagnostics } from '../../../supabase/functions/_shared/planner/models/room/run-diagnostics';
 import { readThermalModel } from '../../../supabase/functions/_shared/planner/models/room/read-model';
 import { isEquilibrium, type DynamicThermalZoneModel, type ThermalZoneModel } from '../../../supabase/functions/_shared/planner/models/room/thermal';
 import { roomMeasuredEvidence, roomTransitionEvidence } from './room-run-evidence';
@@ -12,6 +14,7 @@ import { ROOM_MEASURED_POLICY, type MeasuredRoomAssessment, type MeasuredRoomCal
 const response = z.object({
   revision: z.string(),
   model: z.unknown(),
+  connected_exchange: z.unknown().optional(),
   training_from: z.string().nullable().optional(),
   training_to: z.string().nullable().optional(),
   warnings: z.array(z.string()).nullable().optional(),
@@ -28,17 +31,19 @@ const evidence = z.object({
     shared_attempt: z.object({ status: z.string(), attempted_at: z.string() }).passthrough().nullable().optional(),
   }).nullable(),
   response,
+  diagnostics: z.unknown().optional(),
   ledgers: z.array(z.object({ scope_key: z.string(), created_at: z.string(), evidence: z.unknown() }).passthrough()),
 });
 
 export interface RoomResponseView {
-  response: { revision: string; model: ThermalZoneModel; trainingFrom: string | null; trainingTo: string | null;
+  response: { revision: string; model: ThermalZoneModel | null; connected?: ConnectedRoomResponse | null; trainingFrom: string | null; trainingTo: string | null;
     warnings: string[]; fittedRuns: number | null; fittedTransitions: number | null; measuredRuns: MeasuredRoomCalibration | null } | null;
   /** Runs assessed against `response`, or legacy per-band assessments during rollout. */
   points: RoomRunPoint[];
   measuredPoints: MeasuredRoomAssessment[];
+  diagnostics?: Omit<RoomRunDiagnostics, 'runs'>;
   observedRuns: number | null;
-  assessed: 'shared' | 'legacy' | null;
+  assessed: 'shared' | 'legacy' | 'descriptive' | null;
   room: z.infer<typeof evidence>['room'];
 }
 
@@ -47,15 +52,31 @@ export function readRoomResponseView(data: unknown): RoomResponseView | null {
   if (!parsed.success) return null;
   const { room, ledgers } = parsed.data;
   const model = parsed.data.response ? readThermalModel(parsed.data.response.model) : null;
+  const connected = readConnectedRoomResponse(parsed.data.response?.connected_exchange);
   const measured = roomMeasuredEvidence.safeParse(parsed.data.response?.measured_runs);
-  const published = parsed.data.response && model ? {
-    revision: parsed.data.response.revision, model,
+  const published = parsed.data.response && (model || connected) ? {
+    revision: parsed.data.response.revision, model, connected,
     trainingFrom: parsed.data.response.training_from ?? null, trainingTo: parsed.data.response.training_to ?? null,
     warnings: parsed.data.response.warnings ?? [],
     fittedRuns: parsed.data.response.run_calibration?.fitted_runs ?? null,
     fittedTransitions: parsed.data.response.transition_calibration?.fitted_transitions ?? null,
     measuredRuns: measured.success ? measured.data as MeasuredRoomCalibration : null,
   } : null;
+  if (parsed.data.diagnostics !== undefined) {
+    const summary = z.object({kind: z.literal('current_training_window'), response_revision: z.string(),
+      from_at: z.string(), to_at: z.string(), read_at: z.string(),
+      calibration: roomMeasuredEvidence.pick({observed_runs: true, heating_runs: true, cooling_runs: true,
+        heating_flagged_runs: true, cooling_flagged_runs: true, unmeasured_runs: true}).extend({
+          lines: roomMeasuredEvidence.shape.lines.pick({heating: true, cooling: true}),
+        }), runs: z.array(z.unknown())}).safeParse(parsed.data.diagnostics);
+    if (!published?.connected || !summary.success || summary.data.response_revision !== published.revision ||
+      summary.data.from_at !== published.trainingFrom || summary.data.to_at !== published.trainingTo) return null;
+    const {runs, ...diagnostics} = summary.data;
+    const measuredPoints = readMeasuredRoomAssessmentPage(runs, diagnostics.calibration.observed_runs);
+    if (!measuredPoints) return null;
+    return {response: published, points: [], measuredPoints, diagnostics: diagnostics as Omit<RoomRunDiagnostics, 'runs'>,
+      observedRuns: measuredPoints.length, assessed: 'descriptive', room};
+  }
   const shared = ledgers.find(ledger => ledger.scope_key === 'shared');
   const assessedAgainst = (shared?.evidence as { assessed_against?: unknown } | null | undefined)?.assessed_against;
   if (published?.measuredRuns) {

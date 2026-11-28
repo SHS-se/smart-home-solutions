@@ -1,4 +1,5 @@
 import type { RoomNetworkWork } from "./room-network-contract.ts";
+import { roomOutdoorSeries } from "./room-outdoor.ts";
 import { prepareConnectedRoomStage, advanceConnectedRoomBarrier, compileConnectedRoomForecast, compileConnectedRoomCatalog, proposalDependencies, type ConnectedRoomCatalog, type ConnectedRoomProposalNetwork, type ConnectedRoomForecastRequest } from "./rules-connected-room-services.ts";
 import type { RoomHeatingPlan } from "./room-heating-schedule.ts";
 import { compileRoomSchedule, storeRoomCommands, electricalSource, schedulableRoomThermostat } from "./room-scheduling-inputs.ts";
@@ -20,6 +21,7 @@ export interface RoomServices {
   power: Record<string, number[]>;
   room_power: Record<string, number[]>;
   temperature: Record<string, Array<number | null>>;
+  mean_temperature?: Record<string, number[]>;
   unplanned_temperature: Record<string,Array<number|null>>;
   unplanned_power: Record<string, number[]>;
   expected_shortfall_c?: Record<string,number[]>;
@@ -173,8 +175,7 @@ function advanceRoomPreparation(inputs: RoomPlanningInputs,
       result.commands[member.key] = [];
       result.power[member.key] = [];
     }
-    const outdoorKnown = snapshot.outdoor_temperature_c?.length === n &&
-      snapshot.outdoor_temperature_c.every(v => typeof v === "number" && Number.isFinite(v));
+    const outdoorKnown = roomOutdoorSeries(snapshot) !== null;
     // A room coupled to the house cannot be run forward without it.
     const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
@@ -256,6 +257,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
 
 function prepareEmpiricalRoom(snapshot: OptimisationSnapshot, zone: Zone, retained: Retained,
   remaining: number[], surplus: number[], result: RoomServices, unconfirmedPeerHeat = false) {
+  if (result.mean_temperature) delete result.mean_temperature[zone.key];
   const n=snapshot.slots.length;
   const members=snapshot.device_models.filter(member=>zone.device_keys.includes(member.key));
   const limitedFit=roomResponseEvidenceLimited(zone.model_warnings);

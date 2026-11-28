@@ -1,5 +1,30 @@
 # Requirements for planner and controller constraints
 
+User requirement, 28 November 2026: repair the room diagnostic charts, command
+qualification, forecast accuracy and missing-weather handling without changing
+physical fitting mathematics. Descriptive run points and their existing robust
+best-fit lines remain separate from fitted heater/exchange parameters. Current
+observations may describe the accepted model's fixed training window; they are
+not asserted to be the immutable original fit inputs. Diagnostic reads never
+publish a fit or restart learning.
+
+Optimized room commands must not add upper-comfort overheating beyond the full
+literal or mandatory-reference trajectory under the same initial state, weather,
+exchange and innovations, including delayed and neighbour-transferred heat.
+Ordinary whole-quarter literal heat remains the comfort baseline; an upper-band
+check must not replace it with all-OFF and worsen total comfort. A cheaper or
+equal-price proposal must preserve already-satisfied quarters just as a costlier
+proposal does. Existing per-room total-exposure and electrical rules remain.
+
+Temperature accuracy compares model-integrated means with measured means over
+the same full quarter. Endpoint-only archives are not converted into invented
+means. Verification charts remain counterfactual; temperature and actuator-energy
+accuracy require recorded Controlling provenance. Missing room-weather quarters
+use an explicitly labelled cold-side estimate from available observed weather
+and known forecast values, recomputed at capture. Keep known forecast quarters,
+retain old observed anchors without an age cutoff, and never store estimates as
+measured weather. Planning and execution continue throughout.
+
 User requirement, 28 November 2026: fix room scheduling that omits connected
 heat loss and rejects useful recovery. Compile the literal whole-quarter heat
 program under the same nominal connected-room physics as proposals, before

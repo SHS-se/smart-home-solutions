@@ -16,12 +16,13 @@ export interface AccuracySide extends AccuracyScore { devices: HistoricalAccurac
 /** How close the planner's last estimate came to each price once it was published. */
 export interface PriceAccuracy extends AccuracyScore { quarters: number }
 /**
- * A driven room's planned temperature against its reading at the same
- * instant. The percentage is the share of quarters within ROOM_TOLERANCE_C,
+ * An executed room's interval-mean prediction against the same measured mean.
+ * The percentage is the share of quarters within ROOM_TOLERANCE_C,
  * kept apart from the energy figures: a degree is not a kilowatt-hour.
  */
 export interface RoomTemperatureAccuracy extends AccuracyDevice {
   quarters: number; mean_absolute_error_c: number | null; bias_c: number | null;
+  comparison?: 'executed_interval_mean' | 'counterfactual' | 'mode_unrecorded';
 }
 export interface AccuracyReport {
   version: 3; scheduled_at: string; calculated_at: string; timezone: string; historical_from: string;
@@ -36,8 +37,9 @@ export interface AccuracySlot {
   battery_charge_w: number | null; battery_discharge_w: number | null; battery_soc: number | null;
   /** The planner's own import price where none was published yet; null once published. */
   estimated_import_sek_per_kwh?: number | null;
-  /** Driven rooms (controlled-rooms.ts), °C at the end of the quarter, by room key. */
+  /** Historical endpoint-only records; never interpreted as means. */
   room_temperature_c?: Record<string, number> | null;
+  room_mean_temperature_c?: Record<string, number> | null;
 }
 /** Compact reporting evidence, selected in the database; never a planning input. */
 export interface AccuracyEvidence {
@@ -46,14 +48,14 @@ export interface AccuracyEvidence {
   rooms: {at: number; key: string; plan_id: string; value: number}[];
   estimates: {at: number; plan_id: string; value: number}[];
   catalog: {names: [string, string][]; room_names: [string, string][];
-    latest_keys: string[]; latest_rooms: {key: string; name: string}[]};
+    latest_keys: string[]; latest_rooms: {key: string; name: string; comparison?: RoomTemperatureAccuracy['comparison']}[]};
   actuals: AccuracyActual[]; device_actuals: DeviceActual[]; prices: PublishedPrice[];
   room_actuals: RoomActual[];
 }
 export interface AccuracyInput extends AccuracyEvidence {
   scheduled_at: string; calculated_at: string; timezone: string;
 }
-/** A room reading: the temperature at the start of the quarter. */
+/** Mean temperature over the quarter labelled by start_ts. */
 export interface RoomActual { start_ts: string; room_key: string; room_temperature_c: number }
 export const ROOM_TOLERANCE_C = 0.5;
 export interface AccuracyActual {
@@ -227,6 +229,8 @@ export function calculateAccuracy(input: AccuracyInput) {
     rooms.set(room.key, {key: room.key, name: room.name, quarters: 0, within: 0, absolute_error_c: 0, bias_c: 0, plan_ids: []});
   const roomRows: RoomTemperatureAccuracy[] = [...rooms.values()].sort((a, b) => a.name.localeCompare(b.name)).map(room => ({
     key: room.key, name: room.name, ...accuracyScore(room.within, room.quarters), quarters: room.quarters,
+    ...(input.catalog.latest_rooms.find(r => r.key === room.key)?.comparison
+      ? {comparison: input.catalog.latest_rooms.find(r => r.key === room.key)!.comparison} : {}),
     mean_absolute_error_c: room.quarters ? Math.round(100 * room.absolute_error_c / room.quarters) / 100 : null,
     bias_c: room.quarters ? Math.round(100 * room.bias_c / room.quarters) / 100 : null,
   }));

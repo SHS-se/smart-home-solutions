@@ -959,3 +959,19 @@ checkpoints and revokes only a matching terminated child; dispatcher expiry
 does not cancel children. Immutable numerical packets exclude publication
 metadata, which stays with the original fit record. The mathematical learner
 keeps its prior, ordered particles, random draws and stopping rules.
+
+
+## Connected-room diagnostics (28 November 2026)
+
+The Model tab's authenticated `energy-room-diagnostics` read exposes accepted
+connected coefficients, including valid passive models, and derives descriptive
+measurements over that response's fixed training window from currently available
+source-qualified native observations. Existing `measureRoomRuns` and
+`assessMeasuredRuns(runs, null)` supply raw heating/cooling points and their
+independent robust lines. No aggregate-house reference correction is applied to
+named connected exchanges. These diagnostics do not enter fitting or planning,
+change accepted model JSON, create a learning job or alter learner identity.
+The operation authorizes the home before service-only history access, checks
+accepted revision/binding again before returning, and never writes observations.
+The browser renders lines and keyboard-accessible point details without fitting.
+Missing data retains the measurement routines' existing incomplete-run semantics.

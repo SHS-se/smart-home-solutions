@@ -1056,8 +1056,8 @@ test.describe('requesting a replan', () => {
       weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('high-temp'),
       off_temperature_c: 12, low_temperature_c: 18, high_temperature_c: 21, updated_at: CAPTURED_AT,
     }] }));
-    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => {
-      expect(route.request().postDataJSON()).toEqual({ p_home_id: HOME_ID, p_room_key: key });
+    await context.route('**/functions/v1/energy-room-diagnostics*', route => {
+      expect(route.request().postDataJSON()).toEqual({ home_id: HOME_ID, room_key: key });
       return route.fulfill({ json: {
         room: { trained: true, rejection_reason: null, last_attempted_at: '2026-11-18T12:00:00Z',
           last_fit_attempt: sourceEvidenceAvailable ? { source_freshness: {

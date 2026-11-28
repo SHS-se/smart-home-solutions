@@ -165,6 +165,9 @@ pub struct Assessment {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Rejection {
+    NewMiss {
+        room: usize,
+    },
     HorizonShortfall {
         room: usize,
         horizon_shortfall_difference_c_h: f64,
@@ -336,7 +339,12 @@ fn assessment(input: &NetworkInput, work: &Work) -> Assessment {
             result.deadline_resolved = true;
             return result;
         }
-        if difference + error > 1e-8 && penalty_certain != penalty_possible {
+        if new_certain {
+            result.proposal_rejection = Some(Rejection::NewMiss { room });
+            result.deadline_resolved = true;
+            return result;
+        }
+        if new_possible || difference + error > 1e-8 && penalty_certain != penalty_possible {
             result.unresolved_deadline_prefixes += 1;
         }
     }
@@ -822,18 +830,10 @@ fn innovations(
         work: used,
     })
 }
-fn finish_quarter(
-    input: &mut Input,
-    path: &mut Path,
-    sets: &[Vec<Plan>],
-    mandatory: &[Plan],
-    slot: usize,
-    kernels: &mut ReplayKernels,
-    work: &mut Work,
-) -> Result<(), String> {
+fn finish_quarter(input: &Input, path: &mut Path, slot: usize, work: &mut Work) {
     let (slots, rooms, nodes, stride) = dimensions(&input.network);
     let hours = input.network.hours[slot];
-    for (set, set_commands) in sets.iter().enumerate().take(SETS) {
+    for set in 0..SETS {
         if path.peaks[set] > input.network.headroom_w[slot].max(path.mandatory_peaks[set]) + 1e-6 {
             path.feasible[set] = false;
         }
@@ -841,34 +841,19 @@ fn finish_quarter(
             let room = &input.network.rooms[j];
             let q = &room.input.quarters[slot];
             let temperature = path.states[set].temperatures[room.node];
-            // A mandatory target would replay the same quarter from the same
-            // start with identical innovations. Only a different target can
-            // turn a still-feasible command vector into an infeasible one.
+            // Full-prefix reference paths retain initial heat and common
+            // innovations. Extra optimized heat may arrive later or through a
+            // neighbour, even when this quarter's own command is OFF. Literal
+            // whole-quarter heat remains the comfort baseline: rejecting it for
+            // ordinary overshoot would substitute all-OFF and worsen comfort.
             if path.feasible[set]
-                && q.transition.carry == 0.
-                && temperature > q.maximum_c + 1e-9
-                && set_commands[j].targets_c[slot] != mandatory[j].targets_c[slot]
+                && temperature
+                    > q.maximum_c
+                        .max(path.states[1].temperatures[room.node])
+                        .max(path.states[2].temperatures[room.node])
+                        + 1e-9
             {
-                let maximum = q.maximum_c;
-                let node = room.node;
-                let mut commands = set_commands.clone();
-                commands[j] = mandatory[j].clone();
-                let mut state = path.starts[set].clone();
-                for minute in 0..path.quarter_rates.len() {
-                    apply_rates(&mut input.network, &path.quarter_rates[minute]);
-                    project_minute(
-                        &input.network,
-                        &commands,
-                        slot,
-                        minute,
-                        &mut state,
-                        kernels,
-                        &path.quarter_noise[minute],
-                    );
-                }
-                if temperature > maximum.max(state.temperatures[node]) + 1e-9 {
-                    path.feasible[set] = false;
-                }
+                path.feasible[set] = false;
             }
             add_value(
                 work,
@@ -922,7 +907,6 @@ fn finish_quarter(
             );
         }
     }
-    Ok(())
 }
 fn add_value(work: &mut Work, index: usize, value: f64) {
     work.statistics.total[index] += value;
@@ -1035,7 +1019,7 @@ fn run(
         .iter()
         .map(|r| commands(&r.input, false))
         .collect();
-    let sets = vec![proposal, literal, mandatory.clone()];
+    let sets = [proposal, literal, mandatory.clone()];
     // Fixed command sets often coincide for a quarter (and the feasible seed
     // always equals its mandatory counterfactual). Share only exactly identical
     // commands and physical states; uncertainty and thermostat latches remain
@@ -1205,15 +1189,7 @@ fn run(
         work.minute += 1;
         steps += 1;
         if work.minute >= quarter_steps {
-            finish_quarter(
-                &mut input,
-                &mut path,
-                &sets,
-                &mandatory,
-                slot,
-                &mut kernels,
-                &mut work,
-            )?;
+            finish_quarter(&input, &mut path, slot, &mut work);
             work.slot += 1;
             work.minute = 0;
             if work.slot == input.network.hours.len() {

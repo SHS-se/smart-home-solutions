@@ -105,7 +105,7 @@ export async function outdoorSeriesFromProvider(options: {
   starts: string[];
   now?: Date;
   fetchImpl?: typeof fetch;
-}): Promise<{ series: number[]; issuedAt: string; points: number } | null> {
+}): Promise<{ series: (number | null)[]; issuedAt: string; points: number } | null> {
   const { supabase, starts, now = new Date(), fetchImpl = fetch } = options;
   if (starts.length === 0) return null;
 
@@ -142,9 +142,10 @@ export async function outdoorSeriesFromProvider(options: {
   if (!points) return null;
 
   const series = interpolateOntoSlots(points, starts, SMHI_MAX_STEP_MS);
-  if (series.some((value) => value === null)) return null;
   return {
-    series: series as number[],
+    // Preserve provider-covered quarters. Room capture explicitly estimates
+    // holes from observed weather rather than discarding the known forecast.
+    series,
     issuedAt: now.toISOString(),
     points: points.length,
   };

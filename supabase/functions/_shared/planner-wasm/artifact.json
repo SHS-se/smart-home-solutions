@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "d3ed5a09c1d5baafd5317eb7675f9c9b6a8707e5ab2136babe36d2f96bb395d1",
-  "source_sha256": "475790f4d6b1151b430fd9c4540b8577c6fb5fecffd9fc7b81b326b79ba94d5d",
+  "wasm_sha256": "7ad4444135a109642f80fc1d38d21a65e0b792f4a94e97f35bd2047ce000f116",
+  "source_sha256": "d52681a5bcc2636a9585bfc1e40b62615ee61491ff8877dbaad99cfe6eb335d7",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -113,6 +113,7 @@
     "supabase/functions/_shared/planning-trace.ts",
     "supabase/functions/_shared/room-heating-schedule.ts",
     "supabase/functions/_shared/room-network-contract.ts",
+    "supabase/functions/_shared/room-outdoor.ts",
     "supabase/functions/_shared/room-scheduling-inputs.ts",
     "supabase/functions/_shared/rules-baseline.ts",
     "supabase/functions/_shared/rules-commitments.ts",

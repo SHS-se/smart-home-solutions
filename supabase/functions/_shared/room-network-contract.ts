@@ -207,6 +207,9 @@ export interface NativeRoomNetworkAdvanced {
     deadline_resolved: boolean;
     unresolved_deadline_prefixes: number;
     proposal_rejection: null | {
+      kind: "new_miss";
+      room: number;
+    } | {
       kind: "horizon_shortfall";
       room: number;
       horizon_shortfall_difference_c_h: number;

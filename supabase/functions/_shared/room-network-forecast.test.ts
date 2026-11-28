@@ -371,14 +371,14 @@ Deno.test("native cost certificate preserves satisfied quarters and resolves par
   for (const node of input.beliefs) node.hypotheses.push(structuredClone(node.hypotheses[0]));
   const base = drain({ ...input, max_minute_steps: 100000 });
   const slots = 4, rooms = 2, nodes = 2, stride = 42;
-  const assess = (newMiss: (replicate: number) => number) => {
+  const assess = (newMiss: (replicate: number) => number, cost = 1) => {
     const work = structuredClone(base);
     const replicates = work.statistics.replicates.map((r,index)=>{
       const values = Array(stride * 3).fill(0);
       values[(rooms+2*nodes)*slots+1] = newMiss(index);
       values[stride+(rooms+2*nodes)*slots] = 1;
       values[stride+(rooms+2*nodes)*slots+2] = 2;
-      for(let room=0;room<rooms;room++) values[stride-rooms+room] = 1;
+      for(let room=0;room<rooms;room++) values[stride-rooms+room] = cost;
       return values.map(v=>v*r.trajectories);
     });
     work.statistics.total = packStatistics(replicates[0].map((_,i)=>replicates.reduce((sum,r)=>sum+r[i],0)));
@@ -389,6 +389,10 @@ Deno.test("native cost certificate preserves satisfied quarters and resolves par
   const rejected = assess(()=>2);
   assertEquals(rejected.proposal_rejection?.kind, "prefix_cost");
   assertEquals(rejected.deadline_resolved, true);
+  // Savings and equal cost cannot buy a newly missed comfortable quarter.
+  for (const cost of [-1, 0]) {
+    assertEquals(assess(() => 2, cost).proposal_rejection?.kind, "new_miss");
+  }
   // Higher cost is permitted by lower total comfort exposure.
   const improved = assess(()=>0);
   assertEquals(improved.proposal_rejection, null);

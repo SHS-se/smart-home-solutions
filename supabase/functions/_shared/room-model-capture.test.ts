@@ -578,3 +578,36 @@ Deno.test("thermostat sensor calibration uses the raw mean instead of elapsed ro
   for (const watts of services.power[member.key]) assertAlmostEquals(watts, 800, 1e-9);
   assertAlmostEquals(services.temperature[f.key][0]!, 16.25 + (.8 - 2) * .25, 1e-9);
 });
+
+Deno.test('room capture resolves missing weather from observed history without an age cutoff or persisting measurements', async () => {
+  const {snapshot, mappings, bundle} = syntheticCapture();
+  const prepared = prepareRoomModels(snapshot, mappings, bundle);
+  const missing = structuredClone(prepared.snapshot); delete missing.outdoor_temperature_c;
+  const calls: string[] = [];
+  const db = createClient('http://localhost:54321', 'synthetic-service', {auth: {persistSession: false}, global: {fetch: url => {
+    const endpoint = new URL(String(url)).pathname.split('/').at(-1)!;
+    calls.push(endpoint);
+    if (endpoint === 'energy_optimisation_outdoor_slots') return Promise.resolve(Response.json([{start_ts: '2000-01-01T00:00:00Z', temperature_c: -4}]));
+    if (endpoint === 'get_energy_latest_room_temperatures') return Promise.resolve(Response.json(prepared.rooms.map(room => ({room_key: room.key,
+      room_temperature_c: 19, start_ts: new Date(Date.parse(snapshot.captured_at) - 900000).toISOString()}))));
+    if (endpoint === 'energy_optimisation_comfort_schedules') return Promise.resolve(Response.json(prepared.rooms.map(room => ({room_key: room.key,
+      weekday_modes: Array(96).fill('high-temp'), weekend_modes: Array(96).fill('high-temp'), off_temperature_c: 16, low_temperature_c: 19, high_temperature_c: 21}))));
+    if (endpoint === 'get_energy_room_planning_history') return Promise.resolve(Response.json([]));
+    throw new Error('Unexpected capture operation ' + endpoint);
+  }}});
+  const result = await captureRoomPlanningState(db, 'synthetic-customer', 'synthetic-home', missing, prepared.rooms);
+  assertEquals(result.room_outdoor_estimate_c, -4);
+  assertEquals(result.outdoor_temperature_c, undefined);
+  assert(result.thermal_zones!.some(room => room.model !== null));
+  assert(result.planning_warnings!.some(w => w.code === 'outdoor_estimate'));
+  assert(calls.includes('energy_optimisation_outdoor_slots'));
+  assertEquals(calls.filter(name => /insert|update|publish|record/.test(name)), []);
+  const partial = {...missing, outdoor_temperature_c: snapshot.slots.map((_, i) => i === 0 ? null : -20)};
+  const observed = {...missing, outdoor_temperature_c: snapshot.slots.map(() => -4)};
+  const [coldFuture, knownNow] = await Promise.all([
+    captureRoomPlanningState(db, 'synthetic-customer', 'synthetic-home', partial, prepared.rooms),
+    captureRoomPlanningState(db, 'synthetic-customer', 'synthetic-home', observed, prepared.rooms),
+  ]);
+  assertEquals(coldFuture.thermal_zones!.map(room => room.start_temperature_c),
+    knownNow.thermal_zones!.map(room => room.start_temperature_c), 'future cold cannot change the reconstructed current state');
+});

@@ -152,3 +152,21 @@ captures. Its historical actuals subtract only pool/hot-water/EV aggregates,
 whereas the app subtracts every separately modelled device. Do not reconnect it
 or stack corrections without aligning that population and choosing one model
 owner. No experimental quality threshold becomes a live planning gate.
+
+## Executed interval-mean comparisons (28 November 2026)
+
+Room temperature archives now store the native network's integrated quarter
+means separately from endpoint projections. The reader joins means to measured
+means at the same quarter start. Old endpoint-only records remain stored but do
+not enter temperature scores. No averaging of endpoints invents a forecast mean.
+
+The archive records each device and battery operating mode, and each room's
+comparison status. A room requires every contributing heater to be Controlling.
+Verification remains visible as a counterfactual plan and is not graded against
+actual room behaviour. Newer counterfactual or unavailable room predictions
+replace older executed predictions for overlapping intervals rather than letting
+an old schedule stand in for commands no longer being executed. Device and
+battery energy scores likewise require recorded Controlling provenance. Baseline
+and solar scores remain available; the baseline partition retains the complete
+measured/modelled component ledger. Historical unrecorded modes never become
+assumed execution. Reports use the existing durable reporting queue.

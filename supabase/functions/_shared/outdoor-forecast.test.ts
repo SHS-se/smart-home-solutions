@@ -175,7 +175,7 @@ Deno.test("an expired cache entry is refetched", async () => {
   assertEquals(result?.series, [10, 10.25]);
 });
 
-Deno.test("a forecast that still falls short yields nothing rather than a partial series", async () => {
+Deno.test("a short forecast retains covered quarters and explicitly marks the rest unknown", async () => {
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase(null, []),
     latitude: 59.46,
@@ -184,7 +184,9 @@ Deno.test("a forecast that still falls short yields nothing rather than a partia
     now: new Date("2026-08-30T04:10:00Z"),
     fetchImpl: () => Promise.resolve(smhiResponse("2026-08-30T04:00:00Z", 4)),
   });
-  assertEquals(result, null);
+  assertEquals(result?.series.length, 288);
+  assertEquals(result?.series.slice(0, 4), [10, 10.25, 10.5, 10.75]);
+  assertEquals(result?.series.at(-1), null);
 });
 
 Deno.test("a weather outage never stops a plan", async () => {

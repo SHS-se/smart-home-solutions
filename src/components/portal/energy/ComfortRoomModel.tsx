@@ -14,9 +14,9 @@ export default function ComfortRoomModel({ homeId, roomId }: { homeId: string; r
   const query = useQuery({
     queryKey: ['room-response-evidence', homeId, roomId],
     queryFn: async ({ signal }) => {
-      const { data, error } = await supabase.rpc('get_energy_room_response_evidence', {
-        p_home_id: homeId, p_room_key: roomId,
-      }).abortSignal(signal);
+      const { data, error } = await supabase.functions.invoke('energy-room-diagnostics', {
+        body: {home_id: homeId, room_key: roomId}, signal,
+      });
       if (error) throw error;
       const view = readRoomResponseView(data);
       if (!view) throw new Error('Invalid room response evidence');

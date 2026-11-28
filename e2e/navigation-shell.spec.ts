@@ -564,8 +564,8 @@ test.describe('staff navigation shell', () => {
       background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 32.5, time_constant_h: 15.4,
       heating_rate_c_per_h: 1, r2: .9, sample_count: 700, residual_std_c: .05, heat_lag_h: .5 };
     let shared = true, assessed = runs;
-    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => {
-      expect(route.request().postDataJSON()).toEqual({ p_home_id: LINKED_HOME_ID, p_room_key: 'studio' });
+    await context.route('**/functions/v1/energy-room-diagnostics*', route => {
+      expect(route.request().postDataJSON()).toEqual({ home_id: LINKED_HOME_ID, room_key: 'studio' });
       return route.fulfill({ json: shared ? {
         room: { trained: true, rejection_reason: null, last_fit_attempt: null, shared_attempt: { status: 'fitted', attempted_at: '2026-03-01T00:00:00Z' } },
         response: { revision: 'shared-revision', model, training_from: '2026-01-03T00:00:00Z', training_to: '2026-04-30T00:00:00Z',
@@ -635,6 +635,51 @@ test.describe('staff navigation shell', () => {
     await expect(heating.locator('.recharts-line-curve')).toHaveCount(0);
   });
 
+  test('accepted connected rooms restore measured charts and best-fit lines without an old ledger or physical heater fit', async ({page, context}) => {
+    // Independently synthetic observations and descriptive lines, never household data.
+    await mockComfortLink(context);
+    const from = '2026-06-01T00:00:00Z', to = '2026-07-01T00:00:00Z';
+    const runs = Array.from({length: 24}, (_, i) => {
+      const at = Date.parse(from) + i * 86_400_000, outdoor = i - 12;
+      return {id: `connected-${i}`, from_ms: at, on_ms: at, off_ms: at + 3_600_000, to_ms: at + 18_000_000,
+        energy_kwh: 1, heating: {on_ms: at, peak_ms: at + 3_600_000, peak_end_ms: at + 4_500_000,
+          energy_kwh: 1, hours: 1, rise_c: .8 + outdoor * .02, c_per_kwh: .8 + outdoor * .02,
+          room_start_c: 19, room_peak_c: 20, room_mean_c: 19.5, outdoor_c: outdoor, house_c: null, native_seconds: [900]},
+        cooling: {from_ms: at + 7_200_000, to_ms: at + 18_000_000, hours: 3,
+          c_per_h: .4 - outdoor * .02, room_c: 20, outdoor_c: outdoor, house_c: null, energy_kwh: 0},
+        reference_heating_c_per_kwh: null, reference_cooling_c_per_h: null,
+        heating_residual: 0, cooling_residual: 0, heating_status: 'consistent', cooling_status: 'consistent', reasons: []};
+    });
+    const line = (heat: boolean) => ({reference_outdoor_c: 0, intercept: heat ? .8 : .4, slope_per_c: heat ? .02 : -.02,
+      robust_scale: .02, points: 24, effective_points: 24, constraint: heat ? 'rises' : 'falls', units: heat ? 'c_per_kwh' : 'c_per_h'});
+    await context.route('**/functions/v1/energy-room-diagnostics*', route => route.fulfill({json: {
+      room: {trained: true, rejection_reason: null, shared_attempt: {status: 'fitted', attempted_at: to}},
+      response: {revision: 'connected-current', model: null, training_from: from, training_to: to,
+        connected_exchange: {family: 'adaptive_connected_native_v1', thermal: {outdoor_per_h: .04, heater: null, solar_per_wm2_h: 0, background_per_h: 0},
+          incoming: [], observation_noise_c2_h: .001, thermal_noise_c2_per_h: .001,
+          reference_state: {through_ms: Date.parse(to), temperature_c: 20, stored_heat_c: 0, log_rates: [], covariance: [[.01, 0], [0, 0]], observations: 2800},
+          basis: {graph_owner: null, graph_revision: null, topology_hash: 'synthetic', source_policy: 'synthetic', source_revision: 1, history_from: from, history_to: to}, evidence: {heater_identified: false}}},
+      ledgers: [], diagnostics: {kind: 'current_training_window', response_revision: 'connected-current', from_at: from, to_at: to, read_at: to,
+        calibration: {observed_runs: 24, heating_runs: 24, cooling_runs: 24, heating_flagged_runs: 0, cooling_flagged_runs: 0, unmeasured_runs: 0,
+          lines: {heating: line(true), cooling: line(false)}}, runs},
+    }}));
+    await login(page); await page.goto(COMFORT_LINK);
+    const panel = page.getByRole('region', {name: 'Valt rum'});
+    await panel.getByRole('button', {name: 'Modell', exact: true}).click();
+    for (const title of ['Nettoökning per förlopp', 'Avsvalning per förlopp']) {
+      const chart = panel.getByRole('img', {name: title, exact: true});
+      await expect(chart.locator('[data-run]')).toHaveCount(24);
+      await expect(chart.locator('.recharts-line-curve[stroke-dasharray="5 4"]')).toHaveAttribute('d', /^M.*L/);
+    }
+    await expect(panel.getByText(/gemensamma modell lärs fortfarande in/)).toHaveCount(0);
+    await panel.getByText('Planerarens modellparametrar', {exact: true}).click();
+    await expect(panel.getByTestId('room-model-summary')).toContainText('Inte identifierad');
+    await expect(panel.getByTestId('room-model-summary')).toContainText('0,04 /h');
+    const first = panel.getByRole('img', {name: 'Nettoökning per förlopp', exact: true}).locator('[data-run="connected-0"]');
+    await first.focus(); await page.keyboard.press('Enter');
+    await expect(page.getByTestId('room-point-detail')).toBeVisible();
+  });
+
   test('room Model flags heating and cooling points separately, without reference or date paging controls', async ({ page, context }, testInfo) => {
     // Independently generated measurements and published lines, never household data.
     await mockComfortLink(context);
@@ -660,7 +705,7 @@ test.describe('staff navigation shell', () => {
     const line = (heating: boolean, reference: boolean) => ({ reference_outdoor_c: 0,
       intercept: heating ? reference ? 1.1 : .8 : reference ? .5 : .4, slope_per_c: heating ? .02 : -.02,
       robust_scale: .02, points: 304, effective_points: 303, constraint: heating ? 'rises' : 'falls', units: heating ? 'c_per_kwh' : 'c_per_h' });
-    await context.route('**/rest/v1/rpc/get_energy_room_response_evidence', route => route.fulfill({ json: {
+    await context.route('**/functions/v1/energy-room-diagnostics*', route => route.fulfill({ json: {
       room: { trained: true, rejection_reason: null, last_fit_attempt: null },
       response: { revision, model: { response_family: 'finite', gain_c_per_wh: .002, cooling_constant_per_h: .04,
         house_coupling_per_h: .02, background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 500, heat_loss_w_per_c: 30,

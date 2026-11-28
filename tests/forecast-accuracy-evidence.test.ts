@@ -170,3 +170,50 @@ Deno.test('accuracy revisions preserve payloads, corrections, absence and metada
     assertEquals(await read(second.revision),{state:'missing',revision:null});
   } finally {await db.close();}
 });
+
+Deno.test('executed room means compare the same quarter; endpoint-only archives never become invented means', async () => {
+  const db = await database();
+  try {
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261128110000_executed_interval_mean_accuracy.sql'));
+    const start = '2026-10-25T05:00:00Z', next = '2026-10-25T05:15:00Z';
+    const old = record(10, '2026-10-25T04:50:00Z', [slot(start), slot(next)]);
+    await insert(db, [old]);
+    assertEquals((await evidence(db)).rooms, []);
+    const fresh = record(11, '2026-10-25T04:59:00Z', [slot(start), slot(next)]);
+    const executed = {...fresh, forecast: {...fresh.forecast, comparison_basis: 'executed_interval_means_v1', temperature_aggregation: 'interval_mean',
+      battery_mode: 'control_verification', devices: [{key: 'heater', name: 'Synthetic heater', mode: 'controlling'}],
+      rooms: [{key: 'room', name: 'Synthetic room', comparison: 'executed_interval_mean'}],
+      slots: fresh.forecast.slots.map((s, i) => ({...s, room_mean_temperature_c: {room: 21 + 2 * i}, room_temperature_c: {room: 22 + 2 * i}}))}};
+    await insert(db, [executed]);
+    await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',21),($1,$3,'room',23)", [HOME, start, next]);
+    const selected = await evidence(db), result = calculateAccuracy({...selected, ...metadata()});
+    assertEquals(selected.rooms.map(r => [r.at, r.value]), [[Date.parse(start), 21], [Date.parse(next), 23]]);
+    assertEquals(result.report.room_temperature!.rooms[0].mean_absolute_error_c, 0);
+    assertEquals(result.report.room_temperature!.rooms[0].percentage, 100);
+    assertEquals(selected.energy[0].keys, ['baseline', 'device:heater', 'solar']);
+  } finally {await db.close();}
+});
+
+Deno.test('verification replaces an older executed forecast without scoring hypothetical room or device commands', async () => {
+  const db = await database();
+  try {
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261128110000_executed_interval_mean_accuracy.sql'));
+    const start = '2026-10-25T05:15:00Z', base = record(12, '2026-10-25T04:59:00Z', [slot(start)]);
+    const executed = {...base, forecast: {...base.forecast, comparison_basis: 'executed_interval_means_v1', temperature_aggregation: 'interval_mean',
+      devices: [{key: 'heater', name: 'Synthetic heater', mode: 'controlling'}], battery_mode: 'controlling',
+      rooms: [{key: 'room', name: 'Synthetic room', comparison: 'executed_interval_mean'}],
+      slots: [{...slot(start), room_mean_temperature_c: {room: 21}}]}};
+    const verification = {...executed, plan_id: '00000000-0000-4000-8000-000000000013', published_at: '2026-10-25T05:10:00Z',
+      forecast: {...executed.forecast, battery_mode: 'control_verification',
+        devices: [{key: 'heater', name: 'Synthetic heater', mode: 'control_verification'}],
+        rooms: [{key: 'room', name: 'Synthetic room', comparison: 'counterfactual'}],
+        slots: [{...slot(start), room_mean_temperature_c: {}}]}};
+    await insert(db, [executed, verification]);
+    await db.query("INSERT INTO energy_optimisation_thermal_slots VALUES($1,$2,'room',21)", [HOME, start]);
+    const selected = await evidence(db), report = calculateAccuracy({...selected, ...metadata()}).report;
+    assertEquals(selected.rooms, []);
+    assertEquals(selected.energy[0].keys, ['baseline', 'solar']);
+    assertEquals(report.room_temperature!.rooms[0].comparison, 'counterfactual');
+    assertEquals(report.room_temperature!.rooms[0].percentage, null);
+  } finally {await db.close();}
+});

@@ -179,6 +179,7 @@ const roomNetworkAdvancedOutcome=z.discriminatedUnion("kind",[
   z.object({kind:z.literal("advanced"),result:z.object({
     reached_target:z.boolean(),statistics:numericRoomNetworkStatistics.nullable(),
     assessment:z.object({deadline_resolved:z.boolean(),unresolved_deadline_prefixes:z.number().int().nonnegative(),proposal_rejection:z.discriminatedUnion("kind",[
+      z.object({kind:z.literal("new_miss"),room:z.number().int().nonnegative()}),
       z.object({kind:z.literal("horizon_shortfall"),room:z.number().int().nonnegative(),horizon_shortfall_difference_c_h:z.number().finite(),twice_standard_error_c_h:z.number().finite().nonnegative()}),
       z.object({kind:z.literal("prefix_cost"),room:z.number().int().nonnegative(),cost_difference:z.number().finite(),twice_standard_error:z.number().finite().nonnegative(),new_miss:z.boolean(),no_improvement:z.boolean()}),
     ]).nullable()}),

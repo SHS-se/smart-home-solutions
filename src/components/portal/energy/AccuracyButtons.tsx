@@ -115,7 +115,11 @@ function RoomTemperatures({accuracy, t}: {accuracy: NonNullable<AccuracyReport['
     <h3 id="accuracy-rooms" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Rumstemperatur', 'Room temperature')}</h3>
     <ul className="divide-y">{accuracy.rooms.map(room => <li key={room.key} className="flex justify-between gap-4 py-2 text-sm">
       <span className="flex min-w-0 flex-col"><span>{room.name}</span>
-        <span className="text-xs text-muted-foreground">{room.quarters === 0 || room.mean_absolute_error_c === null
+        <span className="text-xs text-muted-foreground">{room.comparison === 'counterfactual'
+          ? t('Hypotetisk plan – instruktionerna utförs inte och noggrannheten betygsätts inte.', 'Counterfactual plan — commands are not executed, so accuracy is not graded.')
+          : room.comparison === 'mode_unrecorded'
+          ? t('Styrningsläget registrerades inte; ingen jämförelse.', 'Execution mode was not recorded; no comparison.')
+          : room.quarters === 0 || room.mean_absolute_error_c === null
           ? t('Inga avläsningar jämförda ännu', 'No readings compared yet')
           : t(`±${degrees(room.mean_absolute_error_c)} i snitt · ${room.quarters} kvartar`,
             `±${degrees(room.mean_absolute_error_c)} on average · ${room.quarters} quarters`)}</span></span>
