@@ -150,6 +150,28 @@ retains the reservation because it does not prove that the worker stopped.
 The one-second observer examines the bounded reservations and recorded request
 IDs; root expiry never cancels an assigned child.
 
+Protocol 5 lets the same two slots advance different replicas of one room when
+no other eligible room needs the second slot. Source, body fitting and publication
+remain exclusive. A replica owns its exact delivery UUID, process epoch and
+sequence; the sequence also protects work that advances within the same source
+row. It never acquires or releases the room's shared lease. Each retry and its
+diagnostic belong to that replica, while the visible job error is their aggregate.
+The final checkpoint joins only after all four replicas finish, and publication
+waits until every physical delivery has released its slot. Completion order
+does not change the original ordered numerical assembly.
+
+The protocol-4 owner drains before the first parallel admission advances the
+job fence once. Captures, generations and replica bytes remain unchanged; a late
+old checkpoint, failure or release cannot affect its siblings. A proven 546
+recovers only its delivery, and ambiguous timeouts retain their reservations.
+Replica claims wait for the brief shared job-row update: skipping a contended
+row would strand an assigned sibling until its lease expired. Reverse paths
+take ticket locks nonblockingly. A separate-connection PostgreSQL test with
+synthetic owners verified simultaneous claims and both final checkpoints,
+including the single completion-barrier increment. Unreadable derived fit state
+keeps the existing restart policy, fencing siblings before clearing scratch.
+This transport change does not alter the learner identity or request another fit.
+
 Body fitting receives a losslessly compressed immutable numerical descriptor
 and original capture bytes. Publication retains its full original database
 metadata. A damaged derived packet is discarded and rebuilt from that capture,

@@ -18,10 +18,17 @@ import { ROOM_FIT_CAPTURE_VERSION } from "../room-learning-worker-capabilities.t
 export { ROOM_FIT_CAPTURE_VERSION };
 /** Total numerical work per request, shared by all cells it completes. */
 export const ROOM_FIT_NUMERIC_BUDGET_MS = 400;
+export interface RoomReplicaDelivery {
+  delivery_id: string;
+  process_epoch: string;
+  sequence: number;
+  revision: number;
+}
 export interface RoomLearningClaim extends RoomLearningOwner {
   room_history_to: string | null;
   work_class: "source" | "numerical" | "finalization";
   room_fit_progress?: unknown;
+  replica_delivery?: RoomReplicaDelivery;
   input: { learner_version?: string; location?: { latitude: number; longitude: number } | null };
 }
 type RoomLearningStep = { kind: "model"; model: Record<string, unknown>; revision: number }
@@ -131,20 +138,27 @@ async function resumeRoomFit(db: ModelDatabase, claim: RoomLearningClaim, clock:
   const revision = progress.base_revision;
   if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) throw new Error("Invalid room fit base revision");
   const rpc = roomFitRpc(db, claim, revision, trace);
+  const delivery = claim.replica_delivery;
+  const replicaBasis = delivery ? { p_delivery_id: delivery.delivery_id, p_process_epoch: delivery.process_epoch,
+    p_expected_sequence: delivery.sequence } : null;
   const reset = async (cursor: number): Promise<RoomLearningStep> => {
     trace.stage = "reset";
-    await rpc("reset_energy_room_fit", { p_expected_cursor: cursor });
+    if (replicaBasis) await rpc("reset_energy_room_fit_replica", replicaBasis);
+    else await rpc("reset_energy_room_fit", { p_expected_cursor: cursor });
     return { kind: "handled", result: { superseded: true } };
   };
   const cursor = Number(progress.cursor), envelope = progress.metadata;
   trace.cursor = cursor;
   let numericPacket: string | undefined;
   const checkpoint = async (turn: ConnectedFitTurn): Promise<RoomLearningStep> => {
-    const saved = await rpc("checkpoint_energy_room_fit_turn", { p_expected_cursor: cursor,
-      p_turn: numericPacket ? { ...turn, numeric_packet: numericPacket } : turn });
+    const saved = replicaBasis
+      ? await rpc("checkpoint_energy_room_fit_replica", { ...replicaBasis, p_turn: turn })
+      : await rpc("checkpoint_energy_room_fit_turn", { p_expected_cursor: cursor,
+        p_turn: numericPacket ? { ...turn, numeric_packet: numericPacket } : turn });
     return { kind: "handled", result: saved === true ? { checkpointed: true } : { superseded: true } };
   };
   const process = progress.process as ProcessClaim | undefined;
+  if (delivery && (delivery.revision !== revision || process?.kind !== "replica")) throw new Error("Invalid replica delivery progress");
   if (process?.kind === "replica") {
     trace.stage = "process_posterior";
     const window = process.window, decodeStarted = performance.now();

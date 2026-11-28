@@ -1,6 +1,6 @@
 import { captureDeviceModels } from "./device-model-store.ts";
 import { roomLearningWorkerCapabilities } from "./room-learning-worker-capabilities.ts";
-import { runRoomLearning, type RoomSliceTrace } from "./device-model-learning/room-response-run.ts";
+import { runRoomLearning, type RoomReplicaDelivery, type RoomSliceTrace } from "./device-model-learning/room-response-run.ts";
 import { fitStoredPool } from "./device-model-learning/pool.ts";
 import { fitStoredWeatherHeating } from "./device-model-learning/weather-heating.ts";
 import { fitStoredDevice } from "./device-model-learning/device.ts";
@@ -12,6 +12,8 @@ interface LearningOwner {
   generation: number; fence: number;
   room_history_to: string | null;
   room_fit_progress?: unknown;
+  delivery_id?: string;
+  replica_delivery?: RoomReplicaDelivery;
   room_window_visits?: unknown;
   input: { learner_version?: string; location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[]; weather_heating_binding?: string; banded_heating?: boolean };
 }
@@ -84,8 +86,11 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
   } catch (error) {
     const detail = describeThrown(error);
     if (claim) {
-      const failed = await db.rpc("fail_energy_device_learning", { p_job_id: claim.id,
-        p_generation: claim.generation, p_fence: claim.fence, p_error: detail });
+      const delivery = claim.replica_delivery;
+      const failed = await db.rpc(delivery ? "fail_energy_room_fit_replica" : "fail_energy_device_learning", { p_job_id: claim.id,
+        p_generation: claim.generation, p_fence: claim.fence, p_error: detail,
+        ...(delivery ? { p_revision: delivery.revision, p_delivery_id: delivery.delivery_id,
+          p_process_epoch: delivery.process_epoch, p_expected_sequence: delivery.sequence } : {}) });
       if (failed.error) console.error("[ENERGY-LEARNING] failure persistence failed", failed.error.message);
     }
     console.error("[ENERGY-LEARNING] attempt failed", detail);
@@ -97,8 +102,9 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     const releaseStarted = performance.now();
     if (claim?.owner_kind === "room") {
       try {
-        const released = await db.rpc("release_energy_learning_work", {
+        const released = await db.rpc(claim.delivery_id ? "release_energy_learning_delivery" : "release_energy_learning_work", {
           p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence,
+          ...(claim.delivery_id ? { p_delivery_id: claim.delivery_id } : {}),
         });
         if (released.error) console.error("[ENERGY-LEARNING] room admission release failed", released.error.message);
       } catch (error) {

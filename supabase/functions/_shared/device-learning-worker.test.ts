@@ -119,7 +119,7 @@ Deno.test("capability reads use the learning token and never claim work", async 
   } };
   const read = await handleDeviceLearning(probe({ action: "capabilities" }, "synthetic-learning"), db);
   const result = await read.json();
-  assertEquals([read.status, result.protocol, result.learner_version, result.runtime], [200, 4, ROOM_LEARNER_VERSION, Deno.version.v8]);
+  assertEquals([read.status, result.protocol, result.learner_version, result.runtime], [200, 5, ROOM_LEARNER_VERSION, Deno.version.v8]);
   assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }, "invalid"), db)).status, 401);
   assertEquals((await handleDeviceLearning(probe({ action: "capabilities" }), db)).status, 401);
   assertEquals((await handleDeviceLearning(probe({ job_id: "job" }), db)).status, 401);
@@ -156,4 +156,44 @@ Deno.test("slice timing preserves the database's queue delay on a handled numeri
   } finally { console.info = log; }
   assertEquals(event?.queue_ms, 417);
   assertEquals(event?.outcome, "superseded");
+});
+
+Deno.test("replica deliveries checkpoint, fail, repair and release only their scoped authority", async () => {
+  const { syntheticConnectedPlant, syntheticConnectedResponse } = await import("./connected-exchange.fixture.ts");
+  const { beginConnectedRoomFit } = await import("./device-learning/room/connected-response.ts");
+  const { checkpointConnectedFit } = await import("./device-model-learning/room-fit-replicas.ts");
+  const { encodeRoomResponseFitCapture } = await import("./device-model-learning/room-band-fit-capture.ts");
+  const model = syntheticConnectedResponse(false), rows = syntheticConnectedPlant(true).slice(0, 2);
+  const fit = beginConnectedRoomFit({ fullRows: rows, trainingRows: rows },
+    { peers: ["peer"], observedOnly: true, ratedPowerW: null, basis: model.basis });
+  const split = await checkpointConnectedFit({ ...fit, stage: "process_posterior",
+    result: { response: model, model: null, learning: {}, issues: [] } }, rows);
+  if (split.kind !== "start_process") throw new Error("Missing synthetic replicas");
+  const capture = await encodeRoomResponseFitCapture(rows, model.basis.history_from);
+  const delivery = { delivery_id: "synthetic-delivery", process_epoch: "synthetic-epoch", sequence: 9, revision: 3 };
+  for (const mode of ["checkpoint", "lost_reply", "bad_capture", "bad_replica"] as const) {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const response = await handleDeviceLearning(request(), { rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      if (name === "claim_energy_learning_request") return { data: {
+        id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer", owner_key: "room", owner_kind: "room",
+        generation: 2, fence: 7, room_history_to: "2026-01-01T00:00:00Z", work_class: "numerical",
+        delivery_id: delivery.delivery_id, replica_delivery: delivery, input: { learner_version: ROOM_LEARNER_VERSION },
+        room_fit_progress: { cursor: 17, base_revision: delivery.revision, process: { kind: "replica", model: split.shared.result.response,
+          priors: split.shared.priors, replica: { ...split.replicas[1], ...(mode === "bad_replica" ? { blob: "corrupt" } : {}) },
+          window: { base64: mode === "bad_capture" ? "corrupt" : capture.base64, sha256: capture.sha256,
+            from_at: model.basis.history_from, row_from: 0, total_rows: rows.length } } },
+      }, error: null };
+      return { data: true, error: name === "checkpoint_energy_room_fit_replica" && mode === "lost_reply" ? { message: "Synthetic lost reply" } : null };
+    } });
+    assertEquals(response.status, mode === "lost_reply" ? 500 : 200);
+    assertEquals(calls.at(-1), { name: "release_energy_learning_delivery", args: { p_job_id: "synthetic-job", p_generation: 2,
+      p_fence: 7, p_delivery_id: delivery.delivery_id } });
+    assertEquals(calls.some(c => ["fail_energy_device_learning", "release_energy_learning_work", "checkpoint_energy_room_fit_turn", "reset_energy_room_fit"].includes(c.name)), false);
+    const written = calls.find(c => c.name === (mode.startsWith("bad_") ? "reset_energy_room_fit_replica" : "checkpoint_energy_room_fit_replica"))!;
+    assertEquals(written.args.p_process_epoch, delivery.process_epoch);
+    assertEquals(written.args.p_expected_sequence, delivery.sequence);
+    assertEquals(written.args.p_revision, delivery.revision);
+    assertEquals(calls.some(c => c.name === "fail_energy_room_fit_replica"), mode === "lost_reply");
+  }
 });
