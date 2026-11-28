@@ -18,12 +18,13 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
   const probe = "/functions/v1/energy-device-learning", activate = "/rest/v1/rpc/activate_energy_learning_release";
   const tokenPath = "/rest/v1/rpc/get_energy_learning_worker_token";
   const dispatch = "/functions/v1/energy-learning-dispatch";
-  const expected = [prepare, "deploy", configure, tokenPath, probe, dispatch, activate];
-  for (const failure of ["", "stale", "deploy", "missing_token", "mismatch", "missing_runtime", "extra", "dispatcher", "cas"]) {
+  const peer = probe + "-peer";
+  const expected = [prepare, "deploy-executors", configure, tokenPath, probe, peer, "deploy-dispatcher", dispatch, activate];
+  for (const failure of ["", "stale", "deploy-executors", "missing_token", "mismatch", "missing_runtime", "extra", "peer", "deploy-dispatcher", "dispatcher", "cas"]) {
     const events: string[] = [];
     const run = () => deployLearningRelease(deployment, base, (path, body, token) => {
       events.push(path);
-      assertEquals(token, [probe, dispatch].includes(path) ? "synthetic-learner" : undefined);
+      assertEquals(token, [probe, peer, dispatch].includes(path) ? "synthetic-learner" : undefined);
       if (path === prepare) {
         const manifest = Object.fromEntries(Object.entries(worker).filter(([key]) => key !== "runtime"));
         assertEquals(body, { p_deployment: deployment, p_manifest: manifest });
@@ -37,7 +38,8 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
         assertEquals(body, {});
         return Promise.resolve(failure === "missing_token" ? null : "synthetic-learner");
       }
-      if (path === probe || path === dispatch) {
+      if ([probe, peer, dispatch].includes(path)) {
+        if (path === peer && failure === "peer") return Promise.resolve({ ...worker, runtime: "wrong" });
         if (path === dispatch && failure === "dispatcher") return Promise.resolve({ ...worker, runtime: "wrong" });
         assertEquals(body, { action: "capabilities" });
         if (failure === "mismatch") return Promise.resolve({ ...worker, semantic_digest: "synthetic-wrong" });
@@ -48,15 +50,17 @@ Deno.test("room deployment prepares before deploy and activates only verified ho
       assertEquals(path, activate);
       assertEquals(body, { p_deployment: deployment, p_worker: worker });
       return Promise.resolve(failure !== "cas");
-    }, () => {
-      events.push("deploy");
-      if (failure === "deploy") throw new Error("Synthetic deploy failed");
+    }, functions => {
+      const stage = functions.includes("energy-learning-dispatch") ? "deploy-dispatcher" : "deploy-executors";
+      assertEquals(functions, stage === "deploy-executors" ? ["energy-device-learning", "energy-device-learning-peer"] : ["energy-learning-dispatch"]);
+      events.push(stage);
+      if (failure === stage) throw new Error("Synthetic deploy failed");
       return Promise.resolve();
     });
     if (failure) await assertRejects(run);
     else await run();
-    const count = failure === "stale" ? 1 : failure === "deploy" ? 2 : failure === "missing_token" ? 4 :
-      ["mismatch", "missing_runtime", "extra"].includes(failure) ? 5 : failure === "dispatcher" ? 6 : 7;
+    const count = failure === "stale" ? 1 : failure === "deploy-executors" ? 2 : failure === "missing_token" ? 4 :
+      ["mismatch", "missing_runtime", "extra"].includes(failure) ? 5 : failure === "peer" ? 6 : failure === "deploy-dispatcher" ? 7 : failure === "dispatcher" ? 8 : 9;
     assertEquals(events, expected.slice(0, count));
   }
 });
@@ -69,11 +73,15 @@ Deno.test("deployment sends the worker wake credential only to the capability pr
     return Promise.resolve(Response.json(true));
   });
   await post("/rest/v1/rpc/get_energy_learning_worker_token", {});
-  await post("/functions/v1/energy-device-learning", { action: "capabilities" }, "synthetic-wake");
+  for (const endpoint of ["energy-device-learning", "energy-device-learning-peer", "energy-learning-dispatch"]) {
+    await post(`/functions/v1/${endpoint}`, { action: "capabilities" }, "synthetic-wake");
+  }
   assertEquals(headers[0].get("authorization"), "Bearer synthetic-admin");
   assertEquals(headers[0].get("apikey"), "synthetic-admin");
   assertEquals(headers[0].get("x-energy-learning-token"), null);
-  assertEquals(headers[1].get("authorization"), null);
-  assertEquals(headers[1].get("apikey"), null);
-  assertEquals(headers[1].get("x-energy-learning-token"), "synthetic-wake");
+  for (const header of headers.slice(1)) {
+    assertEquals(header.get("authorization"), null);
+    assertEquals(header.get("apikey"), null);
+    assertEquals(header.get("x-energy-learning-token"), "synthetic-wake");
+  }
 });

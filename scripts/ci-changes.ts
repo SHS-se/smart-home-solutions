@@ -71,7 +71,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
       graph.add("planner-core/recipe.json");
       graph.add("planner-core/policy.json");
     }
-    if (["energy-optimisation-plan-step", "energy-device-learning"].includes(name)) {
+    if (["energy-optimisation-plan-step", "energy-device-learning", "energy-device-learning-peer", "energy-learning-dispatch"].includes(name)) {
       graph.add("scripts/deploy-energy-planning.sh");
       graph.add("scripts/configure-device-learning.ts");
     }

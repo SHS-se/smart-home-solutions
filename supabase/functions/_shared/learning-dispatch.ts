@@ -6,7 +6,7 @@ export const LEARNING_DISPATCH_MS = 25_000;
 interface DispatchDatabase {
   rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
-interface Delivery { job_id: string; delivery_id: string }
+interface Delivery { job_id: string; delivery_id: string; worker_url: string }
 
 /** This driver imports no fitting kernels and never receives model/history bytes. */
 export async function handleLearningDispatch(request: Request, db: DispatchDatabase,
@@ -38,12 +38,13 @@ export async function handleLearningDispatch(request: Request, db: DispatchDatab
       !("worker_url" in claim) || typeof claim.worker_url !== "string" ||
       !/^https:\/\/[a-z0-9]+\.supabase\.co\/functions\/v1\/energy-device-learning$/.test(claim.worker_url)) throw new Error("Invalid learning dispatch claim");
     fence = body.run_fence;
-    const url = claim.worker_url;
+    const allowedUrls = new Set([claim.worker_url, `${claim.worker_url}-peer`]);
     while (calls < LEARNING_DISPATCH_CALLS && clock() - started < LEARNING_DISPATCH_MS) {
-      const work = await rpc("take_energy_learning_dispatch_work", { p_run_fence: fence,
-        p_limit: Math.min(2, LEARNING_DISPATCH_CALLS - calls) });
+      const limit = Math.min(2, LEARNING_DISPATCH_CALLS - calls);
+      const work = await rpc("take_energy_learning_dispatch_work", { p_run_fence: fence, p_limit: limit });
       if (work === null || Array.isArray(work) && work.length === 0) break;
-      if (!Array.isArray(work) || work.length > 2 || work.some(d => !d || typeof d.job_id !== "string" || typeof d.delivery_id !== "string")) throw new Error("Invalid learning dispatch group");
+      if (!Array.isArray(work) || work.length > limit || work.some(d => !d || typeof d.job_id !== "string" || typeof d.delivery_id !== "string" || !allowedUrls.has(d.worker_url)) ||
+        new Set(work.map(d => d.delivery_id)).size !== work.length || new Set(work.map(d => d.worker_url)).size !== work.length) throw new Error("Invalid learning dispatch group");
       const group: Delivery[] = work;
       if (clock() - started >= LEARNING_DISPATCH_MS) {
         await rpc("return_unsent_energy_learning_work", { p_run_fence: fence, p_deliveries: group.map(d => d.delivery_id) });
@@ -53,9 +54,9 @@ export async function handleLearningDispatch(request: Request, db: DispatchDatab
       await Promise.all(group.map(async delivery => {
         let response: Response;
         try {
-          response = await fetcher(url, { method: "POST", headers: {
+          response = await fetcher(delivery.worker_url, { method: "POST", headers: {
             "content-type": "application/json", "x-energy-learning-token": token,
-          }, body: JSON.stringify(delivery), redirect: "error", signal: AbortSignal.timeout(25_000) });
+          }, body: JSON.stringify({ job_id: delivery.job_id, delivery_id: delivery.delivery_id }), redirect: "error", signal: AbortSignal.timeout(25_000) });
           // Drain only the compact receipt. A timeout is ambiguous and must not
           // revoke the child; a terminal 546 proves that its worker stopped.
           await response.arrayBuffer();

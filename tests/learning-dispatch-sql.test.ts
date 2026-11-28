@@ -14,7 +14,7 @@ async function fixture(protocol = 4) {
       RETURNS bigint LANGUAGE sql AS $$ INSERT INTO net.wakes(body) VALUES($3) RETURNING id $$;`);
   for (const migration of ["20261123160000_measured_room_response", "20261123170000_state_carrying_room_forecasts",
     "20261126151000_connected_room_publication", "20261126151100_connected_room_fit_progress", "20261126220000_room_learning_work",
-    "20261127100000_minimal_room_fit_work", "20261127223000_bound_room_learning_dispatch"]) {
+    "20261127100000_minimal_room_fit_work", "20261127223000_bound_room_learning_dispatch", "20261128010000_isolate_learning_executor_slots"]) {
     await db.exec(await Deno.readTextFile(`supabase/migrations/${migration}.sql`));
   }
   const { runtime: _runtime, ...manifest } = { ...roomLearningWorkerCapabilities(), protocol };
@@ -37,7 +37,7 @@ async function fixture(protocol = 4) {
   const token = await value<string>("(SELECT token FROM private.energy_learning_credentials)");
   await value("prepare_energy_learning_release(1,$1)", manifest);
   await value("activate_energy_learning_release(1,$1)", worker);
-  type Delivery = { job_id: string; delivery_id: string };
+  type Delivery = { job_id: string; delivery_id: string; worker_url: string };
   const run = () => value<number>("(SELECT run_fence FROM private.energy_learning_dispatch)");
   const claimRun = async () => value("claim_energy_learning_dispatch($1,$2,$3)", await run(), worker, token);
   const take = async () => value<Delivery[]>("take_energy_learning_dispatch_work($1,2)", await run());
@@ -56,6 +56,8 @@ Deno.test("one dispatcher wake carries two fair deliveries and duplicate or unau
     assertEquals(await f.claimRun(), null);
     const group = await f.take();
     assertEquals(group.length, 2);
+    const primary = await f.value<string>("(SELECT function_url FROM private.energy_learning_credentials)");
+    assertEquals(group.map(d => d.worker_url), [primary, primary + "-peer"]);
     assertEquals(await f.take(), []);
     assertEquals(await f.value("claim_energy_learning_request($1,$2,'invalid',$3)", group[0].job_id, f.worker, group[0].delivery_id), false);
     const owner = await f.claim(group[0]); assert(owner);

@@ -23,7 +23,7 @@ const isolateId = crypto.randomUUID();
 let isolateRequests = 0;
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
-export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now): Promise<Response> {
+export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now, executor?: string): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   const token = request.headers.get("x-energy-learning-token") ?? "";
   const isolateRequest = ++isolateRequests;
@@ -106,7 +106,7 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
       }
     }
     const queueMs = claim?.queue_ms;
-    if (claim) console.info(JSON.stringify({ event: "energy_learning_slice", isolate: isolateId, isolate_request: isolateRequest,
+    if (claim) console.info(JSON.stringify({ event: "energy_learning_slice", executor, isolate: isolateId, isolate_request: isolateRequest,
       job_id: claim.id, kind: claim.owner_kind,
       generation: claim.generation, fence: claim.fence, work_class: claim.work_class, outcome,
       queue_ms: typeof queueMs === "number" && Number.isSafeInteger(queueMs) && queueMs >= 0 ? queueMs : null, claim_ms: claimMs,

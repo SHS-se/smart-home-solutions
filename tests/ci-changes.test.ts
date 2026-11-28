@@ -105,3 +105,17 @@ Deno.test("capture assembly changes deploy ingest while protocol identity change
   }
   assert(!identity.functions.includes("stripe-webhook"));
 });
+
+Deno.test("learning deployment changes include both executors and their coordinated dispatcher", () => {
+  for (const path of ["scripts/configure-device-learning.ts", "scripts/deploy-energy-planning.sh"]) {
+    const functions = classify(root, [path]).functions;
+    for (const name of ["energy-device-learning", "energy-device-learning-peer", "energy-learning-dispatch", "energy-optimisation-plan-step"]) {
+      assert(functions.includes(name), `${path}: ${name}`);
+    }
+  }
+  for (const path of ["supabase/functions/_shared/device-learning-worker.ts", "supabase/functions/_shared/device-learning-serve.ts"]) {
+    const functions = classify(root, [path]).functions;
+    assert(functions.includes("energy-device-learning"));
+    assert(functions.includes("energy-device-learning-peer"));
+  }
+});

@@ -136,6 +136,12 @@ cannot acquire new work after activation. This does not schedule another fit.
 
 Protocol 4 adds a thin dispatcher that directly awaits up to two learning
 requests at a time, using the same two physical tickets and fair owner queue.
+Slot one calls `energy-device-learning`; slot two calls
+`energy-device-learning-peer`. Both entry points use the same handler, capabilities,
+400 ms numerical budget and fenced ownership. Separate functions prevent the
+two slots sharing a JavaScript isolate. Deployment verifies both executors before
+installing the dispatcher that uses their routes; neither routing nor executor
+identity changes numerical cache identities or optimizer progress.
 A dispatcher starts at most 24 children during a 25-second start window; its
 last group may take another 25 seconds. It imports no fitting kernel. One
 `pg_net` wake starts each dispatcher rather than each numerical slice. Only an
@@ -153,7 +159,7 @@ and pack timings reported separately. Parent populations are indexed once per
 replica advance rather than scanned for every particle; floating-point order
 and random draws are unchanged. This pure-code optimization follows the normal
 generated learner-identity transition and therefore causes one initial refit.
-Both dispatcher and fitting-worker capabilities must match before activation.
+Both executors and dispatcher capabilities must match before activation.
 
 Planning source capture also reuses a certified fitted block that overlaps the
 start of the model's history. It retains the original envelope and digest; the

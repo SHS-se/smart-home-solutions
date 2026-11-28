@@ -1,6 +1,2 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
-import { handleDeviceLearning } from "../_shared/device-learning-worker.ts";
-Deno.serve(withTrafficMetrics("energy-device-learning", (request, traffic) => handleDeviceLearning(request,
-  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { auth: { persistSession: false }, global: { fetch: traffic.fetch } }))));
+import { learningExecutorHandler } from "../_shared/device-learning-serve.ts";
+Deno.serve(learningExecutorHandler("energy-device-learning"));

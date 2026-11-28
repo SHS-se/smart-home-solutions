@@ -27,11 +27,11 @@ export function deploymentPost(url: string, key: string, request: typeof fetch =
   };
 }
 
-export async function deployLearningRelease(deployment: string, projectUrl: string, post: Post, deploy: () => Promise<void>) {
+export async function deployLearningRelease(deployment: string, projectUrl: string, post: Post, deploy: (functions: readonly string[]) => Promise<void>) {
   const { runtime: _localRuntime, ...manifest } = roomLearningWorkerCapabilities();
   const prepared = await post("/rest/v1/rpc/prepare_energy_learning_release", { p_deployment: deployment, p_manifest: manifest });
   if (prepared !== true) throw new Error("Learning release preparation refused the deployment");
-  await deploy();
+  await deploy(["energy-device-learning", "energy-device-learning-peer"]);
   await post("/rest/v1/rpc/configure_energy_device_learning", { p_project_url: projectUrl });
   const token = await post("/rest/v1/rpc/get_energy_learning_worker_token", {});
   if (typeof token !== "string" || !token) throw new Error("Learning worker credential unavailable");
@@ -42,11 +42,17 @@ export async function deployLearningRelease(deployment: string, projectUrl: stri
     Object.entries(manifest).some(([key, value]) => Reflect.get(worker, key) !== value)) {
     throw new Error("Deployed learning worker capabilities differ from the prepared release");
   }
-  const dispatcher = await post("/functions/v1/energy-learning-dispatch", { action: "capabilities" }, token);
-  if (!dispatcher || typeof dispatcher !== "object" || Object.keys(dispatcher).length !== Object.keys(worker).length ||
-    Object.entries(worker).some(([key, value]) => Reflect.get(dispatcher, key) !== value)) {
-    throw new Error("Deployed learning dispatcher capabilities differ from the worker");
-  }
+  const verifyExecutor = async (endpoint: string) => {
+    const observed = await post(`/functions/v1/${endpoint}`, { action: "capabilities" }, token);
+    if (!observed || typeof observed !== "object" || Object.keys(observed).length !== Object.keys(worker).length ||
+      Object.entries(worker).some(([key, value]) => Reflect.get(observed, key) !== value)) {
+      throw new Error(`Deployed ${endpoint} capabilities differ from the primary learning worker`);
+    }
+  };
+  await verifyExecutor("energy-device-learning-peer");
+  // Install the caller only after both destinations are deployed and verified.
+  await deploy(["energy-learning-dispatch"]);
+  await verifyExecutor("energy-learning-dispatch");
   const active = await post("/rest/v1/rpc/activate_energy_learning_release", { p_deployment: deployment, p_worker: worker });
   if (active !== true) throw new Error("Learning release activation refused the deployment");
 }
@@ -63,9 +69,9 @@ if (import.meta.main) {
   const key = keys.find((row: { name: string }) => row.name === "service_role")?.api_key;
   if (typeof key !== "string" || !key) throw new Error("Service credential unavailable");
   const url = `https://${project}.supabase.co`;
-  await deployLearningRelease(deployment, url, deploymentPost(url, key), async () => {
+  await deployLearningRelease(deployment, url, deploymentPost(url, key), async (functions) => {
     const status = await new Deno.Command("supabase", {
-      args: ["functions", "deploy", "energy-device-learning", "energy-learning-dispatch", "--project-ref", project, "--use-api", "--yes"],
+      args: ["functions", "deploy", ...functions, "--project-ref", project, "--use-api", "--yes"],
       stdout: "inherit", stderr: "inherit",
     }).spawn().status;
     if (!status.success) throw new Error("Learning worker deployment failed");
